@@ -1,6 +1,6 @@
 # Contributors
 
-A thank-you to everyone who has helped build Peristera. Contributions of all
+A thank-you to everyone who has helped build {{PROJECT_NAME}}. Contributions of all
 kinds count — code, docs, design, testing, and ideas.
 
 This is a curated acknowledgements list, **not** a legal record:

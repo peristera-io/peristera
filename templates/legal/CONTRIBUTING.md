@@ -1,10 +1,10 @@
-# Contributing to Peristera
+# Contributing to {{PROJECT_NAME}}
 
 Thanks for your interest! A few things to know before you start.
 
 ## How we work
 
-Peristera is developed with a specify → red → green → refactor (BDD) loop and
+{{PROJECT_NAME}} is developed with a specify → red → green → refactor (BDD) loop and
 a written project memory. The **`README.md` is the operating manual for this
 repository** — read its "Repository layout & how to work here" section first;
 it applies to humans and LLM agents alike. In short:
@@ -18,8 +18,8 @@ it applies to humans and LLM agents alike. In short:
 
 ## Contributor License Agreement (CLA)
 
-Before we can accept your contribution, you must agree to the Peristera
-**Contributor License Agreement** (`CLA.md`). It covers the entire monorepo.
+Before we can accept your contribution, you must agree to the {{PROJECT_NAME}}
+**Contributor License Agreement** (`CLA.md`). 
 Under it you **keep the copyright** to your work and grant the project a broad
 license — including the right to relicense — so the project retains the
 flexibility to change its license or dual-license in the future. See

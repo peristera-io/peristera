@@ -1,13 +1,13 @@
-# Peristera Individual Contributor License Agreement
+# {{PROJECT_NAME}} Individual Contributor License Agreement
 
 > **Template notice.** This document is adapted from the Harmony and Apache
 > CLA models. It is a starting point, not legal advice — have it reviewed by
 > qualified legal counsel (mindful of Luxembourg / EU author's-rights law)
 > before relying on it. See ADR-0005 for why this CLA exists.
 
-Thank you for your interest in contributing to Peristera ("the **Project**").
-This Agreement covers **all projects in the Peristera monorepo**
-(`github.com/peristera-io/peristera`), including its applications, libraries,
+Thank you for your interest in contributing to {{PROJECT_NAME}} ("the **Project**").
+This Agreement covers **{{PROJECT_NAME}}**
+(`{{REPO_URL}}`), including its applications, libraries,
 and documentation. This Contributor License Agreement ("**Agreement**")
 clarifies the intellectual-property license granted with Contributions. It
 protects You, the Project, and its users. **It does not change Your right to
@@ -25,7 +25,7 @@ This is a legally binding document, so read it carefully before agreeing.
 - **"Submit"** means any form of communication sent to the Project — for
   example pull requests, commits, patches, issues, or messages — **except**
   communication that You conspicuously mark in writing as "Not a Contribution."
-- **"We" / "Us" / "Our"** means the maintainers of Peristera, currently the
+- **"We" / "Us" / "Our"** means the maintainers of {{PROJECT_NAME}}, currently the
   repository owner Jean-Luc Spielmann
 
 ## 2. You retain ownership
@@ -122,4 +122,4 @@ pull request with the exact phrase:
 
 Your signature — your GitHub identity and the associated commit metadata — is
 recorded in `signatures/cla.json`. You only need to sign once; it covers all of
-Your future Contributions to the Peristera monorepo.
+Your future Contributions to {{PROJECT_NAME}}.
