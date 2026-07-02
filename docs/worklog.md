@@ -38,3 +38,20 @@ bottom. One entry = date, what happened, and pointers to artifacts.
   with CNPG credentials worked first try (`sslmode=require`).
 - **Next: session 2 — second virtual instance via the System API, domain
   wiring, Login v2 multi-host check.**
+
+## 2026-07-02 — M1 spike session 2: virtual instances confirmed
+
+- System API user `admin-client` added via chart values (cert-JWT auth;
+  gotcha: instance ops need role `SYSTEM_OWNER`, not the chart-example
+  `IAM_OWNER`). Wildcard ingress `*.127.0.0.1.sslip.io` for tenant domains.
+- **Virtual-instance lifecycle works self-hosted**: `tenant-demo` created
+  via `POST /system/v1/instances/_create` with its own domain, first org,
+  and owner user; serves its own OIDC issuer
+  (`http://demo.127.0.0.1.sslip.io:9080`); the shared Login v2 serves it by
+  host. A throwaway instance created and deleted (deletion 404s for a few
+  seconds after creation — projection lag, retry).
+- **Footprint flat with a second instance: ~242 Mi total** (Zitadel 72,
+  Postgres 92, Login 78). Topology prior holds: marginal tenant ≈ free.
+- Session 2 walkthrough appended to `iam/README.md`.
+- **Next: session 3 — Go + HTMX stub relying party in `iam/`, OIDC
+  auth-code + PKCE login against the tenant-demo instance.**

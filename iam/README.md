@@ -62,7 +62,57 @@ is a day-one rule; the issuer URL must never change).
 
 The Helm chart creates an `iam-admin` machine user (IAM_OWNER) with its key
 in the `iam-admin` Kubernetes secret — that is the Management/Admin API
-seam. Creating *virtual instances* needs the System API (session 2).
+seam. Creating *virtual instances* needs the System API, below.
+
+## Virtual instances via the System API (session 2)
+
+One shared deployment, one virtual instance per tenant, selected by host
+header. The System API authenticates with a self-signed RS256 JWT; the
+`admin-client` system user (role `SYSTEM_OWNER` — `IAM_OWNER` is *not*
+enough for instance operations) is declared in `zitadel-values.yaml`, its
+certificate mounted from a secret:
+
+```sh
+# One-time: keypair + cert secret, then helm upgrade with the values file.
+openssl req -x509 -newkey rsa:2048 -keyout admin-client.key \
+  -out admin-client.crt -nodes -days 365 -subj "/CN=admin-client"
+kubectl create secret generic admin-client-tls -n peristera-system \
+  --from-file=tls.crt=admin-client.crt
+helm upgrade zitadel zitadel/zitadel \
+  -n peristera-system -f deploy/dev/zitadel-values.yaml
+
+# Self-signed system JWT (aud = the default instance's issuer).
+b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+NOW=$(date +%s)
+H=$(printf '{"alg":"RS256","typ":"JWT"}' | b64url)
+P=$(printf '{"iss":"admin-client","sub":"admin-client","aud":"http://iam.127.0.0.1.sslip.io:9080","iat":%s,"exp":%s}' "$NOW" $((NOW+3600)) | b64url)
+S=$(printf '%s.%s' "$H" "$P" | openssl dgst -sha256 -sign admin-client.key -binary | b64url)
+TOKEN="$H.$P.$S"
+
+# Tenant instance: own domain (day-one rule), own first org + owner user.
+curl -X POST "http://iam.127.0.0.1.sslip.io:9080/system/v1/instances/_create" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{
+  "instanceName": "tenant-demo",
+  "firstOrgName": "Demo GmbH",
+  "customDomain": "demo.127.0.0.1.sslip.io",
+  "human": {
+    "userName": "demo-admin",
+    "email": {"email": "admin@demo.example", "isEmailVerified": true},
+    "profile": {"firstName": "Demo", "lastName": "Admin"},
+    "password": {"password": "…", "passwordChangeRequired": false}
+  }}'
+
+curl http://demo.127.0.0.1.sslip.io:9080/.well-known/openid-configuration
+# → issuer http://demo.127.0.0.1.sslip.io:9080 — per-tenant issuer, shared pods
+# Delete: DELETE /system/v1/instances/{id}. Note: a just-created instance
+# 404s for a few seconds (projection lag) — retry briefly.
+```
+
+Verified findings (2026-07-02): tenant instance serves its own issuer on
+its own domain; the *shared* Login v2 deployment serves it by host; idle
+footprint is flat when instances are added (~240–260 Mi for the whole
+Zitadel + login + Postgres set — the 512 MB floor is per deployment, not
+per virtual instance). Full evidence goes into ADR-0006.
 
 ## Layout
 
