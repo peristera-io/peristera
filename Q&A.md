@@ -280,3 +280,69 @@ README's Kamara row can reference it (the reviewer flagged it as
 unverifiable).
 
 >ignore it for now.
+
+---
+
+# Round 4 (2026-07-02) — M1 planning: the Zitadel spike
+
+Plan draft in `docs/m1-plan.md`; these decide its open parameters. Each has a
+recommendation — confirm or push back.
+
+**R18. Where does the M1 dev cluster live?** ADR-0003 fixes local dev = k3s
+from M2, but M1 needs a cluster now and you're on a Mac (k3s is Linux-only).
+Options: (a) **k3d** — k3s in Docker, closest to the real contract, needs a
+container runtime on the Mac (OrbStack/colima/Docker Desktop); (b) a cheap
+Hetzner/Scaleway VM running real k3s. My recommendation: **k3d locally** —
+fastest inner loop, free, and it front-runs the M2 local-dev setup. Which,
+and what container runtime do you already run on the Mac?
+
+> docker is on this system; lets start with that. I will also prep a local cluster with 3 PCs for some real world tests.
+
+**R19. Topology prior: Zitadel per tenant namespace.** The spike decides
+per-tenant vs. shared-with-orgs *with footprint numbers*, but I want the
+prior on record: per-tenant matches the isolation model and makes every
+tenant its own OIDC issuer (which federation later rides on). The honest
+counter-scenario: if Zitadel + login app + Postgres idle at, say, >1 GB per
+tenant, an MSP's twenty-tenant single VM is dead and shared-with-orgs must
+win despite being uglier for off-boarding and erasure. OK to treat
+per-tenant as the leaning to disconfirm?
+
+> Let's start with virtual instances per tenant and see how that feels. Zitadel requires 512MB RAM per instance. This will be too heavy, if I have 10 instances running, but only 40 users. We should however thing about the possibility to break out a tenant to have their own instance, for example if they require too much resources, or if they have legal requirements. Agree?
+
+**Outcome (follow-up discussion, same day).** Clarified: 512 MB is per
+*deployment*, not per virtual instance — virtual instances are logical and
+the marginal tenant is ~free, so one shared deployment carries the ten-tenant
+VM easily. Settled: **shared Zitadel deployment in a platform namespace, one
+virtual instance per tenant, break-out to a dedicated instance kept possible**
+(via `zitadel mirror --instance` + re-pointing the tenant's domain; also
+available as a provisioning-time flag for legally-demanding tenants). Three
+day-one rules make break-out cheap: domain per tenant from the first tenant,
+per-tenant IAM endpoint config in apps/control plane, break-out as flag not
+only migration. Details in `docs/m1-plan.md`; ADR-0006 confirms with spike
+evidence.
+
+**R20. Login experience path.** Zitadel's current login (Login v2) is a
+self-hostable Next.js app — brandable, but it puts a **Node runtime** into
+the per-tenant catalog next to our all-Go stack. Alternative: build our own
+login UI on Zitadel's Session API — full experience control, but we then
+own security-sensitive screens (password, MFA, recovery), which is exactly
+what ADR-0004 said we don't want to own. Recommendation: **Login v2 with
+branding for M1–M6**, own-UI stays the documented escape hatch if branding
+proves too limited; the spike probes those limits. Swallow the Node runtime?
+
+> I realy don't want a node runtime. But I don't think that building the UI for this, which is just alot of work without validating the overall model is very helpful. So, let's go with node, get experience and see if we  want to change this later.
+
+**R21. Spike code: keep or throw away?** Recommendation: **keep** — the stub
+relying party becomes the seed of `iam/` (README, legal files, first Go
+code), and its manifests/API calls are M2's raw material. Throwaway code
+would violate "everything ships as a vertical slice" for no gain. OK?
+
+> ok
+
+**R22. CloudNativePG already in M1?** The operator is formally M2 territory,
+but Zitadel-on-CNPG is precisely the integration risk worth confirming, and
+installing the operator on k3d is cheap. Recommendation: **yes, CNPG from
+session 1** — a plain Postgres container would confirm nothing about our
+actual target. OK?
+
+> ok.

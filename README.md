@@ -22,7 +22,10 @@ places that don't share a roof. That is the product thesis in one image.
 (`templates/legal/`), bootstrap ADRs 0001–0005 (`adr/`), markdown + link CI,
 CLA Assistant bot. Project folders (`lib/`, `control-plane/`, `iam/`,
 `ergonomos/`, `kamara/`) do not exist yet — each appears with its first code.
-**Next: M1 — confirmatory Zitadel integration spike (2-week time box).**
+**Now: M1 — confirmatory Zitadel integration spike (2-week time box;
+plan and settled parameters: `docs/m1-plan.md`, provenance in `Q&A.md`
+Round 4). Topology prior: one shared Zitadel deployment, one virtual
+instance per tenant, break-out seam designed in — ADR-0006 confirms.**
 *Update this block whenever reality changes — a stale status line is exactly
 the rot §8 warns against.*
 
