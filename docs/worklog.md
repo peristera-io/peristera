@@ -17,3 +17,24 @@ bottom. One entry = date, what happened, and pointers to artifacts.
 - CI: markdownlint + link check; CLA Assistant bot.
 - Published to github.com/peristera-io/peristera.
 - **Next: M1 — confirmatory Zitadel integration spike (2-week time box).**
+
+## 2026-07-02 — M1 planned; spike session 1: Zitadel runs on k3d
+
+- M1 plan written (`docs/m1-plan.md`); parameters settled in Q&A Round 4 +
+  topology discussion. Key decision: **one shared Zitadel deployment, one
+  virtual instance per tenant**, break-out seam designed in (domain per
+  tenant, per-tenant IAM endpoint config, break-out as provisioning flag).
+- Session 1 done: k3d cluster (`peristera-dev`, host ports 9080/9443),
+  CloudNativePG operator, `zitadel-db` CNPG cluster, Zitadel v4 + Login v2
+  via Helm chart 10.0.4 in `peristera-system`. OIDC discovery and Login v2
+  serve at `http://iam.127.0.0.1.sslip.io:9080`. Manifests + walkthrough in
+  `iam/` (README, legal files instantiated).
+- **First footprint numbers (idle, minutes after boot): Zitadel 80 Mi,
+  Postgres 91 Mi, Login v2 91 Mi — ~262 Mi for the whole shared set.** The
+  feared 512 MB-per-tenant scenario is off the table if virtual instances
+  hold up; re-measure under load and after instance #2 (session 2).
+- Gotchas recorded in `iam/README.md`: k3d kubeconfig says `0.0.0.0` (macOS
+  won't dial it); host port 8080 was taken locally, hence 9080; DSN mode
+  with CNPG credentials worked first try (`sslmode=require`).
+- **Next: session 2 — second virtual instance via the System API, domain
+  wiring, Login v2 multi-host check.**

@@ -1,0 +1,48 @@
+# Helm values for the shared Zitadel deployment on the local k3d cluster.
+#   helm install zitadel zitadel/zitadel -n peristera-system -f zitadel-values.yaml
+# Chart: zitadel/zitadel 10.x (app v4.x). See iam/README.md for the full
+# dev-environment walkthrough.
+zitadel:
+  # DEV ONLY. The masterkey encrypts secrets at rest; production gets a
+  # generated one via masterkeySecretName, never a committed literal.
+  masterkey: "dev-only-peristera-m1-spike-key0"
+  configmapConfig:
+    # Wildcard DNS to 127.0.0.1 — the k3d loadbalancer maps host port 9080
+    # to the cluster's Traefik ingress. Each tenant later gets its own
+    # <tenant>.… domain (domain-per-tenant is a day-one rule).
+    ExternalDomain: iam.127.0.0.1.sslip.io
+    ExternalPort: 9080
+    ExternalSecure: false
+    TLS:
+      Enabled: false
+
+# Database DSN comes from the CNPG-generated credentials; the secret is
+# created by the setup steps in iam/README.md (DSN mode, recommended by the
+# chart over discrete configmap fields).
+env:
+  - name: ZITADEL_DATABASE_POSTGRES_DSN
+    valueFrom:
+      secretKeyRef:
+        name: zitadel-db-dsn
+        key: dsn
+
+ingress:
+  enabled: true
+  className: traefik
+  hosts:
+    - host: iam.127.0.0.1.sslip.io
+      paths:
+        - path: /
+          pathType: Prefix
+
+# Login v2 (the separate Next.js login app — accepted trade-off, Q&A R20).
+login:
+  enabled: true
+  ingress:
+    enabled: true
+    className: traefik
+    hosts:
+      - host: iam.127.0.0.1.sslip.io
+        paths:
+          - path: /ui/v2/login
+            pathType: Prefix

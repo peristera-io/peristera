@@ -1,0 +1,16 @@
+# Postgres for the shared Zitadel deployment (M1 spike).
+# Lives in the platform namespace: identity is a platform-level service,
+# one deployment serving one virtual instance per tenant (docs/m1-plan.md).
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: zitadel-db
+  namespace: peristera-system
+spec:
+  instances: 1 # dev only — HA replicas in any real environment
+  storage:
+    size: 2Gi
+  bootstrap:
+    initdb:
+      database: zitadel
+      owner: zitadel
