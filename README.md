@@ -17,12 +17,14 @@ places that don't share a roof. That is the product thesis in one image.
 
 ## Current status — updated 2026-07-02
 
-**Pre-M0.** This repository contains strategy and legal documents only: no
-code, no git history, no CI. `adr/` and `guidelines/` exist but are empty;
-`templates/`, the project folders, and the worklogs referenced below do not
-exist yet. `LICENSE` (AGPL-3.0) is in place. The roadmap starts at M0 (repo
-bootstrap). *Update this block whenever reality changes — a stale status line
-is exactly the rot §8 warns against.*
+**M0 complete.** The monorepo lives at `github.com/peristera-io/peristera`:
+`LICENSE` (AGPL-3.0), repo-wide CLA with per-project templates
+(`templates/legal/`), bootstrap ADRs 0001–0005 (`adr/`), markdown + link CI,
+CLA Assistant bot. Project folders (`lib/`, `control-plane/`, `iam/`,
+`ergonomos/`, `kamara/`) do not exist yet — each appears with its first code.
+**Next: M1 — confirmatory Zitadel integration spike (2-week time box).**
+*Update this block whenever reality changes — a stale status line is exactly
+the rot §8 warns against.*
 
 ---
 
