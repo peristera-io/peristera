@@ -19,7 +19,7 @@ it applies to humans and LLM agents alike. In short:
 ## Contributor License Agreement (CLA)
 
 Before we can accept your contribution, you must agree to the {{PROJECT_NAME}}
-**Contributor License Agreement** (`CLA.md`). 
+**Contributor License Agreement** (`CLA.md`).
 Under it you **keep the copyright** to your work and grant the project a broad
 license — including the right to relicense — so the project retains the
 flexibility to change its license or dual-license in the future. See

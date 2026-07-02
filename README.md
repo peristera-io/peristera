@@ -109,7 +109,8 @@ will raise this; the answer belongs in every sales conversation.
 | **2** | MSPs / integrators | Direct outreach + certification program | Scalable distribution |
 
 **Front door:** GitHub org **`peristera-io`** (code + issues), email
-**peristera@peristera.io**. More channels only when an audience demands them.
+**<peristera@peristera.io>**. More channels only when an audience demands
+them.
 
 Conference talks (FOSDEM etc.) once there is something running to show.
 **Grants** (NLnet/NGI Zero, Luxinnovation, etc.): deliberately deferred until
@@ -514,7 +515,7 @@ Peristera, the thesis gets rethought before anything more is built.**
 **One monorepo** (decided): simpler solo, and one coherent context for LLM
 sessions. Split a component out only if a real community forms around it.
 
-```
+```text
 peristera/                  ← monorepo root (this file)
 ├── README.md               ← strategy + context. Read first, always.
 ├── Q&A.md                  ← archived decision interviews (provenance)

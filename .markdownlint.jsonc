@@ -1,0 +1,9 @@
+{
+  // Lenient where prose demands it; strict everywhere else.
+  "default": true,
+  "MD013": false, // line length — tables and long links wrap at will
+  "MD024": { "siblings_only": true }, // repeated headings across sections are fine
+  "MD033": false, // inline HTML (comments in CONTRIBUTORS.md)
+  "MD041": false, // first line need not be a top-level heading
+  "MD060": false // compact |---| table separators are fine
+}
