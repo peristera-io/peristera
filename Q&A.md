@@ -346,3 +346,57 @@ session 1** — a plain Postgres container would confirm nothing about our
 actual target. OK?
 
 > ok.
+
+---
+
+# Round 5 (2026-07-03) — M2 planning: the control-plane skeleton
+
+Plan draft in `docs/m2-plan.md`. Each question has a recommendation —
+confirm or push back.
+
+**R23. Controller or handlers?** How the control plane drives Kubernetes is
+*the* M2 architecture decision. (a) Imperative: HTTP handler calls client-go,
+creates namespace/Postgres/instance, writes a row. Fast to demo, but the
+control plane must then track drift, retries, and partial failures itself —
+and upgrades/staging-clones/quotas later are all reconciliation problems.
+(b) A `Tenant` CRD + controller-runtime reconcile loop: Kubernetes-native,
+self-healing, the platform-endgame shape — but controllers are a named LLM
+thin spot and the learning curve eats real weekends. My recommendation:
+**(b), CRD + controller**, accepting that M2 is tight — starting imperative
+means rebuilding on the operator model within a year, and reconciliation is
+this product's core competency. Agree?
+
+>
+
+**R24. No control-plane database in M2.** If Tenant CRs are the source of
+truth, the control plane needs no Postgres yet — the tenant list is the CR
+list, state is what the cluster reports. A database arrives with
+billing/quotas (2027). This keeps M2 honest and small. OK?
+
+>
+
+**R25. Tenant creation includes the Zitadel virtual instance.** The README's
+M2 line predates the spike ("namespace + Postgres + one app pod"); the
+System API seam is now proven, and a tenant you can't log in to is not a
+vertical slice. Recommendation: IAM provisioning is part of tenant creation
+in M2 — this is also exactly the seam the break-out flag hangs on later. OK?
+
+>
+
+**R26. The "one app pod" is the M1 stub relying party**, deployed per tenant
+and doing OIDC against the tenant's own instance — making the M2 demo
+"create tenant → log in *on that tenant*". Catalog stays a hardcoded Go
+slice until a second app exists (opinionated defaults: no config surface
+before there's something to configure). OK?
+
+>
+
+**R27. Control-plane admin auth in M2.** The operator logs in via OIDC
+against the *default* Zitadel instance (MSP staff live there; tenants live
+in their own instances). It's the M1 stub pattern copied over, and it keeps
+"auth is the dependency of everything" true in our own product.
+Alternative: skip auth for the skeleton and bolt it on in M3 — cheaper now,
+but bolted-on auth is exactly the anti-pattern we sell against. OK?
+
+>
+

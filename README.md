@@ -25,7 +25,9 @@ CLA Assistant bot. Project folders (`lib/`, `control-plane/`, `iam/`,
 **Now: M1 — confirmatory Zitadel integration spike (2-week time box;
 plan and settled parameters: `docs/m1-plan.md`, provenance in `Q&A.md`
 Round 4). Topology prior: one shared Zitadel deployment, one virtual
-instance per tenant, break-out seam designed in — ADR-0006 confirms.**
+instance per tenant, break-out seam designed in — ADR-0006 confirms.
+Sessions 1–2 done: virtual instances verified self-hosted, footprint flat.
+M2 plan drafted (`docs/m2-plan.md`, open parameters in `Q&A.md` Round 5).**
 *Update this block whenever reality changes — a stale status line is exactly
 the rot §8 warns against.*
 
