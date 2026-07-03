@@ -21,3 +21,11 @@ Feature: Tenant lifecycle
     Then the tenant "bdd" is gone within 2 minutes
     And the namespace "tenant-bdd" is gone within 2 minutes
     And OIDC discovery on the former issuer of tenant "bdd" stops answering
+
+  # Deleting soon after creation is the projection-lag window where the
+  # System API can 404 while the instance still exists — off-boarding must
+  # leave no orphaned Zitadel instance regardless (ADR-0006).
+  Scenario: Off-boarding leaves no orphaned instance
+    When I create a tenant "orphan" with display name "Orphan GmbH"
+    And I delete the tenant "orphan" once it has an instance
+    Then no Zitadel instance for tenant "orphan" remains within 3 minutes

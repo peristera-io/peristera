@@ -237,3 +237,29 @@ bottom. One entry = date, what happened, and pointers to artifacts.
   Ergonomos stub, but first its attachment list: personal-data metadata
   (incl. retention/legal holds), OpenFGA model conventions, audit
   events, search feed — each an ADR before the first byte is stored.**
+
+## 2026-07-04 — M2 close-out review (5 agents) + fixes
+
+- Ran five fresh-context reviewers (strategy, security, code quality,
+  docs, correctness bug-hunt). No architectural blockers; M2's design and
+  ADR-to-code fidelity held up. One real defect found and **fixed**:
+- **Delete path could orphan a tenant's Zitadel instance.** A System-API
+  404 from projection lag (delete shortly after create) was treated as
+  "already gone" and the finalizer removed — leaking identity data,
+  against ADR-0006's off-boarding contract. Fix (`deleteInstance` in
+  tenant_controller.go): a 404 is trusted only when the instance's OIDC
+  discovery has also stopped answering, else requeue; plus a
+  domain-adoption fallback when `status.InstanceID` was never persisted.
+  New godog scenario "Off-boarding leaves no orphaned instance" locks the
+  invariant (delete-before-Ready, then assert no instance by domain).
+  **Suite now 7 scenarios / 26 steps, green in-cluster.**
+- Also fixed: removed committed `iam/stub` binary (+gitignore); refreshed
+  the README status block (was dated 07-02 with 07-04 content), §5 M2
+  prose, and `iam/README.md` status label.
+- All other findings filed as GitHub issues (security authz model, CSRF,
+  devMode, initial-admin lifecycle, RBAC narrowing, `lib/` extraction at
+  M3, memory eviction, tests, key-hierarchy milestone home, etc.).
+  **Process note added (README §8 / working agreements): check the open
+  issue list when planning new work — fold matching follow-ups into the
+  milestone that next touches that area.**
+- **M2 declared complete.**

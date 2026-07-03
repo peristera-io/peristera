@@ -6,9 +6,11 @@ one **virtual instance per tenant**; a tenant can be broken out to a
 dedicated deployment when resources or legal requirements demand it
 (topology and break-out seam: `docs/m1-plan.md`, confirmed by ADR-0006).
 
-**Status: M1 spike in progress.** This folder currently holds the dev
-deployment and (next) the OIDC stub relying party. It becomes the real
-Peristera IAM service from M2 onward.
+**Status: M1 complete (ADR-0006).** This folder holds the Zitadel dev
+deployment (`deploy/dev/`) and the OIDC relying-party stub (`cmd/stub/`) —
+now also the first entry of the control plane's tenant app catalog. It
+grows into the real Peristera IAM service (branded user management,
+provisioning helpers) as the suite apps arrive.
 
 License: AGPL-3.0-or-later with the Peristera App Store distribution
 exception (`LICENSE-EXCEPTION.md`). Read the monorepo `README.md` first —

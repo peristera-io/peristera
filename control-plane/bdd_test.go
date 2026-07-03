@@ -8,6 +8,7 @@ package controlplane_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -173,6 +174,64 @@ func (w *world) gone(minutes int, get func() error) error {
 		time.Sleep(w.pollInterval)
 	}
 	return fmt.Errorf("still present after %dm", minutes)
+}
+
+// deleteOnceProvisioned deletes the tenant as soon as its virtual
+// instance exists (status.instanceId set), NOT waiting for Ready — this
+// aims at the projection-lag window where the System API may 404.
+func (w *world) deleteOnceProvisioned(slug string) error {
+	deadline := time.Now().Add(3 * time.Minute)
+	for time.Now().Before(deadline) {
+		t := &v1alpha1.Tenant{}
+		if err := w.k8s.Get(context.Background(), client.ObjectKey{Name: slug}, t); err == nil {
+			if t.Status.InstanceID != "" {
+				w.former[slug] = t.Status.Issuer
+				return w.k8s.Delete(context.Background(), t)
+			}
+		}
+		time.Sleep(w.pollInterval)
+	}
+	return fmt.Errorf("tenant %q never got an instance id", slug)
+}
+
+// noInstanceRemains asserts, via the System API, that no Zitadel instance
+// with the tenant's domain exists — the orphan-leak invariant.
+func (w *world) noInstanceRemains(slug string, minutes int) error {
+	iam, err := w.iamClient()
+	if err != nil {
+		return err
+	}
+	base := os.Getenv("TENANT_BASE_DOMAIN")
+	if base == "" {
+		base = "127.0.0.1.sslip.io"
+	}
+	domain := slug + "." + base
+	deadline := time.Now().Add(time.Duration(minutes) * time.Minute)
+	var last error
+	for time.Now().Before(deadline) {
+		_, err := iam.InstanceIDByDomain(context.Background(), domain)
+		if errors.Is(err, zitadel.ErrNotFound) {
+			return nil
+		}
+		last = err
+		time.Sleep(w.pollInterval)
+	}
+	if last == nil {
+		return fmt.Errorf("instance for %q still exists after %dm", slug, minutes)
+	}
+	return fmt.Errorf("instance for %q still present after %dm (last: %v)", slug, minutes, last)
+}
+
+func (w *world) iamClient() (*zitadel.Client, error) {
+	keyPath := os.Getenv("SYSTEM_USER_KEY")
+	if keyPath == "" {
+		return nil, fmt.Errorf("SYSTEM_USER_KEY required")
+	}
+	base := os.Getenv("ZITADEL_BASE_URL")
+	if base == "" {
+		base = "http://iam.127.0.0.1.sslip.io:9080"
+	}
+	return zitadel.NewFromKeyFile(base, "admin-client", keyPath)
 }
 
 func (w *world) formerIssuerDead(slug string) error {
@@ -438,6 +497,8 @@ func TestFeatures(t *testing.T) {
 			sc.Step(`^the app "([^"]*)" of tenant "([^"]*)" answers on its own domain within (\d+) minutes$`, w.appAnswers)
 			sc.Step(`^the app "([^"]*)" of tenant "([^"]*)" sends logins to the tenant's issuer$`, w.appLoginGoesToIssuer)
 			sc.Step(`^the namespace "([^"]*)" holds initial admin credentials$`, w.initialAdminExists)
+			sc.Step(`^I delete the tenant "([^"]*)" once it has an instance$`, w.deleteOnceProvisioned)
+			sc.Step(`^no Zitadel instance for tenant "([^"]*)" remains within (\d+) minutes$`, w.noInstanceRemains)
 			sc.Step(`^I list tenants via the API without credentials$`, w.apiListNoAuth)
 			sc.Step(`^the API answers (\d+)$`, w.apiAnswers)
 			sc.Step(`^I create tenant "([^"]*)" via the API$`, w.apiCreateTenant)

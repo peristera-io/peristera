@@ -65,16 +65,16 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	if !tenant.DeletionTimestamp.IsZero() {
 		// k8s garbage collection removes the namespace (owner reference);
 		// this hook removes what lives outside the cluster's GC reach:
-		// the tenant's Zitadel virtual instance.
-		if r.IAM != nil && tenant.Status.InstanceID != "" {
-			err := r.IAM.DeleteInstance(ctx, tenant.Status.InstanceID)
-			switch {
-			case errors.Is(err, zitadel.ErrNotFound):
-				// Already gone. (A fresh instance 404s for a few seconds
-				// after creation — acceptable here: deletion this close
-				// to creation retries via the error path below first.)
-			case err != nil:
-				lg.Error(err, "deleting zitadel instance", "instanceId", tenant.Status.InstanceID)
+		// the tenant's Zitadel virtual instance. Off-boarding is GDPR
+		// posture — a leaked instance holds tenant identity data, so we
+		// must not remove the finalizer until the instance is really gone.
+		if r.IAM != nil {
+			gone, err := r.deleteInstance(ctx, tenant)
+			if err != nil {
+				lg.Error(err, "deleting zitadel instance", "tenant", tenant.Name)
+				return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+			}
+			if !gone {
 				return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 			}
 		}
@@ -183,6 +183,44 @@ func (r *TenantReconciler) provisionIAM(ctx context.Context, tenant *v1alpha1.Te
 	tenant.Status.ClientID = clientID
 	lg.Info("tenant IAM provisioned", "tenant", tenant.Name, "issuer", issuer, "clientId", clientID)
 	return true, 0, nil
+}
+
+// deleteInstance removes the tenant's Zitadel virtual instance, returning
+// whether it is confirmed gone. It is safe to call repeatedly (the
+// finalizer requeues until gone==true).
+//
+// Two hazards ADR-0006 calls out are handled here:
+//  1. status.InstanceID may never have been persisted (a status-update
+//     failure between CreateInstance and its Update). Fall back to finding
+//     the instance by its domain so a stray isn't orphaned.
+//  2. A just-created instance 404s on the System API for a few seconds
+//     (projection lag). A 404 therefore does NOT prove the instance is
+//     gone — only that the System API can't see it yet. We trust it only
+//     when the instance's own OIDC discovery has also stopped answering;
+//     otherwise we report not-gone and let the caller requeue.
+func (r *TenantReconciler) deleteInstance(ctx context.Context, tenant *v1alpha1.Tenant) (gone bool, err error) {
+	id := tenant.Status.InstanceID
+	if id == "" {
+		id, err = r.IAM.InstanceIDByDomain(ctx, r.tenantDomain(tenant))
+		if errors.Is(err, zitadel.ErrNotFound) {
+			return true, nil // never created, or already deleted
+		}
+		if err != nil {
+			return false, err
+		}
+	}
+
+	err = r.IAM.DeleteInstance(ctx, id)
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, zitadel.ErrNotFound):
+		// Genuinely gone only if the instance is no longer serving; a live
+		// issuer means the 404 is projection lag, so keep requeueing.
+		return !r.IAM.DiscoveryAlive(ctx, r.tenantIssuer(tenant)), nil
+	default:
+		return false, err
+	}
 }
 
 func orgName(t *v1alpha1.Tenant) string {

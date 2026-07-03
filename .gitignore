@@ -22,3 +22,7 @@ vendor/
 # Node (Svelte islands, tooling)
 node_modules/
 .dev-secrets/
+
+# Stray Go build artifacts (build into bin/ instead)
+/iam/stub
+/control-plane/control-plane

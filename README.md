@@ -15,23 +15,31 @@ places that don't share a roof. That is the product thesis in one image.
 > made in dialogue are archived in `Q&A.md`; durable decisions get an ADR in
 > `adr/`.
 
-## Current status — updated 2026-07-02
+## Current status — updated 2026-07-04
 
-**M0 complete.** The monorepo lives at `github.com/peristera-io/peristera`:
-`LICENSE` (AGPL-3.0), repo-wide CLA with per-project templates
-(`templates/legal/`), bootstrap ADRs 0001–0005 (`adr/`), markdown + link CI,
-CLA Assistant bot. Project folders (`lib/`, `control-plane/`, `iam/`,
-`ergonomos/`, `kamara/`) do not exist yet — each appears with its first code.
-**M2 complete (2026-07-04, pending first CI e2e run): the tenant
-lifecycle is a product. From the HTMX UI (operator OIDC login) or
-`/api/v1` (OpenAPI-first): create a tenant → namespace + Postgres +
-Zitadel virtual instance + app pod + initial-admin credentials, ~25 s to
-Ready; log in on the tenant's own app; delete it cleanly. `Tenant` CRD +
-controller (ADR-0008), godog suite (6 scenarios) drives the dev loop and
-CI (`hack/dev-cluster.sh` brings up the full environment). M1 closed
-2026-07-03 (ADR-0006). Next: M3 — Ergonomos stub. Attach first: the
-personal-data metadata + OpenFGA + audit-events + search conventions
-(README §5 M0 deferrals).**
+**M0–M2 complete.** M0: the monorepo at `github.com/peristera-io/peristera`
+(`LICENSE` AGPL-3.0, repo-wide CLA + per-project templates, bootstrap ADRs
+0001–0005, markdown/link CI, CLA bot). M1 (closed 2026-07-03, ADR-0006):
+Zitadel integration confirmed — one shared deployment, one virtual instance
+per tenant. **M2 (2026-07-04): the tenant lifecycle is a product.** From the
+HTMX UI (operator OIDC login) or `/api/v1` (OpenAPI-first): create a tenant
+→ namespace + Postgres + Zitadel virtual instance + app pod + initial-admin
+credentials, ~25 s to Ready; log in on the tenant's own app; delete it
+cleanly. `Tenant` CRD + controller (ADR-0007/0008), godog suite (7
+scenarios) drives the dev loop and the e2e CI job (`hack/dev-cluster.sh`
+brings up the full environment). A five-agent review closed M2 out; the
+non-blocking findings are tracked as GitHub issues.
+
+Only `iam/` and `control-plane/` exist on disk; the other project folders
+(`lib/`, `ergonomos/`, `kamara/`) appear with their first code, per §8.
+
+**Next: M3 — Ergonomos stub.** Attach first (each an ADR before the first
+byte is stored): personal-data metadata (incl. retention/legal holds),
+OpenFGA model conventions, audit events, search feed — the M0 deferrals
+in §5. When planning, **check the open GitHub issues first** — several M2
+follow-ups (shared `lib/` OIDC/session code, operator authz model) are
+meant to be folded into the milestone that next touches that area.
+
 *Update this block whenever reality changes — a stale status line is exactly
 the rot §8 warns against.*
 
@@ -422,12 +430,14 @@ Built in public along the way.
   the dev cluster, one test user logs in to a stub page via OIDC, the
   integration approach written up as an ADR. It settles *how*, not
   *whether*.
-- **M2 — Control-plane skeleton**: the tenant lifecycle as a product. From
-  a minimal HTMX UI (admin login via OIDC): create a tenant — namespace,
-  dedicated Postgres, Zitadel virtual instance on its own domain, one app
-  pod — log in on it, delete it cleanly. `Tenant` CRD + controller
-  (architecture revisited after M6); tenant CRs are the source of truth,
-  no control-plane database until billing/quotas. Plan: `docs/m2-plan.md`.
+- **M2 — Control-plane skeleton** *(done 2026-07-04)*: the tenant lifecycle
+  as a product. From a minimal HTMX UI (operator OIDC login) or the
+  OpenAPI-first `/api/v1`: create a tenant — namespace, dedicated Postgres,
+  Zitadel virtual instance on its own domain (provisioned as part of tenant
+  creation), one app pod, and generated initial-admin credentials — log in
+  on it, delete it cleanly. `Tenant` CRD + controller (architecture
+  revisited after M6); tenant CRs are the source of truth, no control-plane
+  database until billing/quotas. Plan: `docs/m2-plan.md`.
 - **M3 — Ergonomos stub**: single-user task lists, minimal but pleasant.
   (Multi-user matters more than single-user polish — it comes right after the
   demo, before any bells and whistles.)
@@ -566,6 +576,11 @@ files. Documentation sites are generated from these Markdown files.
 6. **This README is load-bearing.** When strategy or architecture changes,
    change it here in the same commit — a stale strategy document is worse
    than none, especially when an LLM treats it as ground truth.
+7. **When planning new work, read the open GitHub issues first.** Reviews
+   file deferred findings as issues (labelled by area/milestone); before
+   scoping a milestone or session, check whether any issue touches the
+   code you're about to open and fold it in — deferred debt is paid when
+   you're already in that file, not in a separate pass that never comes.
 
 ## 9. Team & constraints
 
