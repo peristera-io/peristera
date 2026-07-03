@@ -110,6 +110,16 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		if err != nil {
 			return ctrl.Result{}, err
 		}
+		if iamReady {
+			// Apps need the issuer + clientId; the initial admin needs
+			// the instance to be serving. Both are idempotent.
+			if err := r.ensureApps(ctx, tenant, nsName); err != nil {
+				return ctrl.Result{}, err
+			}
+			if err := r.ensureInitialAdmin(ctx, tenant, nsName); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
 	}
 
 	phase := v1alpha1.TenantPending

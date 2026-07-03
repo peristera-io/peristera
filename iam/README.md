@@ -60,6 +60,11 @@ open http://iam.127.0.0.1.sslip.io:9080/ui/v2/login/loginname  # Login v2
 each tenant's virtual instance gets its own such domain (domain-per-tenant
 is a day-one rule; the issuer URL must never change).
 
+**In-cluster DNS (required once tenant app pods exist):** inside a pod,
+`127.0.0.1` is the pod itself, so those domains must resolve to Traefik
+instead — apply `deploy/dev/coredns-sslip.yaml` (instructions in the
+file, including the Traefik `:9080` service port the issuer URLs need).
+
 The Helm chart creates an `iam-admin` machine user (IAM_OWNER) with its key
 in the `iam-admin` Kubernetes secret — that is the Management/Admin API
 seam. Creating *virtual instances* needs the System API, below.

@@ -1,0 +1,35 @@
+# In-cluster DNS for the dev domains: *.127.0.0.1.sslip.io resolves to
+# 127.0.0.1 — correct on the host, wrong inside a pod (it would dial
+# itself). This CoreDNS override answers those names with Traefik's
+# cluster IP instead, so tenant pods reach their issuer through the same
+# URL the browser uses. Apply with the IP substituted:
+#
+#   TRAEFIK_IP=$(kubectl get svc traefik -n kube-system -o jsonpath='{.spec.clusterIP}')
+#   sed "s/TRAEFIK_IP/$TRAEFIK_IP/" coredns-sslip.yaml | kubectl apply -f -
+#   kubectl rollout restart deploy/coredns -n kube-system
+#
+# Companion (issuer URLs carry :9080, so Traefik must answer there
+# in-cluster too — svc-level remap onto the web entrypoint; note: a
+# traefik chart upgrade may drop this patch, re-apply then):
+#
+#   kubectl patch svc traefik -n kube-system --type=json \
+#     -p '[{"op":"add","path":"/spec/ports/-","value":{"name":"web-9080","port":9080,"protocol":"TCP","targetPort":"web"}}]'
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coredns-custom
+  namespace: kube-system
+data:
+  sslip.server: |
+    127.0.0.1.sslip.io:53 {
+        template IN A 127.0.0.1.sslip.io {
+            match "^(.*\.)?127\.0\.0\.1\.sslip\.io\.$"
+            answer "{{ .Name }} 60 IN A TRAEFIK_IP"
+        }
+        # Empty NOERROR for AAAA — without it those queries SERVFAIL and
+        # dual-stack resolvers may stall.
+        template IN AAAA 127.0.0.1.sslip.io {
+            match "^(.*\.)?127\.0\.0\.1\.sslip\.io\.$"
+            rcode NOERROR
+        }
+    }

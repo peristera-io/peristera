@@ -290,6 +290,36 @@ func (c *Client) oidcClientIDByName(ctx context.Context, tenantBase, orgID, proj
 	return out.Result[0].OIDCConfig.ClientID, nil
 }
 
+// EnsureHumanUser creates a human user with a password if no user with
+// that username exists yet (management v1 import — the endpoint that
+// accepts a password without an init flow).
+func (c *Client) EnsureHumanUser(ctx context.Context, tenantBase, orgID, username, email, password string) error {
+	var found struct {
+		Result []struct {
+			ID string `json:"id"`
+		} `json:"result"`
+	}
+	err := c.do(ctx, http.MethodPost, tenantBase+"/management/v1/users/_search", orgID, map[string]any{
+		"queries": []any{map[string]any{"userNameQuery": map[string]any{"userName": username}}},
+	}, &found)
+	if err != nil {
+		return err
+	}
+	if len(found.Result) > 0 {
+		return nil
+	}
+	return c.do(ctx, http.MethodPost, tenantBase+"/management/v1/users/human/_import", orgID, map[string]any{
+		"userName": username,
+		"profile":  map[string]any{"firstName": "Initial", "lastName": "Admin"},
+		"email":    map[string]any{"email": email, "isEmailVerified": true},
+		"password": password,
+		// The credential is a generated handover secret, not a human
+		// choice — forcing a change on first login is the product-correct
+		// follow-up once account recovery exists (M3+).
+		"passwordChangeRequired": false,
+	}, nil)
+}
+
 // DiscoveryAlive reports whether the instance behind issuer serves OIDC
 // discovery yet (a fresh instance lags for a few seconds).
 func (c *Client) DiscoveryAlive(ctx context.Context, issuer string) bool {

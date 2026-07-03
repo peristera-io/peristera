@@ -153,3 +153,31 @@ bottom. One entry = date, what happened, and pointers to artifacts.
 - **Next: session 4 — deploy the stub app pod per tenant from the
   hardcoded catalog (ingress at `stub.<slug>.<base>`), human user
   creation, login on a freshly provisioned tenant end to end.**
+
+## 2026-07-03 — M2 session 4: the full tenant slice, one kubectl apply
+
+- Spec-first again: `tenant_apps.feature` red → green. **4 scenarios /
+  17 steps pass**: the catalog app answers on `stub.<slug>.<base>`, sends
+  logins to the tenant's own issuer, and the namespace holds generated
+  `initial-admin` credentials (the MSP handover artifact).
+- **Catalog env contract defined** (every app pod gets `OIDC_ISSUER`,
+  `OIDC_CLIENT_ID`, `PUBLIC_URL`, `LISTEN_ADDR`); stub updated to it,
+  containerized (distroless), imported into k3d. Reconcile deploys
+  Deployment + Service + Ingress per catalog entry (create-only for M2;
+  drift/upgrades are the 2027 alpha). Initial admin via management-v1
+  user import; password satisfies the default complexity policy.
+- **Architecture gotcha found and fixed:** inside a pod,
+  `*.127.0.0.1.sslip.io` resolves to the pod itself — tenant pods
+  couldn't reach their issuer. Fix: CoreDNS override answering those
+  names with Traefik's cluster IP (`iam/deploy/dev/coredns-sslip.yaml`,
+  incl. empty-NOERROR AAAA) + Traefik service port 9080 remapped onto
+  the web entrypoint, so the *same issuer URL* works from browser and
+  pod. In real environments this is ordinary split-horizon DNS; worth a
+  line in the k3s-installer design later.
+- **Demo:** `kubectl apply` Tenant `demo3` → 30s later a real browser
+  logs in at `stub.demo3.127.0.0.1.sslip.io:9080` as "Initial Admin"
+  with the credentials from the secret. Screenshot `/tmp/demo3-logged-in.png`;
+  `demo3` left running as the standing demo tenant.
+- **Next: session 5 — OpenAPI-first `/api/v1`, HTMX UI with operator
+  OIDC login, in-cluster deployment, godog suite into CI (detailed plan
+  in `docs/m2-plan.md`).**

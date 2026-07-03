@@ -2,11 +2,15 @@
 // Peristera app will copy — auth-code + PKCE against a tenant's own
 // Zitadel virtual instance (its issuer is the tenant domain).
 //
-//	STUB_ISSUER    OIDC issuer (default http://demo.127.0.0.1.sslip.io:9080)
-//	STUB_CLIENT_ID client ID of a public (PKCE) app in that instance
-//	STUB_ADDR      listen address (default :5556)
-//	STUB_REDIRECT  redirect URL (default http://localhost:5556/auth/callback)
+// Configuration follows the catalog env contract every Peristera app pod
+// receives from the control plane (ADR-0008):
 //
+//	OIDC_ISSUER    the tenant's issuer (its Zitadel virtual instance)
+//	OIDC_CLIENT_ID client ID of the tenant's public (PKCE) app
+//	PUBLIC_URL     this app's external base URL (derives redirect URLs)
+//	LISTEN_ADDR    listen address (default :5556)
+//
+// (Legacy STUB_* variables remain as fallbacks for bare local runs.)
 // Sessions are an in-memory map — this is spike code; the real session
 // convention (and its ADR) comes with the control plane in M2.
 package main
@@ -20,6 +24,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -150,16 +155,20 @@ func (s *server) logout(w http.ResponseWriter, r *http.Request) {
 	}
 	end := s.issuer + "/oidc/v1/end_session?" + url.Values{
 		"id_token_hint":            {sess.IDToken},
-		"post_logout_redirect_uri": {env("STUB_POST_LOGOUT", "http://localhost:5556/")},
+		"post_logout_redirect_uri": {publicURL() + "/"},
 	}.Encode()
 	http.Redirect(w, r, end, http.StatusFound)
 }
 
+func publicURL() string {
+	return strings.TrimSuffix(env("PUBLIC_URL", "http://localhost:5556"), "/")
+}
+
 func main() {
-	issuer := env("STUB_ISSUER", "http://demo.127.0.0.1.sslip.io:9080")
-	clientID := os.Getenv("STUB_CLIENT_ID")
+	issuer := env("OIDC_ISSUER", env("STUB_ISSUER", "http://demo.127.0.0.1.sslip.io:9080"))
+	clientID := env("OIDC_CLIENT_ID", os.Getenv("STUB_CLIENT_ID"))
 	if clientID == "" {
-		log.Fatal("STUB_CLIENT_ID is required")
+		log.Fatal("OIDC_CLIENT_ID is required")
 	}
 
 	provider, err := oidc.NewProvider(context.Background(), issuer)
@@ -172,7 +181,7 @@ func main() {
 		oauth: oauth2.Config{
 			ClientID:    clientID,
 			Endpoint:    provider.Endpoint(),
-			RedirectURL: env("STUB_REDIRECT", "http://localhost:5556/auth/callback"),
+			RedirectURL: publicURL() + "/auth/callback",
 			Scopes:      []string{oidc.ScopeOpenID, "profile", "email"},
 		},
 		sessions: map[string]session{},
@@ -185,7 +194,7 @@ func main() {
 	mux.HandleFunc("GET /auth/callback", s.callback)
 	mux.HandleFunc("GET /auth/logout", s.logout)
 
-	addr := env("STUB_ADDR", ":5556")
+	addr := env("LISTEN_ADDR", env("STUB_ADDR", ":5556"))
 	log.Printf("stub relying party on %s (issuer %s)", addr, issuer)
 	log.Fatal(http.ListenAndServe(addr, mux))
 }

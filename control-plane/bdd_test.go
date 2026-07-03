@@ -188,6 +188,78 @@ func (w *world) formerIssuerDead(slug string) error {
 	return lastErr
 }
 
+func (w *world) appURL(slug, app string) string {
+	base := os.Getenv("TENANT_BASE_DOMAIN")
+	if base == "" {
+		base = "127.0.0.1.sslip.io"
+	}
+	port := os.Getenv("TENANT_EXTERNAL_PORT")
+	if port == "" {
+		port = "9080"
+	}
+	return fmt.Sprintf("http://%s.%s.%s:%s", app, slug, base, port)
+}
+
+func (w *world) appAnswers(app, slug string, minutes int) error {
+	url := w.appURL(slug, app)
+	deadline := time.Now().Add(time.Duration(minutes) * time.Minute)
+	var last string
+	for time.Now().Before(deadline) {
+		resp, err := http.Get(url + "/")
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return nil
+			}
+			last = fmt.Sprintf("status %d", resp.StatusCode)
+		} else {
+			last = err.Error()
+		}
+		time.Sleep(w.pollInterval)
+	}
+	return fmt.Errorf("app %s of %s never answered on %s: %s", app, slug, url, last)
+}
+
+func (w *world) appLoginGoesToIssuer(app, slug string) error {
+	t := &v1alpha1.Tenant{}
+	if err := w.k8s.Get(context.Background(), client.ObjectKey{Name: slug}, t); err != nil {
+		return err
+	}
+	noRedirect := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	resp, err := noRedirect.Get(w.appURL(slug, app) + "/auth/login")
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	loc := resp.Header.Get("Location")
+	if resp.StatusCode != http.StatusFound || !strings.HasPrefix(loc, t.Status.Issuer+"/") {
+		return fmt.Errorf("login redirect: status=%d location=%q issuer=%q",
+			resp.StatusCode, loc, t.Status.Issuer)
+	}
+	return nil
+}
+
+func (w *world) initialAdminExists(ns string) error {
+	sec := &corev1.Secret{}
+	if err := w.k8s.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "initial-admin"}, sec); err != nil {
+		return err
+	}
+	if len(sec.Data["username"]) == 0 || len(sec.Data["password"]) == 0 {
+		return fmt.Errorf("initial-admin secret incomplete: keys=%v", keys(sec.Data))
+	}
+	return nil
+}
+
+func keys(m map[string][]byte) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
 func TestFeatures(t *testing.T) {
 	if os.Getenv("PERISTERA_E2E") == "" {
 		t.Skip("set PERISTERA_E2E=1 to run against the dev cluster")
@@ -220,6 +292,9 @@ func TestFeatures(t *testing.T) {
 			sc.Step(`^the tenant "([^"]*)" is gone within (\d+) minutes$`, w.tenantGone)
 			sc.Step(`^the namespace "([^"]*)" is gone within (\d+) minutes$`, w.namespaceGone)
 			sc.Step(`^OIDC discovery on the former issuer of tenant "([^"]*)" stops answering$`, w.formerIssuerDead)
+			sc.Step(`^the app "([^"]*)" of tenant "([^"]*)" answers on its own domain within (\d+) minutes$`, w.appAnswers)
+			sc.Step(`^the app "([^"]*)" of tenant "([^"]*)" sends logins to the tenant's issuer$`, w.appLoginGoesToIssuer)
+			sc.Step(`^the namespace "([^"]*)" holds initial admin credentials$`, w.initialAdminExists)
 		},
 		Options: &godog.Options{
 			Format: "pretty", Paths: []string{"features"}, Strict: true, TestingT: t,
