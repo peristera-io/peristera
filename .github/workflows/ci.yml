@@ -40,6 +40,33 @@ jobs:
             cd - >/dev/null
           done
 
+  e2e:
+    name: e2e (godog on k3d)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: Install k3d
+        run: curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
+      - name: Bring up the full dev environment
+        run: ./hack/dev-cluster.sh
+      - name: Run the feature suite
+        working-directory: control-plane
+        run: |
+          SYSTEM_USER_KEY="$GITHUB_WORKSPACE/.dev-secrets/admin-client.key" \
+          CP_BASE_URL=http://cp.127.0.0.1.sslip.io:9080 \
+          PERISTERA_E2E=1 go test -run TestFeatures -timeout 20m -v .
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          kubectl get pods -A
+          kubectl get tenants -o yaml || true
+          kubectl logs deploy/control-plane -n peristera-system --tail=100 || true
+          kubectl logs deploy/zitadel -n peristera-system --tail=50 || true
+
   links:
     name: link check
     runs-on: ubuntu-latest

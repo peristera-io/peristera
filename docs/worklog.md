@@ -208,3 +208,32 @@ bottom. One entry = date, what happened, and pointers to artifacts.
 - **Next: session 6 — Dockerfile + deploy manifests + CI job; then the
   M2 write-up (guidelines entry on controllers, README §5 update, demo
   recording).**
+
+## 2026-07-04 — M2 session 6: in-cluster, one-command env, CI — M2 done
+
+- Control plane containerized (distroless) and **running in-cluster**:
+  ServiceAccount + least-privilege RBAC, Deployment mounting
+  `admin-client-tls`, ingress at `cp.127.0.0.1.sslip.io` — full suite
+  green against the in-cluster deployment (no local controller).
+- Bugs the move surfaced, all fixed: Zitadel's wildcard ingress swallowed
+  the `cp.` host (traefik router priority annotation); **`iam` and `cp`
+  are now reserved slugs** (CEL, rejected by the API server); rolling
+  updates deadlocked on leader election (the UI/API Runnable now
+  implements `NeedLeaderElection() = false`); `EnsureWebApp` reconciles
+  redirect URIs so one logical app serves several public URLs.
+- Leader election on — a local dev run and the in-cluster controller can
+  no longer double-reconcile.
+- **`hack/dev-cluster.sh`**: zero → full environment (k3d, CNPG, Zitadel,
+  in-cluster DNS, images, control plane), idempotent, keypair generated
+  into gitignored `.dev-secrets/`. It is also the CI recipe — new **e2e
+  job** runs the godog suite on a fresh k3d in every push/PR (first run
+  verifies on push). Suggested follow-up once it proves stable: add it to
+  the required status checks.
+- `guidelines/kubernetes-controllers.md` written (the ADR-0002 thin-spot
+  mitigation): reconcile shape, idempotency records, finalizer rules,
+  leader election, the pkill-by-port gotcha.
+- **M2 done** (README §5 + status updated; `docs/m2-plan.md` closed).
+  Kill-criterion clock note: still pre-M6, on plan. **Next: M3 —
+  Ergonomos stub, but first its attachment list: personal-data metadata
+  (incl. retention/legal holds), OpenFGA model conventions, audit
+  events, search feed — each an ADR before the first byte is stored.**

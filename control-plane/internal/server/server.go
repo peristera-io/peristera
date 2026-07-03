@@ -38,6 +38,12 @@ type Server struct {
 	tokens   *tokenCache
 }
 
+// NeedLeaderElection: the UI/API serves on every replica; only the
+// reconciler is single-active. Without this, a rolling update deadlocks —
+// the new pod's server would wait for the lease the old pod still holds,
+// and the readiness probe would never pass.
+func (s *Server) NeedLeaderElection() bool { return false }
+
 // Start implements manager.Runnable: bootstrap our own OIDC app in the
 // default instance (idempotent — the same path tenants take), then serve.
 func (s *Server) Start(ctx context.Context) error {

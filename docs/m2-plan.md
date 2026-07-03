@@ -3,8 +3,12 @@
 - **Size:** ≤ 6 weekends (sizing rule, README §5). Honest warning: with a
   Kubernetes controller in scope this is *tight* — the abort valve is
   cutting polish, never the vertical slice.
-- **Status:** parameters settled (`Q&A.md` Round 5, 2026-07-03); starts
-  after M1 closes (ADR-0006 accepted).
+- **Status:** **done (2026-07-04)** — sessions 1–6 complete; superseded
+  by ADR-0007/0008, `guidelines/kubernetes-controllers.md`, and the
+  worklog. DoD accounting: everything met (UI create→login→delete, API,
+  in-cluster + RBAC, godog suite incl. CI job) except the demo
+  *recording* — screenshots + the reusable playwright scripts stand in;
+  the CI e2e job's first run happens on push.
 - **Lifecycle:** working document, superseded by the M2 ADRs and worklog.
 
 ## Goal

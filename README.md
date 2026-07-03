@@ -22,13 +22,16 @@ places that don't share a roof. That is the product thesis in one image.
 (`templates/legal/`), bootstrap ADRs 0001–0005 (`adr/`), markdown + link CI,
 CLA Assistant bot. Project folders (`lib/`, `control-plane/`, `iam/`,
 `ergonomos/`, `kamara/`) do not exist yet — each appears with its first code.
-**M1 complete (2026-07-03, well inside the 2-week box): Zitadel confirmed
-— one shared deployment, one virtual instance per tenant, verified end to
-end on k3d (tenant user logs in to the Go stub via OIDC). Decision record:
-ADR-0006; evidence and gotchas: `iam/README.md`, worklog. One item moved
-deliberately to M2: porting the proven provisioning calls to Go, where the
-tenant controller needs them anyway. Next: M2 — control-plane skeleton
-(`docs/m2-plan.md`, settled in `Q&A.md` Round 5).**
+**M2 complete (2026-07-04, pending first CI e2e run): the tenant
+lifecycle is a product. From the HTMX UI (operator OIDC login) or
+`/api/v1` (OpenAPI-first): create a tenant → namespace + Postgres +
+Zitadel virtual instance + app pod + initial-admin credentials, ~25 s to
+Ready; log in on the tenant's own app; delete it cleanly. `Tenant` CRD +
+controller (ADR-0008), godog suite (6 scenarios) drives the dev loop and
+CI (`hack/dev-cluster.sh` brings up the full environment). M1 closed
+2026-07-03 (ADR-0006). Next: M3 — Ergonomos stub. Attach first: the
+personal-data metadata + OpenFGA + audit-events + search conventions
+(README §5 M0 deferrals).**
 *Update this block whenever reality changes — a stale status line is exactly
 the rot §8 warns against.*
 

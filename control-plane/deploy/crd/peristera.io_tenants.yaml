@@ -59,13 +59,17 @@ spec:
                   or domains.
                 type: string
               slug:
-                description: 'Slug is a DNS label: the permanent, human-chosen tenant
-                  identifier.'
+                description: |-
+                  Slug is a DNS label: the permanent, human-chosen tenant identifier.
+                  "iam" and "cp" are the platform's own hosts under the base domain
+                  and therefore reserved.
                 pattern: ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$
                 type: string
                 x-kubernetes-validations:
                 - message: slug is immutable
                   rule: self == oldSelf
+                - message: slug is reserved
+                  rule: '!(self in [''iam'', ''cp''])'
             required:
             - slug
             type: object

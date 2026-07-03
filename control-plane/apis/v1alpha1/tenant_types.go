@@ -15,7 +15,10 @@ import (
 // must never change.
 type TenantSpec struct {
 	// Slug is a DNS label: the permanent, human-chosen tenant identifier.
+	// "iam" and "cp" are the platform's own hosts under the base domain
+	// and therefore reserved.
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="slug is immutable"
+	// +kubebuilder:validation:XValidation:rule="!(self in ['iam', 'cp'])",message="slug is reserved"
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`
 	Slug string `json:"slug"`
 	// DisplayName may change freely; it never appears in URLs or domains.

@@ -232,26 +232,47 @@ func (c *Client) projectIDByName(ctx context.Context, tenantBase, orgID, name st
 	return out.Result[0].ID, nil
 }
 
-func (c *Client) oidcClientIDByName(ctx context.Context, tenantBase, orgID, projectID, name string) (string, error) {
+type oidcApp struct {
+	ID         string `json:"id"`
+	OIDCConfig struct {
+		ClientID               string   `json:"clientId"`
+		RedirectURIs           []string `json:"redirectUris"`
+		PostLogoutRedirectURIs []string `json:"postLogoutRedirectUris"`
+	} `json:"oidcConfig"`
+}
+
+func (c *Client) oidcAppByName(ctx context.Context, base, orgID, projectID, name string) (*oidcApp, error) {
 	var out struct {
-		Result []struct {
-			OIDCConfig struct {
-				ClientID string `json:"clientId"`
-			} `json:"oidcConfig"`
-		} `json:"result"`
+		Result []oidcApp `json:"result"`
 	}
 	err := c.do(ctx, http.MethodPost,
-		fmt.Sprintf("%s/management/v1/projects/%s/apps/_search", tenantBase, projectID), orgID,
+		fmt.Sprintf("%s/management/v1/projects/%s/apps/_search", base, projectID), orgID,
 		map[string]any{
 			"queries": []any{map[string]any{"nameQuery": map[string]any{"name": name}}},
 		}, &out)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if len(out.Result) == 0 || out.Result[0].OIDCConfig.ClientID == "" {
-		return "", ErrNotFound
+		return nil, ErrNotFound
 	}
-	return out.Result[0].OIDCConfig.ClientID, nil
+	return &out.Result[0], nil
+}
+
+// union returns base plus whatever from extra is missing, reporting
+// whether anything was added.
+func union(base, extra []string) ([]string, bool) {
+	seen := map[string]bool{}
+	for _, v := range base {
+		seen[v] = true
+	}
+	added := false
+	for _, v := range extra {
+		if !seen[v] {
+			base, seen[v], added = append(base, v), true, true
+		}
+	}
+	return base, added
 }
 
 // EnsureHumanUser creates a human user with a password if no user with
@@ -355,8 +376,30 @@ func (c *Client) EnsureWebApp(ctx context.Context, base, orgID, name string, red
 	if err != nil {
 		return "", err
 	}
-	if clientID, err := c.oidcClientIDByName(ctx, base, orgID, projectID, name); err == nil {
-		return clientID, nil
+	if app, err := c.oidcAppByName(ctx, base, orgID, projectID, name); err == nil {
+		// Reconcile redirect URIs: the same logical app may serve several
+		// public URLs over time (localhost dev, in-cluster ingress).
+		redirects, addR := union(app.OIDCConfig.RedirectURIs, redirectURIs)
+		logouts, addL := union(app.OIDCConfig.PostLogoutRedirectURIs, postLogoutURIs)
+		if addR || addL {
+			err := c.do(ctx, http.MethodPut,
+				fmt.Sprintf("%s/management/v1/projects/%s/apps/%s/oidc_config", base, projectID, app.ID), orgID,
+				map[string]any{
+					"redirectUris":             redirects,
+					"postLogoutRedirectUris":   logouts,
+					"responseTypes":            []string{"OIDC_RESPONSE_TYPE_CODE"},
+					"grantTypes":               []string{"OIDC_GRANT_TYPE_AUTHORIZATION_CODE"},
+					"appType":                  "OIDC_APP_TYPE_WEB",
+					"authMethodType":           "OIDC_AUTH_METHOD_TYPE_NONE",
+					"accessTokenType":          "OIDC_TOKEN_TYPE_BEARER",
+					"devMode":                  true,
+					"idTokenUserinfoAssertion": true,
+				}, nil)
+			if err != nil {
+				return "", err
+			}
+		}
+		return app.OIDCConfig.ClientID, nil
 	} else if !errors.Is(err, ErrNotFound) {
 		return "", err
 	}

@@ -33,7 +33,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{Scheme: scheme})
+	// Leader election: only one controller acts, even when a local dev
+	// run overlaps the in-cluster deployment.
+	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+		Scheme:                  scheme,
+		LeaderElection:          true,
+		LeaderElectionID:        "control-plane.peristera.io",
+		LeaderElectionNamespace: env("CP_NAMESPACE", "peristera-system"),
+	})
 	if err != nil {
 		lg.Error(err, "creating manager")
 		os.Exit(1)

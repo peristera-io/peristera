@@ -5,6 +5,8 @@ whenever a pattern proves itself twice (working agreement #3 in the root
 README). Guidelines are prescriptive ("do X"); the *why* behind them lives in
 ADRs.
 
-Currently empty: the first entries are expected to emerge during M1–M4
-(Go service layout, HTMX patterns, error handling, the personal-data
-metadata convention's usage guide).
+- [Kubernetes controllers](kubernetes-controllers.md) — reconcile shape,
+  idempotency records, finalizers, leader election (from M2)
+
+Expected next (M3–M4): Go service layout, HTMX patterns, error handling,
+the personal-data metadata convention's usage guide.

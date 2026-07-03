@@ -21,3 +21,4 @@ vendor/
 
 # Node (Svelte islands, tooling)
 node_modules/
+.dev-secrets/
