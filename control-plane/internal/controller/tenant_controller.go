@@ -6,9 +6,13 @@ package controller
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -18,6 +22,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/peristera-io/peristera/control-plane/apis/v1alpha1"
+	"github.com/peristera-io/peristera/control-plane/internal/zitadel"
 )
 
 const finalizer = "peristera.io/tenant"
@@ -28,6 +33,25 @@ var cnpgGVK = schema.GroupVersionKind{
 
 type TenantReconciler struct {
 	client.Client
+	// IAM provisioning (ADR-0006 §6); nil disables it (unit tests, CI).
+	IAM *zitadel.Client
+	// BaseDomain is the suffix under which tenant domains live
+	// (dev: 127.0.0.1.sslip.io); ExternalPort its public port.
+	BaseDomain   string
+	ExternalPort string
+	// LoginDomain is the deployment's ExternalDomain — every new
+	// instance must trust it or the shared Login v2 cannot serve it.
+	LoginDomain string
+}
+
+func (r *TenantReconciler) tenantDomain(t *v1alpha1.Tenant) string {
+	return t.Spec.Slug + "." + r.BaseDomain
+}
+
+func (r *TenantReconciler) tenantIssuer(t *v1alpha1.Tenant) string {
+	// http is dev-grade; the scheme becomes config with the first TLS
+	// environment (M6).
+	return fmt.Sprintf("http://%s:%s", r.tenantDomain(t), r.ExternalPort)
 }
 
 func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -40,8 +64,20 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 
 	if !tenant.DeletionTimestamp.IsZero() {
 		// k8s garbage collection removes the namespace (owner reference);
-		// this hook is for cleanup outside the cluster — the tenant's
-		// Zitadel virtual instance, once session 3 wires it in.
+		// this hook removes what lives outside the cluster's GC reach:
+		// the tenant's Zitadel virtual instance.
+		if r.IAM != nil && tenant.Status.InstanceID != "" {
+			err := r.IAM.DeleteInstance(ctx, tenant.Status.InstanceID)
+			switch {
+			case errors.Is(err, zitadel.ErrNotFound):
+				// Already gone. (A fresh instance 404s for a few seconds
+				// after creation — acceptable here: deletion this close
+				// to creation retries via the error path below first.)
+			case err != nil:
+				lg.Error(err, "deleting zitadel instance", "instanceId", tenant.Status.InstanceID)
+				return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+			}
+		}
 		if controllerutil.RemoveFinalizer(tenant, finalizer) {
 			return ctrl.Result{}, r.Update(ctx, tenant)
 		}
@@ -62,20 +98,100 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 
-	phase := v1alpha1.TenantPending
-	if ready, err := r.databaseReady(ctx, nsName); err != nil {
+	dbReady, err := r.databaseReady(ctx, nsName)
+	if err != nil {
 		return ctrl.Result{}, err
-	} else if ready {
-		phase = v1alpha1.TenantReady
 	}
-	if tenant.Status.Phase != phase {
-		tenant.Status.Phase = phase
-		if err := r.Status().Update(ctx, tenant); err != nil {
+
+	iamReady := r.IAM == nil // without an IAM client, IAM isn't part of Ready
+	var requeue time.Duration
+	if r.IAM != nil {
+		iamReady, requeue, err = r.provisionIAM(ctx, tenant)
+		if err != nil {
 			return ctrl.Result{}, err
 		}
+	}
+
+	phase := v1alpha1.TenantPending
+	if dbReady && iamReady {
+		phase = v1alpha1.TenantReady
+	}
+	setCondition(tenant, "DatabaseReady", dbReady)
+	setCondition(tenant, "IAMProvisioned", iamReady)
+	if tenant.Status.Phase != phase {
+		tenant.Status.Phase = phase
 		lg.Info("tenant phase", "tenant", tenant.Name, "phase", phase)
 	}
-	return ctrl.Result{}, nil
+	if err := r.Status().Update(ctx, tenant); err != nil {
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{RequeueAfter: requeue}, nil
+}
+
+// provisionIAM walks the ADR-0006 §6 sequence, one durable step per
+// reconcile: instance → (instance serving) → trusted domain + project +
+// PKCE app. status.instanceId / status.clientId are the idempotency
+// records. Returns done, requeue-hint, error.
+func (r *TenantReconciler) provisionIAM(ctx context.Context, tenant *v1alpha1.Tenant) (bool, time.Duration, error) {
+	lg := log.FromContext(ctx)
+	domain, issuer := r.tenantDomain(tenant), r.tenantIssuer(tenant)
+
+	if tenant.Status.InstanceID == "" {
+		id, err := r.IAM.InstanceIDByDomain(ctx, domain) // adopt strays
+		if errors.Is(err, zitadel.ErrNotFound) {
+			id, err = r.IAM.CreateInstance(ctx, tenant.Spec.Slug, domain, orgName(tenant))
+			lg.Info("created zitadel instance", "tenant", tenant.Name, "instanceId", id)
+		}
+		if err != nil {
+			return false, 0, err
+		}
+		tenant.Status.InstanceID = id
+		return false, 3 * time.Second, nil // persist the ID before moving on
+	}
+
+	if tenant.Status.ClientID != "" {
+		return true, 0, nil
+	}
+
+	if !r.IAM.DiscoveryAlive(ctx, issuer) {
+		return false, 3 * time.Second, nil // fresh instance, projections lag
+	}
+	if err := r.IAM.AddTrustedDomain(ctx, issuer, tenant.Status.InstanceID, r.LoginDomain); err != nil {
+		return false, 0, err
+	}
+	orgID, err := r.IAM.FirstOrgID(ctx, issuer)
+	if err != nil {
+		return false, 0, err
+	}
+	appBase := fmt.Sprintf("http://stub.%s:%s", domain, r.ExternalPort)
+	clientID, err := r.IAM.EnsureStubApp(ctx, issuer, orgID,
+		[]string{appBase + "/auth/callback"}, []string{appBase + "/"})
+	if err != nil {
+		return false, 0, err
+	}
+	tenant.Status.Issuer = issuer
+	tenant.Status.ClientID = clientID
+	lg.Info("tenant IAM provisioned", "tenant", tenant.Name, "issuer", issuer, "clientId", clientID)
+	return true, 0, nil
+}
+
+func orgName(t *v1alpha1.Tenant) string {
+	if t.Spec.DisplayName != "" {
+		return t.Spec.DisplayName
+	}
+	return t.Spec.Slug
+}
+
+func setCondition(t *v1alpha1.Tenant, kind string, ok bool) {
+	status := metav1.ConditionFalse
+	reason := "Pending"
+	if ok {
+		status, reason = metav1.ConditionTrue, "Done"
+	}
+	meta.SetStatusCondition(&t.Status.Conditions, metav1.Condition{
+		Type: kind, Status: status, Reason: reason,
+		ObservedGeneration: t.Generation,
+	})
 }
 
 func (r *TenantReconciler) ensureNamespace(ctx context.Context, tenant *v1alpha1.Tenant, name string) error {

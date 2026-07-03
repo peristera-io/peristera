@@ -131,6 +131,12 @@ spec:
                   - type
                   type: object
                 type: array
+              instanceId:
+                description: |-
+                  InstanceID of the tenant's Zitadel virtual instance — the
+                  idempotency record for IAM provisioning and the handle for
+                  off-boarding (ADR-0006).
+                type: string
               issuer:
                 description: Issuer is the tenant's OIDC issuer URL (its permanent
                   domain).

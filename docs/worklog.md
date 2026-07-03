@@ -125,3 +125,31 @@ bottom. One entry = date, what happened, and pointers to artifacts.
   reconcile loop (the ADR-0006 §6 sequence, ported from the spike's curl
   calls to Go), issuer + clientId into Tenant status, external cleanup in
   the finalizer.**
+
+## 2026-07-03 — M2 session 3: IAM in reconcile, spec-first with godog
+
+- **BDD loop adopted** (working agreement #2, deviation in sessions 1–2
+  acknowledged): `features/tenant_lifecycle.feature` written first, run
+  red (issuer/clientId steps failed as expected), then implemented to
+  green. **3 scenarios / 13 steps pass against the live cluster**:
+  provision → Ready with a serving OIDC issuer, slug immutability,
+  off-boarding kills the Zitadel instance (discovery stops answering).
+  Suite is `PERISTERA_E2E=1`-guarded; joins CI when containerized.
+- `internal/zitadel`: system-API client (self-signed RS256 JWT, fixed
+  audience per ADR-0006 §5) — instance create/search/delete, trusted
+  domain, org search, idempotent project + PKCE app via search-by-name.
+- Reconcile walks ADR-0006 §6 one durable step per pass
+  (`status.instanceId` / `status.clientId` as idempotency records,
+  adoption by domain search if status is lost); finalizer deletes the
+  instance before GC takes the namespace. Conditions DatabaseReady /
+  IAMProvisioned; phase Ready = both.
+- New instances get a **machine** org owner (`org-admin`) — human users
+  arrive through the product (session 4/5 login demo creates one).
+- Private key joined the `admin-client-tls` Secret (`tls.key`);
+  controller config via env (`SYSTEM_USER_KEY` switches IAM on).
+- Gotcha: `pkill -f cmd/controller` misses the compiled `go run` child —
+  the zombie pre-IAM controller kept reconciling and held :8080. Kill the
+  listener by port when in doubt.
+- **Next: session 4 — deploy the stub app pod per tenant from the
+  hardcoded catalog (ingress at `stub.<slug>.<base>`), human user
+  creation, login on a freshly provisioned tenant end to end.**

@@ -25,9 +25,17 @@ control-plane/
 
 ## Dev loop
 
+The loop is spec-first (working agreement #2): change
+`features/*.feature`, watch it fail, implement, watch it pass.
+
 ```sh
+# BDD suite against the live dev cluster (controller must be running):
+PERISTERA_E2E=1 go test -run TestFeatures -timeout 15m .
+
 kubectl apply -f deploy/crd/peristera.io_tenants.yaml
-go run ./cmd/controller   # against the current kubeconfig (k3d)
+# SYSTEM_USER_KEY enables IAM provisioning (ADR-0006 §6); without it the
+# controller only manages namespace + database:
+SYSTEM_USER_KEY=path/to/admin-client.key go run ./cmd/controller
 kubectl apply -f - <<'EOF'
 apiVersion: peristera.io/v1alpha1
 kind: Tenant

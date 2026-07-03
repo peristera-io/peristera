@@ -12,7 +12,15 @@ import (
 
 	"github.com/peristera-io/peristera/control-plane/apis/v1alpha1"
 	"github.com/peristera-io/peristera/control-plane/internal/controller"
+	"github.com/peristera-io/peristera/control-plane/internal/zitadel"
 )
+
+func env(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
 
 func main() {
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
@@ -29,7 +37,29 @@ func main() {
 		lg.Error(err, "creating manager")
 		os.Exit(1)
 	}
-	if err := (&controller.TenantReconciler{Client: mgr.GetClient()}).SetupWithManager(mgr); err != nil {
+	rec := &controller.TenantReconciler{
+		Client:       mgr.GetClient(),
+		BaseDomain:   env("TENANT_BASE_DOMAIN", "127.0.0.1.sslip.io"),
+		ExternalPort: env("TENANT_EXTERNAL_PORT", "9080"),
+		LoginDomain:  env("ZITADEL_EXTERNAL_DOMAIN", "iam.127.0.0.1.sslip.io"),
+	}
+	// IAM provisioning switches on when the system-user key is provided
+	// (dev: a file path; in-cluster: the mounted admin-client-tls Secret).
+	if keyPath := os.Getenv("SYSTEM_USER_KEY"); keyPath != "" {
+		iam, err := zitadel.NewFromKeyFile(
+			env("ZITADEL_BASE_URL", "http://iam.127.0.0.1.sslip.io:9080"),
+			env("SYSTEM_USER_ID", "admin-client"),
+			keyPath,
+		)
+		if err != nil {
+			lg.Error(err, "loading system user key")
+			os.Exit(1)
+		}
+		rec.IAM = iam
+	} else {
+		lg.Info("SYSTEM_USER_KEY not set — IAM provisioning disabled")
+	}
+	if err := rec.SetupWithManager(mgr); err != nil {
 		lg.Error(err, "setting up tenant reconciler")
 		os.Exit(1)
 	}

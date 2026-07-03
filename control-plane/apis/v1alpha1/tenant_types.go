@@ -35,6 +35,10 @@ const (
 // TenantStatus is reported state, never edited by humans.
 type TenantStatus struct {
 	Phase TenantPhase `json:"phase,omitempty"`
+	// InstanceID of the tenant's Zitadel virtual instance — the
+	// idempotency record for IAM provisioning and the handle for
+	// off-boarding (ADR-0006).
+	InstanceID string `json:"instanceId,omitempty"`
 	// Issuer is the tenant's OIDC issuer URL (its permanent domain).
 	Issuer string `json:"issuer,omitempty"`
 	// ClientID of the tenant's default PKCE app (ADR-0006 §6).
