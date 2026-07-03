@@ -81,12 +81,70 @@ delete it.
 
 | Session | Work |
 |---|---|
-| 1 | ADRs first: URL/permalink + API-versioning conventions; control-plane architecture (CRD + controller, CR as source of truth). Go CI attaches |
-| 2 | `Tenant` CRD + controller: namespace + CNPG cluster reconcile, delete/finalizers |
-| 3 | Zitadel instance provisioning in the reconcile loop (System API from Go — M1 session-4 code moves here or into `lib/`) |
+| 1 | ✅ ADRs first: URL/permalink + API-versioning conventions; control-plane architecture (CRD + controller, CR as source of truth). Go CI attaches |
+| 2 | ✅ `Tenant` CRD + controller: namespace + CNPG cluster reconcile, delete/finalizers |
+| 3 | godog tenant-lifecycle spec first (red), then Zitadel provisioning in reconcile (green) — detailed plan below |
 | 4 | App-pod deployment from the hardcoded catalog; tenant reachable end to end |
-| 5 | HTMX UI: login, tenant list/create/delete; godog specs green |
+| 5 | HTMX UI + **OpenAPI-first** `/api/v1` (spec before handlers, oapi-codegen); login, tenant list/create/delete; godog suite into CI (k3d action) |
 | 6 | Buffer + writing: worklog, README updates, guidelines entry on controllers, demo recording |
+
+## Session 3 — detailed plan (2026-07-03)
+
+**Goal:** `kubectl apply` a Tenant and get a *log-in-able* tenant — the
+reconcile loop performs the full ADR-0006 §6 IAM sequence and reports
+`issuer` + `clientId` in status; deletion removes the Zitadel instance.
+
+**Spec first — godog starts here.** Honest accounting: sessions 1–2
+shipped without `.feature` specs, a deviation from working agreement #2
+(M1 was a spike; the controller no longer is). Not too early — the tenant
+lifecycle is exactly the domain/API level the agreement means:
+
+- `control-plane/features/tenant_lifecycle.feature`, scenarios:
+  *provisioning* (create → phase Ready, namespace exists, OIDC discovery
+  answers on the tenant issuer), *off-boarding* (delete → namespace gone,
+  discovery 404s), *slug immutability* (update rejected by the API
+  server).
+- Steps drive the real dev cluster (k3d + CNPG + Zitadel), guarded by
+  `PERISTERA_E2E=1` so plain `go test` and CI stay green without a
+  cluster. The suite joins CI in session 5, when the controller is
+  containerized and CI gets a k3d cluster.
+
+**Implementation steps (red → green):**
+
+1. `internal/zitadel` client: self-signed RS256 system JWT (private key
+   from a file path in dev, a Secret in-cluster — the key must move from
+   the workstation into the `admin-client-tls` Secret alongside the cert);
+   CreateInstance, GetInstance, DeleteInstance, AddTrustedDomain,
+   CreateProject, CreateOIDCApp. Audience is always the deployment issuer
+   (ADR-0006 §5). Promotion to `lib/` waits for a second consumer.
+2. Reconcile, after the database: ensure instance — `status.instanceId`
+   is the idempotency record (CreateInstance is not idempotent; if status
+   was lost, adopt by custom-domain search) — then trusted domain,
+   project, PKCE app (`idTokenUserinfoAssertion: true`), then
+   `status.issuer` + `status.clientId`. Phase Ready = DatabaseReady ∧
+   IAMProvisioned (as conditions).
+3. Finalizer: delete the instance by `status.instanceId`, requeueing
+   through the few-seconds projection lag, then let owner-ref GC take the
+   namespace.
+4. Controller config via env (ConfigMap when containerized):
+   `ZITADEL_BASE_URL`, `TENANT_BASE_DOMAIN` (`127.0.0.1.sslip.io`),
+   `TENANT_EXTERNAL_PORT` (`9080`), `SYSTEM_USER_KEY` (path).
+5. **App URL convention**, needed now for redirect URIs, served in
+   session 4: apps live at `<app>.<slug>.<base-domain>`
+   (`stub.demo2.127.0.0.1.sslip.io`). Kubernetes ingress wildcards match a
+   single label, so `*.127.0.0.1.sslip.io` (→ Zitadel) can never shadow
+   the two-label app hosts — per-app ingress rules stay conflict-free.
+   Redirect URI registered at provisioning:
+   `http://stub.<slug>.<base>:<port>/auth/callback`.
+
+**Answered along the way (Q&A-in-chat, 2026-07-03):**
+
+- **godog:** adopted from session 3, spec-first; not earlier ceremony but
+  the actual dev loop from here on.
+- **OpenAPI:** no specs before endpoints exist. The Tenant CRD schema is
+  generated and authoritative for the tenant shape; the first HTTP API
+  (`/api/v1/tenants`, session 5) is written OpenAPI-first with generated
+  server stubs (oapi-codegen), per the API-first principle.
 
 **Abort valve:** if session 4 ends without a full create→login→delete
 slice, cut the UI to a single ugly page and ship the slice — broad and

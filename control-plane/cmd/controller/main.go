@@ -9,7 +9,6 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
-	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	"github.com/peristera-io/peristera/control-plane/apis/v1alpha1"
 	"github.com/peristera-io/peristera/control-plane/internal/controller"
@@ -25,12 +24,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Metrics off during out-of-cluster dev (the default :8080 collides
-	// easily on a workstation); the in-cluster deployment re-enables it.
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-		Scheme:  scheme,
-		Metrics: metricsserver.Options{BindAddress: "0"},
-	})
+	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{Scheme: scheme})
 	if err != nil {
 		lg.Error(err, "creating manager")
 		os.Exit(1)
