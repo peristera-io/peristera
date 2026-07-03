@@ -22,3 +22,4 @@ ADR, not in chat history.
 - [ADR-0003](0003-kubernetes-only.md) — Kubernetes as the only deployment contract
 - [ADR-0004](0004-build-vs-buy.md) — Build by default; three named exceptions
 - [ADR-0005](0005-cla-and-licensing.md) — Licensing model and relicensing CLA
+- [ADR-0006](0006-zitadel-integration.md) — Zitadel integration: shared deployment, virtual instance per tenant

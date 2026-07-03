@@ -22,12 +22,13 @@ places that don't share a roof. That is the product thesis in one image.
 (`templates/legal/`), bootstrap ADRs 0001–0005 (`adr/`), markdown + link CI,
 CLA Assistant bot. Project folders (`lib/`, `control-plane/`, `iam/`,
 `ergonomos/`, `kamara/`) do not exist yet — each appears with its first code.
-**Now: M1 — confirmatory Zitadel integration spike (2-week time box;
-plan and settled parameters: `docs/m1-plan.md`, provenance in `Q&A.md`
-Round 4). Topology prior: one shared Zitadel deployment, one virtual
-instance per tenant, break-out seam designed in — ADR-0006 confirms.
-Sessions 1–2 done: virtual instances verified self-hosted, footprint flat.
-M2 plan settled (`docs/m2-plan.md`, provenance in `Q&A.md` Round 5).**
+**M1 complete (2026-07-03, well inside the 2-week box): Zitadel confirmed
+— one shared deployment, one virtual instance per tenant, verified end to
+end on k3d (tenant user logs in to the Go stub via OIDC). Decision record:
+ADR-0006; evidence and gotchas: `iam/README.md`, worklog. One item moved
+deliberately to M2: porting the proven provisioning calls to Go, where the
+tenant controller needs them anyway. Next: M2 — control-plane skeleton
+(`docs/m2-plan.md`, settled in `Q&A.md` Round 5).**
 *Update this block whenever reality changes — a stale status line is exactly
 the rot §8 warns against.*
 
@@ -365,7 +366,7 @@ collaboration engine — we build.
 | Component | What it is | Build strategy |
 |---|---|---|
 | **Control plane** | Tenant lifecycle, catalog, quotas, billing | Own code, Go + HTMX |
-| **Peristera IAM** | Login, users, OIDC for all apps | **Branded layer over Zitadel — decided, all-in** (Go, API-first, multi-tenant, OIDC-certified; see build vs. buy). M1 is a confirmatory integration spike: it settles *how*, not *whether*. |
+| **Peristera IAM** | Login, users, OIDC for all apps | **Branded layer over Zitadel — decided, all-in** (see build vs. buy). Integration confirmed in M1: one shared deployment, one virtual instance per tenant, domain per tenant, break-out seam designed in — ADR-0006. |
 | **Peristera Ergonomos** | Tasks/projects → collaboration engine ("functionality of SharePoint, UI of Notion"); emits calendar entries | Own code. HTMX first; the Notion-like block editor will need Svelte islands + a CRDT (library choice is an open ADR) — planned, not improvised |
 | **Peristera Kamara** (Greek καμάρα, "vault" — renamed to avoid the HashiCorp Vault collision) | File storage: chunked upload first, then sync | Own code, clean restart informed by an earlier Go encrypted-sync prototype. Exposes a **storage API consumed by the other apps** as their file layer. E2EE comes later and enables *federated encrypted replicas* (I store my friend's ciphertext, he stores mine) |
 | **Documents** | Office document co-editing inside Ergonomos/Kamara | **OnlyOffice integration** (bootstrap — see build vs. buy). Own editor: last fight, if ever |

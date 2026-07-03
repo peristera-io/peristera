@@ -75,3 +75,20 @@ bottom. One entry = date, what happened, and pointers to artifacts.
   instance → trust login domain → project + PKCE app → clientId to pods.
 - **Next: session 4 — provisioning from Go (instance/org/user/app), Login
   v2 branding probe, Entra/LDAP + mirror paper checks. Then ADR-0006.**
+
+## 2026-07-03 — M1 closed: ADR-0006 accepted
+
+- Branding probe: label policy (colors, logo, hide-suffix, watermark-off)
+  is per-instance API surface; Login v2 renders neutral/clean; custom
+  layout/CSS not supported — own-UI on the Session API stays the escape
+  hatch. Entra/LDAP + `mirror --instance` paper checks folded into the ADR.
+- **ADR-0006 accepted** — shared deployment + virtual instance per tenant,
+  domain-per-tenant day-one rule, break-out seam, system-user specifics,
+  and the exact tenant-IAM provisioning sequence for the M2 controller.
+- DoD accounting: "provisioning from Go" deliberately moved to M2 session 3
+  (the controller is where that code lives); screenshots + kept E2E script
+  stand in for the screen recording. Everything else met, well inside the
+  2-week box.
+- **M1 done. Next: M2 — control-plane skeleton (`docs/m2-plan.md`),
+  starting with the conventions ADRs (permalinks/API versioning) and the
+  `Tenant` CRD.**

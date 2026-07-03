@@ -1,8 +1,12 @@
 # M1 plan — confirmatory Zitadel integration spike
 
 - **Time box:** 2 weeks (≈5 nights-and-weekends sessions). Hard stop.
-- **Status:** parameters settled (`Q&A.md` Round 4 + topology discussion,
-  2026-07-02). Implementation in progress.
+- **Status:** **done (2026-07-03) — superseded by
+  `adr/0006-zitadel-integration.md`** and the worklog. DoD accounting: all
+  items met except "instance/org/user from Go", deliberately moved to M2
+  session 3 (the tenant controller is where that code lives anyway), and
+  the screen recording (E2E screenshots + the kept playwright script in
+  `iam/e2e/` serve the purpose).
 - **Lifecycle:** working document. After M1 it is superseded by
   `adr/0006-zitadel-integration.md` and the worklog entry; don't maintain it.
 
