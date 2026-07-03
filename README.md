@@ -27,7 +27,7 @@ plan and settled parameters: `docs/m1-plan.md`, provenance in `Q&A.md`
 Round 4). Topology prior: one shared Zitadel deployment, one virtual
 instance per tenant, break-out seam designed in — ADR-0006 confirms.
 Sessions 1–2 done: virtual instances verified self-hosted, footprint flat.
-M2 plan drafted (`docs/m2-plan.md`, open parameters in `Q&A.md` Round 5).**
+M2 plan settled (`docs/m2-plan.md`, provenance in `Q&A.md` Round 5).**
 *Update this block whenever reality changes — a stale status line is exactly
 the rot §8 warns against.*
 
@@ -418,8 +418,12 @@ Built in public along the way.
   the dev cluster, one test user logs in to a stub page via OIDC, the
   integration approach written up as an ADR. It settles *how*, not
   *whether*.
-- **M2 — Control-plane skeleton**: create a tenant namespace + Postgres +
-  deploy one app pod, from a minimal HTMX UI. Local dev = k3s.
+- **M2 — Control-plane skeleton**: the tenant lifecycle as a product. From
+  a minimal HTMX UI (admin login via OIDC): create a tenant — namespace,
+  dedicated Postgres, Zitadel virtual instance on its own domain, one app
+  pod — log in on it, delete it cleanly. `Tenant` CRD + controller
+  (architecture revisited after M6); tenant CRs are the source of truth,
+  no control-plane database until billing/quotas. Plan: `docs/m2-plan.md`.
 - **M3 — Ergonomos stub**: single-user task lists, minimal but pleasant.
   (Multi-user matters more than single-user polish — it comes right after the
   demo, before any bells and whistles.)

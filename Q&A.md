@@ -366,14 +366,14 @@ thin spot and the learning curve eats real weekends. My recommendation:
 means rebuilding on the operator model within a year, and reconciliation is
 this product's core competency. Agree?
 
->
+> let's start with b. After M6, we should go back to it.
 
 **R24. No control-plane database in M2.** If Tenant CRs are the source of
 truth, the control plane needs no Postgres yet — the tenant list is the CR
 list, state is what the cluster reports. A database arrives with
 billing/quotas (2027). This keeps M2 honest and small. OK?
 
->
+>ok
 
 **R25. Tenant creation includes the Zitadel virtual instance.** The README's
 M2 line predates the spike ("namespace + Postgres + one app pod"); the
@@ -381,7 +381,7 @@ System API seam is now proven, and a tenant you can't log in to is not a
 vertical slice. Recommendation: IAM provisioning is part of tenant creation
 in M2 — this is also exactly the seam the break-out flag hangs on later. OK?
 
->
+>ok
 
 **R26. The "one app pod" is the M1 stub relying party**, deployed per tenant
 and doing OIDC against the tenant's own instance — making the M2 demo
@@ -389,7 +389,7 @@ and doing OIDC against the tenant's own instance — making the M2 demo
 slice until a second app exists (opinionated defaults: no config surface
 before there's something to configure). OK?
 
->
+>ok
 
 **R27. Control-plane admin auth in M2.** The operator logs in via OIDC
 against the *default* Zitadel instance (MSP staff live there; tenants live
@@ -398,5 +398,4 @@ in their own instances). It's the M1 stub pattern copied over, and it keeps
 Alternative: skip auth for the skeleton and bolt it on in M3 — cheaper now,
 but bolted-on auth is exactly the anti-pattern we sell against. OK?
 
->
-
+>ok

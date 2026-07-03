@@ -3,8 +3,8 @@
 - **Size:** ≤ 6 weekends (sizing rule, README §5). Honest warning: with a
   Kubernetes controller in scope this is *tight* — the abort valve is
   cutting polish, never the vertical slice.
-- **Status:** draft — starts after M1 closes (ADR-0006 accepted); open
-  parameters in `Q&A.md` Round 5.
+- **Status:** parameters settled (`Q&A.md` Round 5, 2026-07-03); starts
+  after M1 closes (ADR-0006 accepted).
 - **Lifecycle:** working document, superseded by the M2 ADRs and worklog.
 
 ## Goal
@@ -48,7 +48,7 @@ From the control-plane UI, logged in via OIDC (default Zitadel instance):
 Demoable artifact: screen recording — create tenant, log in on its domain,
 delete it.
 
-## Shape (priors to confirm in Round 5)
+## Shape (settled, Q&A Round 5)
 
 1. **A `Tenant` CRD + controller (controller-runtime), not imperative
    client-go in HTTP handlers.** Reconciliation *is* this product —
@@ -56,7 +56,10 @@ delete it.
    problems. Starting imperative means rebuilding on the operator model
    later. Named cost: k8s controllers are a documented LLM thin spot
    (ADR-0002) — mitigate with a `guidelines/` entry written as we learn,
-   and no kubebuilder ceremony beyond what we use.
+   and no kubebuilder ceremony beyond what we use. **Decision rider (R23):
+   revisit this architecture after M6** — check with real experience
+   whether the controller pulls its weight; goes into the control-plane
+   architecture ADR as an explicit review point.
 2. **Tenant CRs are the source of truth; the control plane gets no
    Postgres in M2.** The tenant list is `kubectl get tenants` with a nice
    face. A control-plane database arrives when billing/quotas need one
