@@ -23,3 +23,5 @@ ADR, not in chat history.
 - [ADR-0004](0004-build-vs-buy.md) — Build by default; three named exceptions
 - [ADR-0005](0005-cla-and-licensing.md) — Licensing model and relicensing CLA
 - [ADR-0006](0006-zitadel-integration.md) — Zitadel integration: shared deployment, virtual instance per tenant
+- [ADR-0007](0007-permalinks-and-api-versioning.md) — Object identity, permalinks, and API versioning
+- [ADR-0008](0008-control-plane-architecture.md) — Control-plane architecture: Tenant CRD + controller
