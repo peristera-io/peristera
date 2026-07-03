@@ -146,6 +146,71 @@ lifecycle is exactly the domain/API level the agreement means:
   (`/api/v1/tenants`, session 5) is written OpenAPI-first with generated
   server stubs (oapi-codegen), per the API-first principle.
 
+## Session 5 — detailed plan (2026-07-03; starts after session 4)
+
+**Goal:** the control plane becomes a product surface. An operator opens
+`http://cp.<base-domain>:9080`, logs in via OIDC, and creates/watches/
+deletes tenants in the browser — with everything the UI can do also being
+a documented `/api/v1` endpoint, and the godog suite running in CI.
+
+**Sizing honesty:** auth + API + UI + containerization + CI is the fattest
+session of M2. Session 6 is the buffer it may spill into; the abort valve
+(one ugly page over a working slice) applies to the UI, never the API or
+the CI gate.
+
+1. **Spec first, twice.**
+   - New godog scenarios (API level — this is where godog shines; browser
+     login stays a playwright script like M1): *create a tenant via
+     `POST /api/v1/tenants`*, *list shows phase and issuer*, *delete via
+     API off-boards*, *unauthenticated requests are rejected*.
+   - `control-plane/api/openapi.yaml` (OpenAPI 3.0) before any handler:
+     tenants CRUD, schemas mirroring the CRD (spec: slug, displayName;
+     status: phase, issuer, clientId), error shape. Server stubs + types
+     generated with **oapi-codegen** (std-lib server, `go:generate`;
+     tooling choice recorded here, promoted to `guidelines/` when a
+     second service adopts it).
+   - **Identity note (no ADR-0007 conflict):** the tenant slug *is* the
+     permanent identifier (ADR-0007 §4 carves out exactly this), so
+     `/api/v1/tenants/{slug}` is a stable URL. UUIDv7 object IDs start
+     with the first *app* objects (M3).
+2. **One binary.** The HTTP server joins `cmd/controller` as a
+   manager Runnable — one process, one pod, one deployment ("the control
+   plane"). HTMX fragments and `/api/v1` JSON share the same domain
+   functions; the UI is the first API client in spirit, not via loopback
+   HTTP.
+3. **Operator auth.** OIDC auth-code + PKCE against the **default**
+   Zitadel instance (M1 stub pattern hardened into middleware guarding
+   both UI and API; in-memory sessions, accepted M2 limitation — the
+   shared session convention is an ADR before M3). Bootstrap
+   chicken-and-egg: at startup the control plane **ensures its own OIDC
+   app** in the default instance via the system client (idempotent,
+   same code path as tenant provisioning); the first operator user is
+   created by a documented one-time call (product-managed operators come
+   later).
+4. **HTMX UI.** Tenant list (slug, phase, issuer link), create form,
+   delete-with-confirm; rows poll while Pending so Ready appears live —
+   that is the demo moment. Discipline from the first template: no
+   hardcoded strings (message catalog, EN content only for now — FR/DE/LB
+   are target locales), semantic HTML; the a11y CI gate formally attaches
+   at M3 per the M0 deferral list.
+5. **In-cluster.** Multi-stage Dockerfile (distroless), `k3d image
+   import` (no registry), manifests in `control-plane/deploy/`:
+   Deployment in `peristera-system` mounting `admin-client-tls`,
+   ServiceAccount + least-privilege RBAC (tenants + status, namespaces,
+   CNPG clusters, secrets read), ingress at `cp.<base-domain>`.
+6. **godog into CI.** New workflow job: k3d action → CNPG + Zitadel
+   (fresh keypair generated in CI — it is per-deployment config, not a
+   shared secret; sslip.io resolves to the runner's localhost) → deploy
+   the control plane image → `PERISTERA_E2E=1` suite. Expected ~5–6 min;
+   if it drags, fallback is control-plane-paths + nightly, decided by
+   evidence not upfront.
+
+**DoD:** operator logs in and manages tenants in the browser;
+`openapi.yaml` + generated stubs committed and handlers pass the new API
+scenarios; control plane runs in-cluster with least-privilege RBAC; the
+full godog suite is green locally **and in CI**; worklog + READMEs
+updated.
+
 **Abort valve:** if session 4 ends without a full create→login→delete
 slice, cut the UI to a single ugly page and ship the slice — broad and
 shallow beats narrow and deep (Principle 4).
