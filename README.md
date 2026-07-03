@@ -33,12 +33,13 @@ non-blocking findings are tracked as GitHub issues.
 Only `iam/` and `control-plane/` exist on disk; the other project folders
 (`lib/`, `ergonomos/`, `kamara/`) appear with their first code, per §8.
 
-**Next: M3 — Ergonomos stub.** Attach first (each an ADR before the first
-byte is stored): personal-data metadata (incl. retention/legal holds),
-OpenFGA model conventions, audit events, search feed — the M0 deferrals
-in §5. When planning, **check the open GitHub issues first** — several M2
-follow-ups (shared `lib/` OIDC/session code, operator authz model) are
-meant to be folded into the milestone that next touches that area.
+**Next: M3 — Ergonomos stub** (plan: `docs/m3-plan.md`, open parameters in
+`Q&A.md` Round 6). The first app that stores user data, so it carries the
+GDPR-by-design spine up front — each an ADR before the first byte:
+personal-data metadata (incl. retention/legal holds), OpenFGA model
+conventions, audit events, search feed (the M0 deferrals in §5). Likely
+splits into M3a (conventions + `lib/`) and M3b (the task stub). Folds in
+GitHub issues #2 (shared `lib/` OIDC/session) and #6 (per agreement #7).
 
 *Update this block whenever reality changes — a stale status line is exactly
 the rot §8 warns against.*

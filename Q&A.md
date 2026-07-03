@@ -399,3 +399,73 @@ Alternative: skip auth for the skeleton and bolt it on in M3 — cheaper now,
 but bolted-on auth is exactly the anti-pattern we sell against. OK?
 
 >ok
+
+---
+
+# Round 6 (2026-07-04) — M3 planning: Ergonomos + the cross-cutting spine
+
+Plan draft in `docs/m3-plan.md`. M3 is the first app that stores user data,
+so it carries the GDPR/OpenFGA/audit/search conventions as an up-front cost.
+Each question has a recommendation — confirm or push back.
+
+**R28. Split M3 into M3a (conventions) + M3b (the app)?** M3 as written is
+the heaviest milestone: four convention ADRs + `lib/` packages *and* the
+Ergonomos stub. That's likely >6 weekends, breaking the sizing rule.
+Recommendation: **split** — M3a ships the ADRs + `lib/` conventions (a
+self-contained, even grant-shaped "GDPR-by-design spine" work package),
+M3b ships the task stub that proves they compose. Keeps each milestone
+demoable and honestly sized. Or do you want it as one milestone, accepting
+the overrun? 
+
+>
+
+**R29. Decide all four conventions now, implement only what the single-user
+stub exercises?** The retrofit cost of these is the whole reason they're
+front-loaded, but fully building search/OpenFGA for a single-user todo list
+is YAGNI. Recommendation: **ADR all four now; implement personal-data
+metadata + audit events + a trivial OpenFGA `owner` relation (the stub
+touches these), plus the search *write-side* hook — but defer the search
+query UI and any multi-user OpenFGA modeling to when a second user/app
+needs it.** Agree, or implement more/less aggressively? 
+
+>
+
+**R30. Storage: one database per app inside the tenant's CNPG Postgres?**
+README §4 says "one Postgres per tenant". Within it, Ergonomos needs
+somewhere to put tables. Options: (a) a dedicated **database** per app in
+the tenant cluster, (b) a **schema** per app in one shared database, (c) a
+separate CNPG cluster per app. Recommendation: **(a) database-per-app** —
+clean erasure/backup boundary per app, still one Postgres operator per
+tenant, avoids a cluster per app. The control plane provisions it as part
+of deploying the app. OK? 
+
+>
+
+**R31. Catalog: keep the hardcoded Go slice (now 2 entries) or make it
+data?** Q&A R26 said "the catalog becomes data when a second app exists" —
+Ergonomos is the second. But making it data (CRD/config) before an MSP
+actually curates catalogs is speculative. Recommendation: **keep the slice**
+(YAGNI), but grow the catalog *contract* so an entry can declare "needs a
+database" and "needs an OpenFGA store". Defer catalog-as-data to when
+per-MSP catalog curation is real. This walks back R26 slightly — OK, or
+make it data now? 
+
+>
+
+**R32. Migration tooling?** Ergonomos is the first app with schema
+migrations, and agreement #5 mandates expand/contract from migration one.
+Need a tool (boring, Go, k8s-friendly). Candidates: **goose**,
+**golang-migrate**, **atlas** (declarative, can enforce expand/contract).
+Recommendation: **goose** (simple, embeds in the Go binary, runs as an init
+step) unless you want atlas's declarative diffing. Preference? This becomes
+a short stack ADR. 
+
+>
+
+**R33. Accessibility CI tooling?** Deferred to M3 (§5). Recommendation:
+**axe-core via `@axe-core/cli` or pa11y-ci** against the running Ergonomos
+UI in the e2e job (we already spin up the app in CI). EN 301 549 / EAA as
+the bar, start with WCAG 2.1 AA automated checks. OK, or a specific tool? 
+
+>
+
