@@ -43,6 +43,12 @@ type TenantStatus struct {
 }
 
 // Tenant is one isolated customer environment.
+// +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
+// +kubebuilder:resource:scope=Cluster,shortName=tn
+// +kubebuilder:printcolumn:name="Slug",type=string,JSONPath=`.spec.slug`
+// +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
+// +kubebuilder:printcolumn:name="Issuer",type=string,JSONPath=`.status.issuer`
 type Tenant struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -52,6 +58,7 @@ type Tenant struct {
 }
 
 // TenantList is what the control-plane UI renders.
+// +kubebuilder:object:root=true
 type TenantList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`

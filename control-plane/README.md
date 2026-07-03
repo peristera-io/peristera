@@ -17,7 +17,32 @@ exception (`LICENSE-EXCEPTION.md`); openness decided in README §7.
 ```text
 control-plane/
 ├── README.md            ← this file
-└── (Tenant CRD types, controller, and HTMX UI arrive in M2 sessions 2–5)
+├── apis/v1alpha1/       ← Tenant types (slug immutable via CEL)
+├── cmd/controller/      ← manager entry point (out-of-cluster dev)
+├── internal/controller/ ← Tenant reconcile loop
+└── deploy/crd/          ← generated CRD manifest (controller-gen)
+```
+
+## Dev loop
+
+```sh
+kubectl apply -f deploy/crd/peristera.io_tenants.yaml
+go run ./cmd/controller   # against the current kubeconfig (k3d)
+kubectl apply -f - <<'EOF'
+apiVersion: peristera.io/v1alpha1
+kind: Tenant
+metadata: {name: demo2}
+spec: {slug: demo2, displayName: "Second Demo GmbH"}
+EOF
+kubectl get tenants -w    # Pending → Ready (namespace + CNPG Postgres)
+kubectl delete tenant demo2   # finalizer + GC tear everything down
+```
+
+Regenerate after changing `apis/`:
+
+```sh
+go run sigs.k8s.io/controller-tools/cmd/controller-gen@latest object paths=./apis/...
+go run sigs.k8s.io/controller-tools/cmd/controller-gen@latest crd paths=./apis/... output:crd:dir=deploy/crd
 ```
 
 ## Key references

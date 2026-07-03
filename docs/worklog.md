@@ -109,3 +109,19 @@ bottom. One entry = date, what happened, and pointers to artifacts.
   (slug = DNS label).
 - **Next: session 2 — CRD manifest + controller reconcile loop
   (namespace + CNPG cluster + finalizer) on the k3d cluster.**
+
+## 2026-07-03 — M2 session 2: Tenant controller reconciles on k3d
+
+- controller-runtime reconcile loop live-tested end to end: `kubectl apply`
+  a Tenant → namespace `tenant-demo2` + CNPG Postgres appear, phase
+  Pending → Ready; `kubectl delete` → finalizer + owner-reference GC tear
+  everything down. Slug immutability enforced by CEL at the API server
+  ("slug is immutable" on patch — rename literally cannot happen).
+- Deepcopy + CRD manifest generated with controller-gen (markers in
+  `apis/v1alpha1`); dev loop documented in `control-plane/README.md`.
+- Gotcha: controller-runtime's metrics server defaults to `:8080`
+  (collides on this workstation) — disabled for out-of-cluster dev.
+- **Next: session 3 — Zitadel virtual-instance provisioning in the
+  reconcile loop (the ADR-0006 §6 sequence, ported from the spike's curl
+  calls to Go), issuer + clientId into Tenant status, external cleanup in
+  the finalizer.**
