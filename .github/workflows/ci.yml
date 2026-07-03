@@ -18,6 +18,28 @@ jobs:
             !Q&A.md
             !node_modules/**
 
+  go:
+    name: go build & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: fmt, vet, build, test every module
+        run: |
+          set -eu
+          for mod in $(find . -name go.mod -not -path "*/node_modules/*" | xargs -n1 dirname); do
+            echo "== $mod"
+            cd "$mod"
+            unformatted=$(gofmt -l .)
+            if [ -n "$unformatted" ]; then echo "gofmt needed: $unformatted"; exit 1; fi
+            go vet ./...
+            go build ./...
+            go test ./...
+            cd - >/dev/null
+          done
+
   links:
     name: link check
     runs-on: ubuntu-latest

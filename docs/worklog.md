@@ -92,3 +92,20 @@ bottom. One entry = date, what happened, and pointers to artifacts.
 - **M1 done. Next: M2 — control-plane skeleton (`docs/m2-plan.md`),
   starting with the conventions ADRs (permalinks/API versioning) and the
   `Tenant` CRD.**
+
+## 2026-07-03 — M2 session 1: conventions ADRs, Go CI, control-plane seed
+
+- **ADR-0007 accepted** — object identity (UUIDv7, URLs carry IDs, names
+  display-only), instance-namespaced federated references, immutable
+  tenant slugs, `/api/v1` path versioning (additive-only within a
+  version; pre-M6 breaks logged).
+- **ADR-0008 accepted** — Tenant CRD + controller-runtime, CRs as source
+  of truth (no control-plane DB), reconcile creates the full tenant stack
+  per ADR-0006 §6, finalizer-based off-boarding, OIDC operator auth,
+  post-M6 review rider (R23).
+- **Go CI attached**: fmt/vet/build/test over every `go.mod` in the repo.
+- `control-plane/` seeded: README, legal files, `apis/v1alpha1` Tenant
+  types with immutable-slug CEL validation and the repo's first unit test
+  (slug = DNS label).
+- **Next: session 2 — CRD manifest + controller reconcile loop
+  (namespace + CNPG cluster + finalizer) on the k3d cluster.**
