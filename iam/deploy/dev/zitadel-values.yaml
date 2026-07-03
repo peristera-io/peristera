@@ -23,9 +23,18 @@ zitadel:
       admin-client:
         Path: /secrets/admin-client/tls.crt
         Memberships:
+          # One System-type membership applies across all instances; the
+          # roles list is what grants powers. SYSTEM_OWNER = System API
+          # (instance lifecycle); IAM_OWNER = Admin/Management APIs inside
+          # every instance (org/project/app/user provisioning). A separate
+          # `MemberType: IAM` entry would need a per-instance AggregateID —
+          # useless for provisioning arbitrary tenants. Gotcha: the JWT
+          # audience is always the deployment's ExternalDomain issuer,
+          # even when calling a tenant instance's APIs.
           - MemberType: System
             Roles:
               - SYSTEM_OWNER
+              - IAM_OWNER
 
 extraVolumes:
   - name: admin-client-cert

@@ -55,3 +55,23 @@ bottom. One entry = date, what happened, and pointers to artifacts.
 - Session 2 walkthrough appended to `iam/README.md`.
 - **Next: session 3 — Go + HTMX stub relying party in `iam/`, OIDC
   auth-code + PKCE login against the tenant-demo instance.**
+
+## 2026-07-03 — M1 spike session 3: tenant login works end to end
+
+- M2 parameters settled in Q&A Round 5 (CRD + controller with post-M6
+  review rider, CRs as source of truth, IAM in tenant creation, stub as
+  first catalog app, admin OIDC from day one).
+- First Go code: `iam/cmd/stub`, a relying party doing auth-code + PKCE
+  (go-oidc + x/oauth2) with in-memory sessions. **Headless E2E (playwright)
+  logs `demo-admin` in on the tenant instance and out again: "Logged in as
+  Demo Admin (`admin@demo.example`)".** E2E script kept in `iam/e2e/`.
+- Three provisioning gotchas found and documented in `iam/README.md`
+  (→ ADR-0006): system-JWT audience is always the deployment's
+  ExternalDomain issuer; `IAM_OWNER` must ride on the `MemberType: System`
+  membership; new instances need the login domain as a **trusted domain**
+  (`POST /v2beta/instances/{id}/trusted-domains`) or Login v2 500s. Plus:
+  `idTokenUserinfoAssertion: true` or name/email claims come back empty.
+- The control-plane tenant-IAM sequence is now known exactly: create
+  instance → trust login domain → project + PKCE app → clientId to pods.
+- **Next: session 4 — provisioning from Go (instance/org/user/app), Login
+  v2 branding probe, Entra/LDAP + mirror paper checks. Then ADR-0006.**

@@ -114,10 +114,50 @@ footprint is flat when instances are added (~240–260 Mi for the whole
 Zitadel + login + Postgres set — the 512 MB floor is per deployment, not
 per virtual instance). Full evidence goes into ADR-0006.
 
+## The stub relying party (session 3)
+
+`cmd/stub` is the OIDC login shape every Peristera app copies: auth-code +
+PKCE against a tenant instance's issuer, session cookie, logout round trip.
+
+```sh
+# Register the client on the tenant instance (system JWT as above, but
+# note the audience gotcha below; ORG = the tenant's first org id from
+# POST /admin/v1/orgs/_search):
+#   POST /management/v1/projects                     {"name":"peristera"}
+#   POST /management/v1/projects/{id}/apps/oidc      → clientId
+#     (public client: authMethodType NONE, PKCE; devMode=true for http;
+#      idTokenUserinfoAssertion=true, else name/email claims are empty)
+STUB_CLIENT_ID=<clientId> go run ./cmd/stub
+open http://localhost:5556/            # log in as demo-admin
+node e2e/login-e2e.mjs                 # headless E2E (needs playwright)
+```
+
+Gotchas that cost real time — all destined for ADR-0006 and the M2
+provisioning sequence:
+
+1. **System-JWT audience is *always* the deployment's ExternalDomain
+   issuer** (`http://iam.…:9080`), even when calling a *tenant* instance's
+   management/admin APIs (the tenant issuer as audience → 401).
+2. **Roles ride on the `System` membership.** `SYSTEM_OWNER` alone covers
+   only the System API; add `IAM_OWNER` to the *same* `MemberType: System`
+   entry for admin/management APIs inside instances. A separate
+   `MemberType: IAM` entry does **not** work — it wants a per-instance
+   AggregateID.
+3. **New instances must trust the login's domain**: Login v2 calls the API
+   under `ZITADEL_EXTERNALDOMAIN`, and a fresh virtual instance doesn't
+   trust it (login page → 500). Fix, per tenant, at provisioning time:
+   `POST /v2beta/instances/{id}/trusted-domains {"domain":"iam.…"}`.
+
+So the control plane's tenant-IAM sequence is: create instance → add
+trusted domain → create project + PKCE app → hand the clientId to the
+tenant's app pods.
+
 ## Layout
 
 ```text
 iam/
 ├── README.md            ← this file
+├── cmd/stub/            ← OIDC relying-party stub (the login pattern)
+├── e2e/                 ← headless login E2E (playwright)
 └── deploy/dev/          ← local k3d manifests + Helm values (M1 spike)
 ```
