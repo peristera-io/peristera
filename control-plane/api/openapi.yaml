@@ -1,0 +1,138 @@
+openapi: 3.0.3
+info:
+  title: Peristera Control Plane API
+  description: >
+    Tenant lifecycle management. Everything the control-plane UI can do is
+    here (API-first, README §4); versioning rules per ADR-0007 — additive
+    within v1, breaks logged in the worklog until the first external
+    consumer (M6). The tenant slug is the permanent identifier (ADR-0007
+    §4), so it is the path parameter.
+  version: "1.0"
+servers:
+  - url: /api/v1
+security:
+  - bearer: []
+paths:
+  /tenants:
+    get:
+      operationId: listTenants
+      summary: List all tenants
+      responses:
+        "200":
+          description: All tenants.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Tenant"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      operationId: createTenant
+      summary: Create a tenant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TenantCreate"
+      responses:
+        "201":
+          description: Created; provisioning continues asynchronously.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tenant"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409":
+          description: A tenant with this slug already exists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /tenants/{slug}:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
+    get:
+      operationId: getTenant
+      summary: Get one tenant
+      responses:
+        "200":
+          description: The tenant.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tenant"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: deleteTenant
+      summary: Off-board a tenant (removes all its data)
+      responses:
+        "204":
+          description: Deletion started; teardown continues asynchronously.
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      description: >
+        A Zitadel access token (or PAT) of an operator in the default
+        instance. Browser sessions authenticate with the session cookie
+        instead.
+  responses:
+    Unauthorized:
+      description: Missing or invalid credentials.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    BadRequest:
+      description: Invalid request.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: No such tenant.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+  schemas:
+    TenantCreate:
+      type: object
+      required: [slug]
+      properties:
+        slug:
+          type: string
+          pattern: "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
+          description: Permanent identifier; forms the tenant domain (immutable).
+        displayName:
+          type: string
+    Tenant:
+      type: object
+      required: [slug, phase, permalink]
+      properties:
+        slug: { type: string }
+        displayName: { type: string }
+        phase:
+          type: string
+          enum: [Pending, Ready, Deleting, Failed, ""]
+        issuer:
+          type: string
+          description: The tenant's OIDC issuer URL (permanent).
+        clientId: { type: string }
+        permalink:
+          type: string
+          description: Canonical URL of this resource (ADR-0007).
+    Error:
+      type: object
+      required: [message]
+      properties:
+        message: { type: string }

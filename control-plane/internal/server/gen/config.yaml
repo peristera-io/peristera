@@ -1,0 +1,7 @@
+# oapi-codegen config — regenerate with:
+#   go generate ./internal/server/...
+package: gen
+generate:
+  models: true
+  std-http-server: true
+output: api.gen.go

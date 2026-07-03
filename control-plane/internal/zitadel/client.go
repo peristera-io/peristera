@@ -211,43 +211,7 @@ func (c *Client) FirstOrgID(ctx context.Context, tenantBase string) (string, err
 // EnsureStubApp makes sure the tenant's project and PKCE app exist and
 // returns the OIDC client ID. Idempotent via search-by-name.
 func (c *Client) EnsureStubApp(ctx context.Context, tenantBase, orgID string, redirectURIs, postLogoutURIs []string) (string, error) {
-	projectID, err := c.projectIDByName(ctx, tenantBase, orgID, "peristera")
-	if errors.Is(err, ErrNotFound) {
-		var out struct {
-			ID string `json:"id"`
-		}
-		err = c.do(ctx, http.MethodPost, tenantBase+"/management/v1/projects", orgID,
-			map[string]any{"name": "peristera"}, &out)
-		projectID = out.ID
-	}
-	if err != nil {
-		return "", err
-	}
-
-	if clientID, err := c.oidcClientIDByName(ctx, tenantBase, orgID, projectID, "stub"); err == nil {
-		return clientID, nil
-	} else if !errors.Is(err, ErrNotFound) {
-		return "", err
-	}
-
-	var out struct {
-		ClientID string `json:"clientId"`
-	}
-	err = c.do(ctx, http.MethodPost,
-		fmt.Sprintf("%s/management/v1/projects/%s/apps/oidc", tenantBase, projectID), orgID,
-		map[string]any{
-			"name":                     "stub",
-			"redirectUris":             redirectURIs,
-			"postLogoutRedirectUris":   postLogoutURIs,
-			"responseTypes":            []string{"OIDC_RESPONSE_TYPE_CODE"},
-			"grantTypes":               []string{"OIDC_GRANT_TYPE_AUTHORIZATION_CODE"},
-			"appType":                  "OIDC_APP_TYPE_WEB",
-			"authMethodType":           "OIDC_AUTH_METHOD_TYPE_NONE",
-			"accessTokenType":          "OIDC_TOKEN_TYPE_BEARER",
-			"devMode":                  true, // dev: http redirect URIs
-			"idTokenUserinfoAssertion": true, // else name/email claims are empty
-		}, &out)
-	return out.ClientID, err
+	return c.EnsureWebApp(ctx, tenantBase, orgID, "stub", redirectURIs, postLogoutURIs)
 }
 
 func (c *Client) projectIDByName(ctx context.Context, tenantBase, orgID, name string) (string, error) {
@@ -318,6 +282,102 @@ func (c *Client) EnsureHumanUser(ctx context.Context, tenantBase, orgID, usernam
 		// follow-up once account recovery exists (M3+).
 		"passwordChangeRequired": false,
 	}, nil)
+}
+
+// EnsureMachineUser creates (or finds) a machine user — the automation
+// identity for operators' scripts and CI. Returns the user ID.
+func (c *Client) EnsureMachineUser(ctx context.Context, base, orgID, username string) (string, error) {
+	var found struct {
+		Result []struct {
+			ID string `json:"id"`
+		} `json:"result"`
+	}
+	err := c.do(ctx, http.MethodPost, base+"/management/v1/users/_search", orgID, map[string]any{
+		"queries": []any{map[string]any{"userNameQuery": map[string]any{"userName": username}}},
+	}, &found)
+	if err != nil {
+		return "", err
+	}
+	if len(found.Result) > 0 {
+		return found.Result[0].ID, nil
+	}
+	var out struct {
+		UserID string `json:"userId"`
+	}
+	err = c.do(ctx, http.MethodPost, base+"/management/v1/users/machine", orgID, map[string]any{
+		"userName":        username,
+		"name":            username,
+		"accessTokenType": "ACCESS_TOKEN_TYPE_BEARER",
+	}, &out)
+	return out.UserID, err
+}
+
+// CreatePAT issues a personal access token for a machine user.
+func (c *Client) CreatePAT(ctx context.Context, base, orgID, userID string) (string, error) {
+	var out struct {
+		Token string `json:"token"`
+	}
+	err := c.do(ctx, http.MethodPost,
+		fmt.Sprintf("%s/management/v1/users/%s/pats", base, userID), orgID,
+		map[string]any{"expirationDate": "2028-01-01T00:00:00Z"}, &out)
+	return out.Token, err
+}
+
+// UserinfoOK reports whether a bearer token is accepted by the issuer's
+// userinfo endpoint — the control plane's cheap token validation.
+func (c *Client) UserinfoOK(ctx context.Context, issuer, token string) bool {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, issuer+"/oidc/v1/userinfo", nil)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
+}
+
+// EnsureWebApp makes sure a public PKCE OIDC app with this name exists in
+// the org's "peristera" project and returns its client ID (same shape as
+// EnsureStubApp, for arbitrary app names).
+func (c *Client) EnsureWebApp(ctx context.Context, base, orgID, name string, redirectURIs, postLogoutURIs []string) (string, error) {
+	projectID, err := c.projectIDByName(ctx, base, orgID, "peristera")
+	if errors.Is(err, ErrNotFound) {
+		var out struct {
+			ID string `json:"id"`
+		}
+		err = c.do(ctx, http.MethodPost, base+"/management/v1/projects", orgID,
+			map[string]any{"name": "peristera"}, &out)
+		projectID = out.ID
+	}
+	if err != nil {
+		return "", err
+	}
+	if clientID, err := c.oidcClientIDByName(ctx, base, orgID, projectID, name); err == nil {
+		return clientID, nil
+	} else if !errors.Is(err, ErrNotFound) {
+		return "", err
+	}
+	var out struct {
+		ClientID string `json:"clientId"`
+	}
+	err = c.do(ctx, http.MethodPost,
+		fmt.Sprintf("%s/management/v1/projects/%s/apps/oidc", base, projectID), orgID,
+		map[string]any{
+			"name":                     name,
+			"redirectUris":             redirectURIs,
+			"postLogoutRedirectUris":   postLogoutURIs,
+			"responseTypes":            []string{"OIDC_RESPONSE_TYPE_CODE"},
+			"grantTypes":               []string{"OIDC_GRANT_TYPE_AUTHORIZATION_CODE"},
+			"appType":                  "OIDC_APP_TYPE_WEB",
+			"authMethodType":           "OIDC_AUTH_METHOD_TYPE_NONE",
+			"accessTokenType":          "OIDC_TOKEN_TYPE_BEARER",
+			"devMode":                  true,
+			"idTokenUserinfoAssertion": true,
+		}, &out)
+	return out.ClientID, err
 }
 
 // DiscoveryAlive reports whether the instance behind issuer serves OIDC

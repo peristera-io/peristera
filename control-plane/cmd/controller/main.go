@@ -12,6 +12,7 @@ import (
 
 	"github.com/peristera-io/peristera/control-plane/apis/v1alpha1"
 	"github.com/peristera-io/peristera/control-plane/internal/controller"
+	"github.com/peristera-io/peristera/control-plane/internal/server"
 	"github.com/peristera-io/peristera/control-plane/internal/zitadel"
 )
 
@@ -62,6 +63,24 @@ func main() {
 	if err := rec.SetupWithManager(mgr); err != nil {
 		lg.Error(err, "setting up tenant reconciler")
 		os.Exit(1)
+	}
+	// The UI/API (one binary, ADR-0008) needs the IAM client for its own
+	// OIDC bootstrap and bearer validation.
+	if rec.IAM != nil {
+		if err := mgr.Add(&server.Server{
+			K8s: mgr.GetClient(),
+			IAM: rec.IAM,
+			Cfg: server.Config{
+				ListenAddr: env("CP_LISTEN_ADDR", ":8090"),
+				PublicURL:  env("CP_PUBLIC_URL", "http://localhost:8090"),
+				Issuer:     env("ZITADEL_BASE_URL", "http://iam.127.0.0.1.sslip.io:9080"),
+			},
+		}); err != nil {
+			lg.Error(err, "adding UI/API server")
+			os.Exit(1)
+		}
+	} else {
+		lg.Info("UI/API disabled (no IAM client)")
 	}
 	lg.Info("starting control-plane controller")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {

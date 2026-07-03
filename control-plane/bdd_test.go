@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -23,6 +24,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/peristera-io/peristera/control-plane/apis/v1alpha1"
+	"github.com/peristera-io/peristera/control-plane/internal/zitadel"
 )
 
 type world struct {
@@ -31,6 +33,8 @@ type world struct {
 	former       map[string]string // slug → issuer before deletion
 	updateErr    error
 	pollInterval time.Duration
+	token        string // PAT of the machine operator (lazy)
+	lastStatus   int
 }
 
 func (w *world) createTenant(slug, displayName string) error {
@@ -260,6 +264,145 @@ func keys(m map[string][]byte) []string {
 	return out
 }
 
+// --- control-plane API steps ---
+
+func cpBase() string {
+	if v := os.Getenv("CP_BASE_URL"); v != "" {
+		return v
+	}
+	return "http://localhost:8090"
+}
+
+// apiToken lazily provisions a machine operator with a PAT in the default
+// instance — the automation path an MSP script would use.
+func (w *world) apiToken() (string, error) {
+	if w.token != "" {
+		return w.token, nil
+	}
+	keyPath := os.Getenv("SYSTEM_USER_KEY")
+	if keyPath == "" {
+		return "", fmt.Errorf("SYSTEM_USER_KEY required for API scenarios")
+	}
+	base := os.Getenv("ZITADEL_BASE_URL")
+	if base == "" {
+		base = "http://iam.127.0.0.1.sslip.io:9080"
+	}
+	iam, err := zitadel.NewFromKeyFile(base, "admin-client", keyPath)
+	if err != nil {
+		return "", err
+	}
+	ctx := context.Background()
+	orgID, err := iam.FirstOrgID(ctx, base)
+	if err != nil {
+		return "", err
+	}
+	userID, err := iam.EnsureMachineUser(ctx, base, orgID, "operator-ci")
+	if err != nil {
+		return "", err
+	}
+	w.token, err = iam.CreatePAT(ctx, base, orgID, userID)
+	return w.token, err
+}
+
+func (w *world) apiDo(method, path string, body string, auth bool) (*http.Response, error) {
+	req, err := http.NewRequest(method, cpBase()+path, strings.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if auth {
+		tok, err := w.apiToken()
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	return http.DefaultClient.Do(req)
+}
+
+func (w *world) apiListNoAuth() error {
+	resp, err := w.apiDo(http.MethodGet, "/api/v1/tenants", "", false)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	w.lastStatus = resp.StatusCode
+	return nil
+}
+
+func (w *world) apiAnswers(code int) error {
+	if w.lastStatus != code {
+		return fmt.Errorf("got %d, want %d", w.lastStatus, code)
+	}
+	return nil
+}
+
+func (w *world) apiCreateTenant(slug string) error {
+	resp, err := w.apiDo(http.MethodPost, "/api/v1/tenants",
+		fmt.Sprintf(`{"slug":%q,"displayName":"API-created"}`, slug), true)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusConflict {
+		raw, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("create: %d: %s", resp.StatusCode, raw)
+	}
+	return nil
+}
+
+func (w *world) apiTenantPhase(slug, phase string, minutes int) error {
+	deadline := time.Now().Add(time.Duration(minutes) * time.Minute)
+	var last string
+	for time.Now().Before(deadline) {
+		resp, err := w.apiDo(http.MethodGet, "/api/v1/tenants/"+slug, "", true)
+		if err == nil {
+			var doc struct {
+				Phase string `json:"phase"`
+			}
+			err = json.NewDecoder(resp.Body).Decode(&doc)
+			resp.Body.Close()
+			if err == nil && doc.Phase == phase {
+				return nil
+			}
+			last = fmt.Sprintf("status=%d phase=%q", resp.StatusCode, doc.Phase)
+		} else {
+			last = err.Error()
+		}
+		time.Sleep(w.pollInterval)
+	}
+	return fmt.Errorf("tenant %q never showed phase %q: %s", slug, phase, last)
+}
+
+func (w *world) apiDeleteTenant(slug string) error {
+	resp, err := w.apiDo(http.MethodDelete, "/api/v1/tenants/"+slug, "", true)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("delete: %d", resp.StatusCode)
+	}
+	return nil
+}
+
+func (w *world) apiTenant404(slug string, minutes int) error {
+	deadline := time.Now().Add(time.Duration(minutes) * time.Minute)
+	for time.Now().Before(deadline) {
+		resp, err := w.apiDo(http.MethodGet, "/api/v1/tenants/"+slug, "", true)
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusNotFound {
+				return nil
+			}
+		}
+		time.Sleep(w.pollInterval)
+	}
+	return fmt.Errorf("tenant %q still answers after %dm", slug, minutes)
+}
+
 func TestFeatures(t *testing.T) {
 	if os.Getenv("PERISTERA_E2E") == "" {
 		t.Skip("set PERISTERA_E2E=1 to run against the dev cluster")
@@ -295,6 +438,12 @@ func TestFeatures(t *testing.T) {
 			sc.Step(`^the app "([^"]*)" of tenant "([^"]*)" answers on its own domain within (\d+) minutes$`, w.appAnswers)
 			sc.Step(`^the app "([^"]*)" of tenant "([^"]*)" sends logins to the tenant's issuer$`, w.appLoginGoesToIssuer)
 			sc.Step(`^the namespace "([^"]*)" holds initial admin credentials$`, w.initialAdminExists)
+			sc.Step(`^I list tenants via the API without credentials$`, w.apiListNoAuth)
+			sc.Step(`^the API answers (\d+)$`, w.apiAnswers)
+			sc.Step(`^I create tenant "([^"]*)" via the API$`, w.apiCreateTenant)
+			sc.Step(`^the API shows tenant "([^"]*)" with phase "([^"]*)" within (\d+) minutes$`, w.apiTenantPhase)
+			sc.Step(`^I delete tenant "([^"]*)" via the API$`, w.apiDeleteTenant)
+			sc.Step(`^the API answers 404 for tenant "([^"]*)" within (\d+) minutes$`, w.apiTenant404)
 		},
 		Options: &godog.Options{
 			Format: "pretty", Paths: []string{"features"}, Strict: true, TestingT: t,

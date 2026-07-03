@@ -17,11 +17,24 @@ exception (`LICENSE-EXCEPTION.md`); openness decided in README §7.
 ```text
 control-plane/
 ├── README.md            ← this file
+├── api/openapi.yaml     ← the /api/v1 contract — authored FIRST (ADR-0007)
 ├── apis/v1alpha1/       ← Tenant types (slug immutable via CEL)
-├── cmd/controller/      ← manager entry point (out-of-cluster dev)
-├── internal/controller/ ← Tenant reconcile loop
+├── cmd/controller/      ← one binary: controller + UI/API server
+├── features/            ← godog specs (the dev loop starts here)
+├── internal/controller/ ← Tenant reconcile loop + app catalog
+├── internal/server/     ← HTMX UI, /api/v1 handlers (gen/ = oapi-codegen)
+├── internal/zitadel/    ← system-API client (ADR-0006 §5–6)
 └── deploy/crd/          ← generated CRD manifest (controller-gen)
 ```
+
+## UI and API
+
+One process serves both (`CP_LISTEN_ADDR`, default `:8090`): the HTMX UI
+for operators (OIDC login against the *default* Zitadel instance — the
+server idempotently registers its own `control-plane` app there at
+startup) and `/api/v1` per `api/openapi.yaml` (bearer tokens — a machine
+user's PAT works; validated via userinfo). Regenerate API stubs after
+editing the spec: `go generate ./internal/server/...`.
 
 ## Dev loop
 

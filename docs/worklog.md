@@ -181,3 +181,30 @@ bottom. One entry = date, what happened, and pointers to artifacts.
 - **Next: session 5 — OpenAPI-first `/api/v1`, HTMX UI with operator
   OIDC login, in-cluster deployment, godog suite into CI (detailed plan
   in `docs/m2-plan.md`).**
+
+## 2026-07-03 — M2 session 5 (core): API + UI live, spec-first twice
+
+- `api/openapi.yaml` authored before any handler; oapi-codegen stubs
+  (`internal/server/gen`); handlers implement the generated interface.
+  Slug is the path identifier (ADR-0007 §4 carve-out); every resource
+  carries its permalink.
+- **6 scenarios / 23 steps green**, including the new API feature:
+  unauthenticated → 401 JSON; create → Ready → delete → 404 entirely
+  through `/api/v1` with a **machine-operator PAT** (test provisions
+  `operator-ci` via the system client — the same automation path an MSP
+  script would use).
+- Auth middleware guards UI (redirect to OIDC login) and API (bearer,
+  validated via userinfo + 60s cache). The server registers its **own**
+  OIDC app in the default instance at startup — same code path as tenant
+  provisioning. One binary: the HTTP server is a manager Runnable.
+- HTMX UI: tenant table with live phase polling, create form, delete
+  with confirm; string catalog from the first template (EN content,
+  FR/DE/LB are targets). **Browser demo:** operator logs in, creates
+  `demo4` in the form, watches it flip to Ready with a clickable issuer
+  (screenshots `/tmp/cp-ui-{pending,ready}.png`). `demo3` remains the
+  standing tenant.
+- Session-5 spill into session 6 (as planned): containerization,
+  in-cluster deployment + RBAC, godog in CI.
+- **Next: session 6 — Dockerfile + deploy manifests + CI job; then the
+  M2 write-up (guidelines entry on controllers, README §5 update, demo
+  recording).**
