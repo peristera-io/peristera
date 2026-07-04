@@ -40,6 +40,30 @@ jobs:
             cd - >/dev/null
           done
 
+  accessibility:
+    name: accessibility (Ergonomos, WCAG 2.1 AA)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Render the Ergonomos page
+        working-directory: ergonomos
+        run: go run ./cmd/a11y-render > /tmp/ergo-page.html
+      - name: Install a11y checker
+        working-directory: ergonomos/a11y
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Run axe-core (WCAG 2.1 AA)
+        working-directory: ergonomos/a11y
+        run: node check.mjs /tmp/ergo-page.html
+
   e2e:
     name: e2e (godog on k3d)
     runs-on: ubuntu-latest
