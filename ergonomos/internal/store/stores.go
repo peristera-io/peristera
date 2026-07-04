@@ -8,13 +8,14 @@ import (
 
 	"github.com/peristera-io/peristera/ergonomos/internal/task"
 	"github.com/peristera-io/peristera/lib/audit"
+	"github.com/peristera-io/peristera/lib/dbtx"
 	"github.com/peristera-io/peristera/lib/pii"
 	"github.com/peristera-io/peristera/lib/search"
 )
 
 // --- task.Repo ---
 
-type TaskRepo struct{ db *sql.DB }
+type TaskRepo struct{ db dbtx.Executor }
 
 func (r *TaskRepo) Insert(ctx context.Context, t task.Task) error {
 	_, err := r.db.ExecContext(ctx,
@@ -97,7 +98,7 @@ var _ task.Repo = (*TaskRepo)(nil)
 
 // --- pii.PseudonymStore ---
 
-type PseudonymStore struct{ db *sql.DB }
+type PseudonymStore struct{ db dbtx.Executor }
 
 func (p *PseudonymStore) Lookup(ctx context.Context, s pii.Subject) (string, bool, error) {
 	var tok string
@@ -138,7 +139,7 @@ var _ pii.PseudonymStore = (*PseudonymStore)(nil)
 
 // --- audit.Sink ---
 
-type AuditSink struct{ db *sql.DB }
+type AuditSink struct{ db dbtx.Executor }
 
 func (a *AuditSink) Append(ctx context.Context, e audit.Event) error {
 	var detail []byte
@@ -160,7 +161,7 @@ var _ audit.Sink = (*AuditSink)(nil)
 
 // --- search.Index ---
 
-type SearchIndex struct{ db *sql.DB }
+type SearchIndex struct{ db dbtx.Executor }
 
 func (s *SearchIndex) Upsert(ctx context.Context, d search.Doc) error {
 	_, err := s.db.ExecContext(ctx,

@@ -6,12 +6,19 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"embed"
 	"fmt"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // "pgx" database/sql driver
 	"github.com/pressly/goose/v3"
+
+	"github.com/peristera-io/peristera/ergonomos/internal/task"
+	"github.com/peristera-io/peristera/lib/audit"
+	"github.com/peristera-io/peristera/lib/dbtx"
+	"github.com/peristera-io/peristera/lib/pii"
+	"github.com/peristera-io/peristera/lib/search"
 )
 
 //go:embed migrations/*.sql
@@ -45,7 +52,22 @@ func (d *DB) Migrate() error {
 // Close closes the pool.
 func (d *DB) Close() error { return d.sql.Close() }
 
-func (d *DB) Tasks() *TaskRepo            { return &TaskRepo{db: d.sql} }
-func (d *DB) Pseudonyms() *PseudonymStore { return &PseudonymStore{db: d.sql} }
-func (d *DB) Audit() *AuditSink           { return &AuditSink{db: d.sql} }
-func (d *DB) Search() *SearchIndex        { return &SearchIndex{db: d.sql} }
+// storesFor builds the task convention bundle over an executor (the pool
+// for reads, a transaction inside InTx) — ADR-0015.
+func (d *DB) storesFor(e dbtx.Executor) task.Stores {
+	return task.Stores{
+		Tasks:  &TaskRepo{db: e},
+		Audit:  audit.NewEmitter(&AuditSink{db: e}, pii.NewPseudonyms(&PseudonymStore{db: e})),
+		Search: search.NewFeeder(&SearchIndex{db: e}),
+	}
+}
+
+// Reader returns a non-transactional store bundle (reads, export/erase).
+func (d *DB) Reader() task.Stores { return d.storesFor(d.sql) }
+
+// InTx runs fn with a transaction-bound store bundle, atomically.
+func (d *DB) InTx(ctx context.Context, fn func(task.Stores) error) error {
+	return dbtx.InTx(ctx, d.sql, func(tx *sql.Tx) error { return fn(d.storesFor(tx)) })
+}
+
+var _ task.TxRunner = (*DB)(nil)

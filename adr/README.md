@@ -31,3 +31,4 @@ ADR, not in chat history.
 - [ADR-0012](0012-search-feed.md) — Unified search feed (Postgres FTS)
 - [ADR-0013](0013-catalog-contract.md) — App catalog contract (code, not data — for now)
 - [ADR-0014](0014-migrations-goose.md) — Schema migrations with goose, expand/contract
+- [ADR-0015](0015-transactional-storage.md) — Transactional storage (unit of work)

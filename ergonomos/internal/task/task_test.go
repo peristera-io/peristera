@@ -112,16 +112,27 @@ type memIndex struct{ docs map[string]search.Doc }
 func (m *memIndex) Upsert(_ context.Context, d search.Doc) error { m.docs[d.ID] = d; return nil }
 func (m *memIndex) Delete(_ context.Context, id string) error    { delete(m.docs, id); return nil }
 
+// memTx is an in-memory TxRunner: it runs the callback directly (the fakes
+// have no real transaction), enough to exercise the domain's convention
+// chain. Real transaction semantics are covered by lib/dbtx + the e2e.
+type memTx struct{ stores Stores }
+
+func (m *memTx) InTx(_ context.Context, fn func(Stores) error) error { return fn(m.stores) }
+func (m *memTx) Reader() Stores                                      { return m.stores }
+
 func newService(t *testing.T) (*Service, *pii.Registry, *memRepo, *memAuthz, *memSink, *memIndex) {
 	t.Helper()
 	repo := newMemRepo()
 	az := newMemAuthz()
 	sink := &memSink{}
 	idx := &memIndex{docs: map[string]search.Doc{}}
-	em := audit.NewEmitter(sink, pii.NewInMemoryPseudonyms())
-	sf := search.NewFeeder(idx)
+	stores := Stores{
+		Tasks:  repo,
+		Audit:  audit.NewEmitter(sink, pii.NewInMemoryPseudonyms()),
+		Search: search.NewFeeder(idx),
+	}
 	reg := pii.NewRegistry() // fresh per test — no global registration clash
-	return NewService(reg, repo, az, em, sf), reg, repo, az, sink, idx
+	return NewService(reg, &memTx{stores}, az), reg, repo, az, sink, idx
 }
 
 func TestCreateRunsEveryConvention(t *testing.T) {

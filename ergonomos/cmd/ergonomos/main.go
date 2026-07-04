@@ -14,11 +14,9 @@ import (
 
 	"github.com/peristera-io/peristera/ergonomos/internal/store"
 	"github.com/peristera-io/peristera/ergonomos/internal/task"
-	"github.com/peristera-io/peristera/lib/audit"
 	"github.com/peristera-io/peristera/lib/authz"
 	"github.com/peristera-io/peristera/lib/oidcrp"
 	"github.com/peristera-io/peristera/lib/pii"
-	"github.com/peristera-io/peristera/lib/search"
 )
 
 // fgaModel is Ergonomos's contribution to the tenant authorization model
@@ -77,13 +75,10 @@ func main() {
 		log.Fatalf("oidc: %v", err)
 	}
 
-	svc := task.NewService(
-		pii.Default,
-		db.Tasks(),
-		az,
-		audit.NewEmitter(db.Audit(), pii.NewPseudonyms(db.Pseudonyms())),
-		search.NewFeeder(db.Search()),
-	)
+	// db satisfies task.TxRunner: mutations run row+audit+search in one
+	// transaction (ADR-0015); the OpenFGA client is the out-of-transaction
+	// authorization store.
+	svc := task.NewService(pii.Default, db, az)
 
 	// The data subject is the logged-in user: instance = the issuer's host
 	// (the tenant's permanent domain, ADR-0009 §2), user = the OIDC sub.
