@@ -18,16 +18,37 @@ import (
 	"github.com/peristera-io/peristera/control-plane/apis/v1alpha1"
 )
 
-// CatalogApp is one entry of the tenant app catalog. The catalog is a Go
-// slice by decision (Q&A R26): it becomes data when a second app exists.
+// CatalogApp is one entry of the tenant app catalog. The catalog stays a
+// hardcoded Go slice (ADR-0013; catalog-as-data deferred) but an entry now
+// declares its infrastructure needs, which the reconciler satisfies.
 type CatalogApp struct {
 	Name  string
 	Image string
 	Port  int32
+	// NeedsDatabase provisions a dedicated database for the app inside the
+	// tenant's CNPG cluster (database-per-app, ADR-0013/R30) and injects
+	// its DSN as DATABASE_DSN.
+	NeedsDatabase bool
+	// NeedsOpenFGA gives the app the tenant's per-namespace OpenFGA
+	// (ADR-0010) and injects OPENFGA_API_URL.
+	NeedsOpenFGA bool
 }
 
 var catalog = []CatalogApp{
 	{Name: "stub", Image: "peristera-stub:dev", Port: 5556},
+	// Ergonomos (M3b session 5) will be added here with
+	// NeedsDatabase + NeedsOpenFGA true.
+}
+
+// anyAppNeedsOpenFGA reports whether the catalog requires the per-tenant
+// OpenFGA to be provisioned.
+func anyAppNeedsOpenFGA() bool {
+	for _, a := range catalog {
+		if a.NeedsOpenFGA {
+			return true
+		}
+	}
+	return false
 }
 
 // ensureApps deploys every catalog app into the tenant namespace with the
@@ -35,12 +56,45 @@ var catalog = []CatalogApp{
 // LISTEN_ADDR). Create-only for M2: drift correction and upgrades are the
 // 2027 control-plane alpha.
 func (r *TenantReconciler) ensureApps(ctx context.Context, tenant *v1alpha1.Tenant, ns string) error {
+	// Per-tenant OpenFGA is shared by every app that needs it; provision it
+	// once before the apps that depend on it (ADR-0010/0013).
+	if anyAppNeedsOpenFGA() {
+		if err := r.ensureOpenFGA(ctx, tenant, ns); err != nil {
+			return err
+		}
+	}
+
 	for _, app := range catalog {
 		host := fmt.Sprintf("%s.%s", app.Name, r.tenantDomain(tenant))
 		publicURL := fmt.Sprintf("http://%s:%s", host, r.ExternalPort)
 		labels := map[string]string{
 			"app.kubernetes.io/name":       app.Name,
 			"app.kubernetes.io/managed-by": "peristera-control-plane",
+		}
+
+		env := []corev1.EnvVar{
+			{Name: "OIDC_ISSUER", Value: tenant.Status.Issuer},
+			{Name: "OIDC_CLIENT_ID", Value: tenant.Status.ClientID},
+			{Name: "PUBLIC_URL", Value: publicURL},
+			{Name: "LISTEN_ADDR", Value: fmt.Sprintf(":%d", app.Port)},
+		}
+		if app.NeedsDatabase {
+			if err := r.ensureAppDatabase(ctx, tenant, ns, app.Name); err != nil {
+				return err
+			}
+			env = append(env, corev1.EnvVar{
+				Name: "DATABASE_DSN",
+				ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: app.Name + "-db-dsn"},
+					Key:                  "dsn",
+				}},
+			})
+		}
+		if app.NeedsOpenFGA {
+			env = append(env, corev1.EnvVar{
+				Name:  "OPENFGA_API_URL",
+				Value: fmt.Sprintf("http://openfga.%s.svc.cluster.local:8080", ns),
+			})
 		}
 
 		deploy := &appsv1.Deployment{
@@ -54,12 +108,7 @@ func (r *TenantReconciler) ensureApps(ctx context.Context, tenant *v1alpha1.Tena
 						Image:           app.Image,
 						ImagePullPolicy: corev1.PullIfNotPresent,
 						Ports:           []corev1.ContainerPort{{ContainerPort: app.Port}},
-						Env: []corev1.EnvVar{
-							{Name: "OIDC_ISSUER", Value: tenant.Status.Issuer},
-							{Name: "OIDC_CLIENT_ID", Value: tenant.Status.ClientID},
-							{Name: "PUBLIC_URL", Value: publicURL},
-							{Name: "LISTEN_ADDR", Value: fmt.Sprintf(":%d", app.Port)},
-						},
+						Env:             env,
 					}}},
 				},
 			},

@@ -29,3 +29,5 @@ ADR, not in chat history.
 - [ADR-0010](0010-openfga-model-conventions.md) — OpenFGA authorization model conventions
 - [ADR-0011](0011-audit-events.md) — Audit events
 - [ADR-0012](0012-search-feed.md) — Unified search feed (Postgres FTS)
+- [ADR-0013](0013-catalog-contract.md) — App catalog contract (code, not data — for now)
+- [ADR-0014](0014-migrations-goose.md) — Schema migrations with goose, expand/contract

@@ -22,7 +22,7 @@ rules:
     resources: ["secrets"]
     verbs: ["get", "list", "watch", "create"]
   - apiGroups: ["postgresql.cnpg.io"]
-    resources: ["clusters"]
+    resources: ["clusters", "databases"]
     verbs: ["get", "list", "watch", "create", "delete"]
   - apiGroups: ["apps"]
     resources: ["deployments"]
