@@ -417,7 +417,7 @@ M3b ships the task stub that proves they compose. Keeps each milestone
 demoable and honestly sized. Or do you want it as one milestone, accepting
 the overrun? 
 
->
+> ok
 
 **R29. Decide all four conventions now, implement only what the single-user
 stub exercises?** The retrofit cost of these is the whole reason they're
@@ -428,7 +428,7 @@ touches these), plus the search *write-side* hook — but defer the search
 query UI and any multi-user OpenFGA modeling to when a second user/app
 needs it.** Agree, or implement more/less aggressively? 
 
->
+> ok
 
 **R30. Storage: one database per app inside the tenant's CNPG Postgres?**
 README §4 says "one Postgres per tenant". Within it, Ergonomos needs
@@ -439,7 +439,7 @@ clean erasure/backup boundary per app, still one Postgres operator per
 tenant, avoids a cluster per app. The control plane provisions it as part
 of deploying the app. OK? 
 
->
+> ok
 
 **R31. Catalog: keep the hardcoded Go slice (now 2 entries) or make it
 data?** Q&A R26 said "the catalog becomes data when a second app exists" —
@@ -450,7 +450,7 @@ database" and "needs an OpenFGA store". Defer catalog-as-data to when
 per-MSP catalog curation is real. This walks back R26 slightly — OK, or
 make it data now? 
 
->
+> ok, but let's keep track of the decision and make sure that we don't loose it from context.
 
 **R32. Migration tooling?** Ergonomos is the first app with schema
 migrations, and agreement #5 mandates expand/contract from migration one.
@@ -460,12 +460,11 @@ Recommendation: **goose** (simple, embeds in the Go binary, runs as an init
 step) unless you want atlas's declarative diffing. Preference? This becomes
 a short stack ADR. 
 
->
+> goose
 
 **R33. Accessibility CI tooling?** Deferred to M3 (§5). Recommendation:
 **axe-core via `@axe-core/cli` or pa11y-ci** against the running Ergonomos
 UI in the e2e job (we already spin up the app in CI). EN 301 549 / EAA as
 the bar, start with WCAG 2.1 AA automated checks. OK, or a specific tool? 
 
->
-
+> ok

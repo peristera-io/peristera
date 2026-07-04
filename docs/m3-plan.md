@@ -4,8 +4,16 @@
   ≤6-weekend rule if the conventions and the app both ship full. **Split
   proposed (see Round 6 Q1):** M3a = conventions (ADRs + `lib/`), M3b =
   the Ergonomos task stub that consumes them. Dates are targets.
-- **Status:** draft — open parameters in `Q&A.md` Round 6. Starts after M2
-  (done 2026-07-04).
+- **Status:** parameters settled (`Q&A.md` Round 6, 2026-07-04). Starts
+  after M2 (done 2026-07-04). **Split confirmed: M3a (conventions +
+  `lib/`) then M3b (task stub).**
+- **Settled (Round 6):** split M3a/M3b (R28); ADR all four conventions,
+  implement only what the single-user stub exercises + search write-hook
+  (R29); **database-per-app** inside the tenant CNPG cluster (R30);
+  **keep the catalog a Go slice, grow the contract** — catalog-as-data
+  deferred and recorded in its own ADR so the decision isn't lost (R31);
+  **goose** for migrations, expand/contract from migration one (R32);
+  **axe-core/pa11y** a11y checks in the e2e job, WCAG 2.1 AA (R33).
 - **Lifecycle:** working document, superseded by the M3 ADRs and worklog.
 
 ## Why M3 is different
