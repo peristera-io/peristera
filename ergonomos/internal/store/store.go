@@ -17,6 +17,7 @@ import (
 	"github.com/peristera-io/peristera/ergonomos/internal/task"
 	"github.com/peristera-io/peristera/lib/audit"
 	"github.com/peristera-io/peristera/lib/dbtx"
+	"github.com/peristera-io/peristera/lib/pgconv"
 	"github.com/peristera-io/peristera/lib/pii"
 	"github.com/peristera-io/peristera/lib/search"
 )
@@ -57,8 +58,8 @@ func (d *DB) Close() error { return d.sql.Close() }
 func (d *DB) storesFor(e dbtx.Executor) task.Stores {
 	return task.Stores{
 		Tasks:  &TaskRepo{db: e},
-		Audit:  audit.NewEmitter(&AuditSink{db: e}, pii.NewPseudonyms(&PseudonymStore{db: e})),
-		Search: search.NewFeeder(&SearchIndex{db: e}),
+		Audit:  audit.NewEmitter(&pgconv.AuditSink{DB: e}, pii.NewPseudonyms(&pgconv.PseudonymStore{DB: e})),
+		Search: search.NewFeeder(&pgconv.SearchIndex{DB: e}),
 	}
 }
 

@@ -3,14 +3,11 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 
 	"github.com/peristera-io/peristera/ergonomos/internal/task"
-	"github.com/peristera-io/peristera/lib/audit"
 	"github.com/peristera-io/peristera/lib/dbtx"
 	"github.com/peristera-io/peristera/lib/pii"
-	"github.com/peristera-io/peristera/lib/search"
 )
 
 // --- task.Repo ---
@@ -95,104 +92,3 @@ func (r *TaskRepo) DeleteByOwner(ctx context.Context, o pii.Subject) error {
 }
 
 var _ task.Repo = (*TaskRepo)(nil)
-
-// --- pii.PseudonymStore ---
-
-type PseudonymStore struct{ db dbtx.Executor }
-
-func (p *PseudonymStore) Lookup(ctx context.Context, s pii.Subject) (string, bool, error) {
-	var tok string
-	err := p.db.QueryRowContext(ctx,
-		`SELECT token FROM subject_pseudonyms WHERE instance=$1 AND user_id=$2`, s.Instance, s.UserID).Scan(&tok)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", false, nil
-	}
-	return tok, err == nil, err
-}
-
-// errSubjectMapped signals a lost allocation race so lib/pii's TokenFor
-// re-reads the winner (it only needs a non-nil error).
-var errSubjectMapped = errors.New("store: subject already mapped")
-
-func (p *PseudonymStore) Save(ctx context.Context, token string, s pii.Subject) error {
-	// ON CONFLICT DO NOTHING (not a bare INSERT): a lost race must NOT abort
-	// the surrounding transaction (Postgres 25P02 would poison the whole
-	// mutation, ADR-0015). 0 rows affected = another writer won → return an
-	// error so TokenFor re-reads the winner (matches SearchIndex.Upsert).
-	res, err := p.db.ExecContext(ctx,
-		`INSERT INTO subject_pseudonyms (token, instance, user_id) VALUES ($1,$2,$3)
-		 ON CONFLICT (instance, user_id) DO NOTHING`,
-		token, s.Instance, s.UserID)
-	if err != nil {
-		return err
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return errSubjectMapped
-	}
-	return nil
-}
-
-func (p *PseudonymStore) Resolve(ctx context.Context, token string) (pii.Subject, bool, error) {
-	var s pii.Subject
-	err := p.db.QueryRowContext(ctx,
-		`SELECT instance, user_id FROM subject_pseudonyms WHERE token=$1`, token).Scan(&s.Instance, &s.UserID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return pii.Subject{}, false, nil
-	}
-	return s, err == nil, err
-}
-
-func (p *PseudonymStore) Delete(ctx context.Context, s pii.Subject) error {
-	_, err := p.db.ExecContext(ctx,
-		`DELETE FROM subject_pseudonyms WHERE instance=$1 AND user_id=$2`, s.Instance, s.UserID)
-	return err
-}
-
-var _ pii.PseudonymStore = (*PseudonymStore)(nil)
-
-// --- audit.Sink ---
-
-type AuditSink struct{ db dbtx.Executor }
-
-func (a *AuditSink) Append(ctx context.Context, e audit.Event) error {
-	var detail []byte
-	if e.Detail != nil {
-		var err error
-		if detail, err = json.Marshal(e.Detail); err != nil {
-			return err
-		}
-	}
-	_, err := a.db.ExecContext(ctx,
-		`INSERT INTO audit_events (id, at, actor_token, action, object_type, object_id, object_permalink, detail)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-		e.ID, e.Time, e.ActorToken, string(e.Action),
-		e.Object.Type, e.Object.ID, e.Object.Permalink, detail)
-	return err
-}
-
-var _ audit.Sink = (*AuditSink)(nil)
-
-// --- search.Index ---
-
-type SearchIndex struct{ db dbtx.Executor }
-
-func (s *SearchIndex) Upsert(ctx context.Context, d search.Doc) error {
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO search_documents (id, doc_type, permalink, owner_instance, owner_user, body)
-		 VALUES ($1,$2,$3,$4,$5,$6)
-		 ON CONFLICT (id) DO UPDATE SET doc_type=EXCLUDED.doc_type, permalink=EXCLUDED.permalink,
-		   owner_instance=EXCLUDED.owner_instance, owner_user=EXCLUDED.owner_user, body=EXCLUDED.body`,
-		d.ID, d.Type, d.Permalink, d.Owner.Instance, d.Owner.UserID, d.Text)
-	return err
-}
-
-func (s *SearchIndex) Delete(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM search_documents WHERE id=$1`, id)
-	return err
-}
-
-var _ search.Index = (*SearchIndex)(nil)
