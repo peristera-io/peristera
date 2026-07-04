@@ -2,61 +2,13 @@ package pii
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"testing"
 )
 
-// memStore is an in-memory PseudonymStore for tests (and a reference for
-// the real per-tenant Postgres implementation).
-type memStore struct {
-	mu       sync.Mutex
-	byToken  map[string]Subject
-	bySubUID map[string]string // subject.String() → token
-}
-
-func newMemStore() *memStore {
-	return &memStore{byToken: map[string]Subject{}, bySubUID: map[string]string{}}
-}
-
-func (m *memStore) Lookup(_ context.Context, s Subject) (string, bool, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	tok, ok := m.bySubUID[s.String()]
-	return tok, ok, nil
-}
-
-// Save models a real store: UNIQUE on subject, so a second Save for an
-// already-mapped subject is rejected (the allocation-race loser path).
-func (m *memStore) Save(_ context.Context, token string, s Subject) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, exists := m.bySubUID[s.String()]; exists {
-		return errors.New("memstore: subject already mapped")
-	}
-	m.byToken[token] = s
-	m.bySubUID[s.String()] = token
-	return nil
-}
-func (m *memStore) Resolve(_ context.Context, token string) (Subject, bool, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	s, ok := m.byToken[token]
-	return s, ok, nil
-}
-func (m *memStore) Delete(_ context.Context, s Subject) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if tok, ok := m.bySubUID[s.String()]; ok {
-		delete(m.byToken, tok)
-		delete(m.bySubUID, s.String())
-	}
-	return nil
-}
-
 func TestPseudonymStableAndErasable(t *testing.T) {
 	ctx := context.Background()
-	p := NewPseudonyms(newMemStore())
+	p := NewInMemoryPseudonyms()
 	alice := Subject{Instance: "demo.example", UserID: "alice"}
 	bob := Subject{Instance: "demo.example", UserID: "bob"}
 
@@ -104,7 +56,7 @@ func TestPseudonymStableAndErasable(t *testing.T) {
 // token (run with -race). This is the one non-trivial concurrency claim.
 func TestTokenForConcurrent(t *testing.T) {
 	ctx := context.Background()
-	p := NewPseudonyms(newMemStore())
+	p := NewInMemoryPseudonyms()
 	subj := Subject{Instance: "demo.example", UserID: "racer"}
 
 	const n = 50
