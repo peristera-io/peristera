@@ -2,8 +2,11 @@
 
 - **Size:** ≤ 6 weekends per phase. Proposed split **M4a** (engine + API)
   then **M4b** (file UI), the same shape M3 used.
-- **Status:** draft — format parameters open in `Q&A.md` Round 7. Starts
-  after M3 (done + hardened).
+- **Status:** parameters settled (`Q&A.md` Round 7, 2026-07-04). Starts
+  after M3 (done + hardened). Settled: write fresh (port chunker + format
+  ideas), split M4a/M4b, single-tier chunking, plaintext content-address
+  (algorithm named in config), reuse+ref-counting in M4a, filesystem blob
+  backend first, per-tenant DEK envelope-encrypting chunks at-rest.
 - **Design home:** `kamara/SPEC.md` (living). This plan is milestone
   execution and dies when M4 ships; the SPEC persists.
 - **Lifecycle:** working document, superseded by the M4 ADRs, the SPEC,

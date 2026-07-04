@@ -485,14 +485,14 @@ user, client-key E2EE, SQLite, P2P) is far from Kamara. Recommendation:
 (version byte, format-config feature flags, reserved E2EE columns, AD
 binding) rather than forking the codebase. Agree?
 
->
+>ok
 
 **R35. Split M4 into M4a (engine + storage API) then M4b (file UI)?**
 Same shape as M3. M4a is the unretrofittable part (format + API + the
 shared transaction helper); M4b is the browser UI. Recommendation: split.
 OK?
 
->
+>ok
 
 **R36. Chunk sizing: single- or two-tier?** The prototype used two tiers
 (small files vs large) but its own spec-review flagged the 1 MB boundary
@@ -500,7 +500,7 @@ as a "cliff" that defeats cross-version reuse. Recommendation:
 **single-tier content-defined chunking** (e.g. min 256 KB / avg 1 MB / max
 4 MB) — simpler, no cliff. Agree, or keep two tiers?
 
->
+> agree
 
 **R37. Content hash over plaintext or ciphertext?** This drives dedup vs
 E2EE: hashing *plaintext* lets us dedup identical chunks across files
@@ -511,7 +511,7 @@ algorithm named in the per-tenant format config** so a future E2EE tenant
 can switch to ciphertext-addressing without a format rewrite. The field is
 reserved either way. OK?
 
->
+>ok
 
 **R38. Cross-version reuse + ref-counting in M4a, or defer?** On edit,
 reuse unchanged chunks and ref-count + GC orphans. It needs the `ref_count`
@@ -521,7 +521,7 @@ content-defined chunking, it's format-shaping, and the prototype proved
 it's tractable. Agree, or ship dumb full-copy versions first and add reuse
 later (columns reserved)?
 
->
+>agree
 
 **R39. Blob backend: filesystem first, S3 behind the interface?** (ADR
 backlog #5.) Recommendation: **a streaming `BlobStore` interface; ship a
@@ -529,7 +529,7 @@ filesystem impl for M4a** (a per-tenant PersistentVolume), add an
 S3-compatible impl (Scaleway/MinIO) behind the same interface when the
 SaaS/Scaleway story is real (M6). OK, or go S3/MinIO from the start?
 
->
+>ok
 
 **R40. At-rest key management shape.** Near-term crypto is at-rest, not
 E2EE (Q&A R6). Recommendation: **a per-tenant data-encryption key held as
@@ -541,4 +541,4 @@ same seam. OK? Or keep M4a plaintext-at-rest (no chunk encryption yet) and
 add the per-tenant key with the backup story — simpler now, but then
 "at-rest encryption" isn't actually delivered in M4?
 
->
+>ok

@@ -7,9 +7,10 @@
 > `docs/m4-plan.md`; decision rationale lives in `adr/`; this doc states
 > the design and links to the ADRs for the *why*.
 >
-> **Status: draft — the M4a format decisions are being settled in
-> `Q&A.md` Round 7.** Items marked *(open — R7 Qn)* are not yet decided;
-> items marked *(decided)* are settled framing.
+> **Status: M4a format decisions settled (`Q&A.md` Round 7, 2026-07-04);
+> implementation not started.** The decisions below are now framing; the
+> column/wire specifics firm up as M4a is built and this doc is updated to
+> match.
 
 ## 1. What Kamara is
 
@@ -48,19 +49,19 @@ The Postgres database is the catalogue (no separate index needed). *(decided)*
   (rolling hash) so that inserting bytes doesn't reshuffle every
   downstream chunk — the property that makes later delta-sync and
   cross-version reuse work.
-  - Sizing: single-tier vs two-tier — *(open — R7 Q3)*.
-- **Content addressing.** A chunk's storage key is a hash of its bytes;
-  the hash *algorithm is named in the tenant format config* (not
-  hard-coded), and whether the hash is over *plaintext* (enables at-rest
-  dedup) or *ciphertext* (E2EE) is a config-flagged choice — *(open — R7
-  Q4)*. The field exists from day one regardless.
+  - **Single-tier** sizing (min 256 KB / avg 1 MB / max 4 MB) — no
+    two-tier boundary cliff. *(decided — R7 Q36)*
+- **Content addressing.** A chunk's storage key is a hash of its **plain**
+  bytes (so identical content dedups across files — at-rest storage
+  savings). The hash *algorithm is named in the per-tenant format config*
+  (not hard-coded), so a future E2EE tenant can switch to ciphertext-
+  addressing without a format rewrite. *(decided — R7 Q37)*
 - **Chunk blob format.** Every stored blob begins with a **format version
   byte**, so a later encryption/format change is unambiguous and additive,
-  not a rewrite. *(decided — the mechanism; the at-rest body layout is
-  M4a work)*
+  not a rewrite. *(decided)*
 - **Cross-version reuse + ref-counting.** On edit, chunks whose content is
-  unchanged are reused; a `ref_count` + GC reclaims orphaned chunks.
-  Whether to build this in M4a or defer — *(open — R7 Q5)*.
+  unchanged are reused; a `ref_count` + GC reclaims orphaned chunks. Built
+  in M4a. *(decided — R7 Q38)*
 
 ## 4. Storage backend
 
@@ -68,9 +69,10 @@ The Postgres database is the catalogue (no separate index needed). *(decided)*
   `Put/Get/Delete/Exists`, **streaming** (`io.Reader` / ranged reads) so
   large files and browser uploads don't buffer whole blobs in memory.
   *(decided — the interface shape)*
-- Concrete backend: S3-compatible (Scaleway/MinIO) vs filesystem —
-  *(open — R7 Q6; ADR backlog #5)*. M4a can ship a filesystem impl and add
-  S3 behind the same interface.
+- Concrete backend: **filesystem impl for M4a** (a per-tenant
+  PersistentVolume); an S3-compatible impl (Scaleway/MinIO) behind the
+  same interface arrives with the SaaS/Scaleway story (M6). *(decided —
+  R7 Q39; ADR backlog #5)*
 
 ## 5. Data model (Postgres)
 
@@ -91,9 +93,12 @@ The owner column is display/PII-scoping only, never the access decision.
 ## 6. Encryption stance
 
 - **At-rest, not E2EE, in M4** — "encrypting everything is a hassle in the
-  corporate world" (Q&A R6). Key management is a **server-side envelope**
-  (per-tenant key), *not* a passphrase-derived client hierarchy. Details
-  *(open — R7 Q7)*; ties to the per-tenant key hierarchy (ADR-0009 §6).
+  corporate world" (Q&A R6). Chunk contents are envelope-encrypted
+  server-side under a **per-tenant data-encryption key held as a
+  Kubernetes Secret** in the tenant namespace — the seed of the per-tenant
+  key hierarchy (ADR-0009 §6), so whole-tenant crypto-shredding later is a
+  key deletion. A cloud-KMS envelope is a Scaleway-era upgrade behind the
+  same seam. *(decided — R7 Q40)*
 - **E2EE-ready format.** Three cheap hooks make E2EE additive later:
   1. the per-blob **format version byte** (§3);
   2. a per-tenant **format config** row — `{format_version,
@@ -134,21 +139,22 @@ Kamara is also where the **shared transactional storage helper**
 (issue #15) is built, since object+chunk+audit+search span the same
 Postgres DB and must be one transaction; Ergonomos adopts it too.
 
-## 9. Open questions
+## 9. Decisions and what's still open
 
-Tracked here so they don't get lost; being settled in `Q&A.md` Round 7.
+Settled in `Q&A.md` Round 7 (2026-07-04): write fresh on our stack porting
+the chunker algorithm + format-future-proofing ideas (R34); split M4a/M4b
+(R35); single-tier chunking (R36); plaintext content-addressing with the
+algorithm named in the format config (R37); cross-version reuse +
+ref-counting in M4a (R38); filesystem `BlobStore` first, S3 behind the
+interface at M6 (R39); per-tenant DEK (k8s Secret) envelope-encrypting
+chunks at-rest (R40).
 
-| # | Question | Where |
-|---|----------|-------|
-| 1 | Reuse scope: port FastCDC/chunker ideas vs write fresh | R7 Q1 |
-| 2 | M4a/M4b split (engine+API, then UI) | R7 Q2 |
-| 3 | Single- vs two-tier chunk sizing | R7 Q3 |
-| 4 | Content hash over plaintext (dedup) vs ciphertext (E2EE) | R7 Q4 |
-| 5 | Cross-version reuse + ref-counting in M4a or defer | R7 Q5 |
-| 6 | Blob backend: filesystem first, S3 behind the interface | R7 Q6, ADR #5 |
-| 7 | At-rest key management (server envelope) shape | R7 Q7, ADR-0009 §6 |
+**Still open (firm up during M4a, record in `adr/`):** exact chunk-record
+and manifest columns; the resumable-upload protocol shape (session-based
+vs. content-range); GC trigger/cadence; the storage-API surface
+(OpenAPI); how a per-tenant DEK is generated and mounted.
 
-Longer-horizon (not M4): device-to-device sync, E2EE + federated
+**Longer-horizon (not M4):** device-to-device sync, E2EE + federated
 encrypted replicas, resumable-sync protocol, desktop/mobile clients,
 content-extraction search, per-tenant chunker-seed anti-fingerprinting.
 
