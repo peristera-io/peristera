@@ -209,6 +209,44 @@ bottom. One entry = date, what happened, and pointers to artifacts.
   M2 write-up (guidelines entry on controllers, README §5 update, demo
   recording).**
 
+## 2026-07-04 — M3a complete + M3b foundations (sessions 1–4)
+
+Autonomous run: settle M3 params (Q&A R6), then session-by-session with a
+fresh-context review checkpoint after each (findings triaged fix-now /
+issue / note).
+
+- **M3a session 1** (`dc311ac`): ADRs 0009–0012 — the GDPR-by-design spine
+  (personal-data metadata, OpenFGA conventions, audit events, search
+  feed). 2 reviewers → fixed pre-commit: per-*subject* pseudonym (not the
+  per-tenant key), audit indirection-token-from-day-one (no immutable-table
+  migration), pinned canonical subject format, dropped denormalized owner,
+  erasure-ordering + ListObjects-completeness caveats. Deferrals → issues
+  #12/#13.
+- **M3a session 2** (`0c8109d`): `lib/pii` (first MIT lib). 2 reviewers →
+  fixed: guarded classes map, hardened pseudonym allocation-race contract
+  (unique-on-subject + re-lookup) with a `-race` test, ctx checks. Erasure-
+  ordering enforcement → issue #14.
+- **M3a session 3** (`75d7000`): `lib/id` (UUIDv7), `lib/audit`,
+  `lib/search` + `pii.InMemoryPseudonymStore`. 1 reviewer → fixed:
+  audit.Detail PII warning + Emit validation, search.Feed requires Owner
+  (permission-filter safety) + Permalink, no subject in error strings, id
+  same-ms ordering caveat. All race-tested. **M3a done.**
+- **M3b session 4** (`5b7aaa7`): ADR-0013 (catalog stays code, grows a
+  needs-contract; catalog-as-data deferred per R31) + ADR-0014 (goose,
+  expand/contract). CatalogApp declares NeedsDatabase/NeedsOpenFGA;
+  reconciler provisions database-per-app (CNPG Database + DSN secret) and
+  per-tenant OpenFGA (migrate init + server). Builds green; no app
+  declares the needs yet, so it is live-exercised in session 5.
+- One in-scope sizing call (no Q&A needed, both session-1 reviewers
+  concurred): moved the `lib/oidcrp` extraction M3a→M3b (retrofittable
+  cleanup was diluting the conventions milestone; paid when Ergonomos
+  opens the auth code).
+- **Remaining M3b: session 5** (Ergonomos app — new module, `lib/oidcrp`
+  extraction, goose migrations, tasks wired through all four conventions,
+  live OpenFGA/DB verification, godog spec-first) **and session 6** (HTMX
+  UI + a11y CI + demo). A focused application build; the ADRs fully
+  specify it.
+
 ## 2026-07-04 — M2 session 6: in-cluster, one-command env, CI — M2 done
 
 - Control plane containerized (distroless) and **running in-cluster**:

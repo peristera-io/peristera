@@ -33,13 +33,17 @@ non-blocking findings are tracked as GitHub issues.
 Only `iam/` and `control-plane/` exist on disk; the other project folders
 (`lib/`, `ergonomos/`, `kamara/`) appear with their first code, per §8.
 
-**Next: M3 — Ergonomos stub** (plan: `docs/m3-plan.md`, open parameters in
-`Q&A.md` Round 6). The first app that stores user data, so it carries the
-GDPR-by-design spine up front — each an ADR before the first byte:
-personal-data metadata (incl. retention/legal holds), OpenFGA model
-conventions, audit events, search feed (the M0 deferrals in §5). Likely
-splits into M3a (conventions + `lib/`) and M3b (the task stub). Folds in
-GitHub issues #2 (shared `lib/` OIDC/session) and #6 (per agreement #7).
+**In progress: M3 — Ergonomos** (plan: `docs/m3-plan.md`, params settled
+in `Q&A.md` Round 6; split into M3a conventions + M3b app).
+**M3a complete** (2026-07-04): the GDPR-by-design spine — ADRs 0009–0012
+(personal-data metadata, OpenFGA conventions, audit events, search feed),
+0013 (catalog contract), 0014 (goose migrations), built as the MIT `lib/`
+module (`id`, `pii`, `audit`, `search`), each reviewed by fresh-context
+agents. **M3b in progress:** the control-plane catalog contract now
+provisions database-per-app + per-tenant OpenFGA (session 4). Remaining:
+the Ergonomos task stub itself — new module, `lib/oidcrp` extraction
+(issue #2), goose migrations, tasks wired through all four conventions,
+HTMX UI, a11y CI (sessions 5–6).
 
 *Update this block whenever reality changes — a stale status line is exactly
 the rot §8 warns against.*
