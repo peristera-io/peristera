@@ -23,6 +23,16 @@ var cnpgDatabaseGVK = schema.GroupVersionKind{
 	Group: "postgresql.cnpg.io", Version: "v1", Kind: "Database",
 }
 
+// openFGAImage is pinned (not :latest) so the tested migrate/server
+// versions can't silently diverge on a pod reschedule.
+const openFGAImage = "openfga/openfga:v1.8.0"
+
+// NOTE: app provisioning here is create-only (createIfAbsent). Not just the
+// app Deployment — the DSN secret, the OpenFGA Deployment, and their env
+// are all frozen at first create. Changing an image, an env value, or a
+// rotated DB password requires recreating the resource (M3 scope; drift
+// correction is the 2027 control-plane alpha).
+
 // ensureAppDatabase provisions a dedicated database for an app inside the
 // tenant's CNPG cluster (database-per-app, ADR-0013/R30) and writes a
 // secret carrying its DSN, assembled from the cluster's app credentials.
@@ -108,13 +118,13 @@ func (r *TenantReconciler) ensureOpenFGA(ctx context.Context, tenant *v1alpha1.T
 				Spec: corev1.PodSpec{
 					InitContainers: []corev1.Container{{
 						Name:    "migrate",
-						Image:   "openfga/openfga:latest",
+						Image:   openFGAImage,
 						Command: []string{"/openfga", "migrate"},
 						Env:     []corev1.EnvVar{engine, dsnEnv},
 					}},
 					Containers: []corev1.Container{{
 						Name:    "openfga",
-						Image:   "openfga/openfga:latest",
+						Image:   openFGAImage,
 						Command: []string{"/openfga", "run"},
 						Env:     []corev1.EnvVar{engine, dsnEnv},
 						Ports: []corev1.ContainerPort{

@@ -110,9 +110,11 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		if err != nil {
 			return ctrl.Result{}, err
 		}
-		if iamReady {
-			// Apps need the issuer + clientId; the initial admin needs
-			// the instance to be serving. Both are idempotent.
+		// Apps need the issuer + clientId (IAM) AND the cluster's app
+		// credentials (dbReady) to assemble per-app DSNs — gate on both so
+		// a fresh tenant whose Postgres is still bootstrapping cleanly
+		// requeues instead of erroring on the missing db-app secret.
+		if iamReady && dbReady {
 			if err := r.ensureApps(ctx, tenant, nsName); err != nil {
 				return ctrl.Result{}, err
 			}

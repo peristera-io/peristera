@@ -22,10 +22,10 @@ exception. Read the monorepo `README.md` first.
 ```text
 ergonomos/
 ├── README.md
-├── internal/task/       ← the task domain, wired through the 4 conventions
-├── internal/store/      ← Postgres implementations of the lib ports
-├── migrations/          ← goose SQL (ADR-0014)
-└── cmd/ergonomos/       ← boot: migrate, connect, serve
+├── internal/task/               ← the task domain, wired through the 4 conventions
+├── internal/store/              ← Postgres implementations of the lib ports
+│   └── migrations/              ← goose SQL, embedded (ADR-0014)
+└── cmd/ergonomos/               ← boot: migrate, connect, serve; HTMX UI
 ```
 
 ## Conventions it exercises

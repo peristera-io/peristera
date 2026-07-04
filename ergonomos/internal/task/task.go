@@ -59,6 +59,15 @@ type Authorizer interface {
 	ListObjects(ctx context.Context, user pii.Subject, relation, objectType string) ([]string, error)
 }
 
+// Multi-store consistency (M3 limitation, tracked): each mutation spans
+// four stores with no shared transaction — the Postgres row, the OpenFGA
+// tuple, the audit event, and the search entry. A failure partway leaves a
+// seam (e.g. a committed row with no audit event, or a dangling OpenFGA
+// tuple with no row). Acceptable at single-user scale; the fix
+// (transactional outbox, and a dangling-tuple sweeper) is deferred to the
+// multi-user milestone. ADR-0010 reasons about the tuple↔row seam; the
+// audit and search seams are the same class.
+//
 // Service wires the task domain through the four conventions.
 type Service struct {
 	repo   Repo

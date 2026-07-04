@@ -125,12 +125,31 @@ func (c *Client) do(ctx context.Context, method, url, orgID string, in, out any)
 	case resp.StatusCode == http.StatusNotFound:
 		return fmt.Errorf("%w: %s %s: %s", ErrNotFound, method, url, raw)
 	case resp.StatusCode >= 300:
-		return fmt.Errorf("%s %s: %d: %s", method, url, resp.StatusCode, raw)
+		ae := &apiError{method: method, url: url, status: resp.StatusCode, body: string(raw)}
+		var parsed struct {
+			Message string `json:"message"`
+		}
+		if json.Unmarshal(raw, &parsed) == nil {
+			ae.message = parsed.Message // Zitadel's typed error key
+		}
+		return ae
 	}
 	if out != nil {
 		return json.Unmarshal(raw, out)
 	}
 	return nil
+}
+
+// apiError carries the parsed Zitadel error so idempotency checks can key
+// off the typed message field (not the whole formatted string, which
+// includes the request URL — a data-influenced value).
+type apiError struct {
+	method, url, body, message string
+	status                     int
+}
+
+func (e *apiError) Error() string {
+	return fmt.Sprintf("%s %s: %d: %s", e.method, e.url, e.status, e.body)
 }
 
 // CreateInstance creates a tenant's virtual instance with a machine org
@@ -193,12 +212,17 @@ func (c *Client) AddTrustedDomain(ctx context.Context, tenantBase, instanceID, d
 	return err
 }
 
-// isAlreadyExists matches Zitadel's already-exists errors robustly across
-// phrasings ("AlreadyExists", "already exists") — space-insensitive,
-// case-insensitive (a more durable check than a single literal; issue #8).
+// isAlreadyExists reports whether err is Zitadel's already-exists error,
+// keyed off the typed message field only (e.g.
+// "Errors.Instance.Domain.AlreadyExists") — not the formatted string, so a
+// domain value that happens to contain "already exists" can't false-match
+// (closes issue #8 for this path).
 func isAlreadyExists(err error) bool {
-	s := strings.ToLower(strings.ReplaceAll(err.Error(), " ", ""))
-	return strings.Contains(s, "alreadyexists")
+	var ae *apiError
+	if !errors.As(err, &ae) {
+		return false
+	}
+	return strings.Contains(strings.ToLower(ae.message), "alreadyexists")
 }
 
 // FirstOrgID returns the instance's first organization (created with it).
