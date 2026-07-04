@@ -448,7 +448,9 @@ Built in public along the way.
   (Multi-user matters more than single-user polish — it comes right after the
   demo, before any bells and whistles.)
 - **M4 — Kamara stub**: chunked browser upload, storage API v0 that Ergonomos
-  can call.
+  can call. Design (living): `kamara/SPEC.md`; plan: `docs/m4-plan.md`;
+  format decisions in `Q&A.md` Round 7. E2EE-ready chunk format, but sync
+  and E2EE themselves are deferred.
 - **M5 — OnlyOffice integration**: open and co-edit a document stored in
   Kamara, in the browser. Without this, the file hub recreates the
   email-attachment problem it exists to kill.

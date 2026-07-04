@@ -468,3 +468,77 @@ UI in the e2e job (we already spin up the app in CI). EN 301 549 / EAA as
 the bar, start with WCAG 2.1 AA automated checks. OK, or a specific tool? 
 
 > ok
+
+---
+
+# Round 7 (2026-07-04) — M4 planning: Kamara (chunked storage + API)
+
+Design in `kamara/SPEC.md` (living); plan in `docs/m4-plan.md`. These
+settle the format decisions that bake into the on-object layout + Postgres
+schema before the first file is stored. Each has a recommendation.
+
+**R34. Reuse vs. write fresh.** The vetted prototype gives us the FastCDC
+chunker + ref-counting + GC as tested Go, but its overall shape (single-
+user, client-key E2EE, SQLite, P2P) is far from Kamara. Recommendation:
+**write Kamara fresh on our stack** (Go + Postgres + the four conventions),
+*porting the chunker's algorithm and the format-future-proofing ideas*
+(version byte, format-config feature flags, reserved E2EE columns, AD
+binding) rather than forking the codebase. Agree?
+
+>
+
+**R35. Split M4 into M4a (engine + storage API) then M4b (file UI)?**
+Same shape as M3. M4a is the unretrofittable part (format + API + the
+shared transaction helper); M4b is the browser UI. Recommendation: split.
+OK?
+
+>
+
+**R36. Chunk sizing: single- or two-tier?** The prototype used two tiers
+(small files vs large) but its own spec-review flagged the 1 MB boundary
+as a "cliff" that defeats cross-version reuse. Recommendation:
+**single-tier content-defined chunking** (e.g. min 256 KB / avg 1 MB / max
+4 MB) — simpler, no cliff. Agree, or keep two tiers?
+
+>
+
+**R37. Content hash over plaintext or ciphertext?** This drives dedup vs
+E2EE: hashing *plaintext* lets us dedup identical chunks across files
+(storage savings, fine for at-rest); hashing *ciphertext* blocks
+confirmation-of-file attacks (needed for E2EE). Recommendation:
+**hash plaintext now (at-rest, allow cross-file dedup), keep the hash
+algorithm named in the per-tenant format config** so a future E2EE tenant
+can switch to ciphertext-addressing without a format rewrite. The field is
+reserved either way. OK?
+
+>
+
+**R38. Cross-version reuse + ref-counting in M4a, or defer?** On edit,
+reuse unchanged chunks and ref-count + GC orphans. It needs the `ref_count`
++ `origin_*` columns from day one regardless (reserved). Recommendation:
+**build reuse + ref-counting in M4a** — it's the whole point of
+content-defined chunking, it's format-shaping, and the prototype proved
+it's tractable. Agree, or ship dumb full-copy versions first and add reuse
+later (columns reserved)?
+
+>
+
+**R39. Blob backend: filesystem first, S3 behind the interface?** (ADR
+backlog #5.) Recommendation: **a streaming `BlobStore` interface; ship a
+filesystem impl for M4a** (a per-tenant PersistentVolume), add an
+S3-compatible impl (Scaleway/MinIO) behind the same interface when the
+SaaS/Scaleway story is real (M6). OK, or go S3/MinIO from the start?
+
+>
+
+**R40. At-rest key management shape.** Near-term crypto is at-rest, not
+E2EE (Q&A R6). Recommendation: **a per-tenant data-encryption key held as
+a Kubernetes Secret in the tenant namespace, used to envelope-encrypt
+chunk contents server-side** — this is the seed of the per-tenant key
+hierarchy (ADR-0009 §6) and makes whole-tenant crypto-shredding a key
+deletion later. A cloud-KMS envelope is a Scaleway-era upgrade behind the
+same seam. OK? Or keep M4a plaintext-at-rest (no chunk encryption yet) and
+add the per-tenant key with the backup story — simpler now, but then
+"at-rest encryption" isn't actually delivered in M4?
+
+>
