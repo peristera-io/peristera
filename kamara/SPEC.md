@@ -41,6 +41,16 @@ Files are split into content-defined chunks; chunk *bytes* live in the
 BlobStore, chunk *metadata* and object/version records live in Postgres.
 The Postgres database is the catalogue (no separate index needed). *(decided)*
 
+**Built (M4a session 2):** `internal/chunk` (gear-hash content-defined
+chunker, single-tier, streaming), `internal/crypto` (BLAKE3 content
+address + XChaCha20-Poly1305 encrypt-once with content-scoped AD),
+`internal/blob` (streaming content-addressed filesystem store),
+`internal/engine` (Ingest → chunk/dedup/seal/store → manifest; Reassemble
+back), and the storage schema (`internal/store`, migration validated
+against Postgres). All unit/round-trip/dedup/tamper tested. Next: the
+object/version repositories on the ADR-0015 unit-of-work, the storage API,
+and the four conventions.
+
 ## 3. Object and chunk model
 
 - **Objects → versions → chunks.** An object (UUIDv7) has ordered
