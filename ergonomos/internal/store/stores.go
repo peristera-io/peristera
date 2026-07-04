@@ -75,8 +75,12 @@ func collectTasks(rows *sql.Rows) ([]task.Task, error) {
 }
 
 func (r *TaskRepo) SetDone(ctx context.Context, id string, done bool) (task.Task, error) {
-	return scanTask(r.db.QueryRowContext(ctx,
+	t, err := scanTask(r.db.QueryRowContext(ctx,
 		`UPDATE tasks SET done=$2, updated_at=now() WHERE id=$1 RETURNING `+taskCols, id, done))
+	if errors.Is(err, sql.ErrNoRows) {
+		return task.Task{}, task.ErrNotFound
+	}
+	return t, err
 }
 
 func (r *TaskRepo) Delete(ctx context.Context, id string) error {

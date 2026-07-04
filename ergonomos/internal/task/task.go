@@ -8,6 +8,7 @@ package task
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -16,6 +17,10 @@ import (
 	"github.com/peristera-io/peristera/lib/pii"
 	"github.com/peristera-io/peristera/lib/search"
 )
+
+// ErrNotFound is returned when a task id does not exist (distinct from
+// "not authorized"), so handlers can answer 404 rather than 403/500.
+var ErrNotFound = errors.New("task: not found")
 
 // Type is the app-namespaced object type (ADR-0007/0010).
 const Type = "ergonomos/task"
@@ -148,22 +153,27 @@ func (s *Service) SetDone(ctx context.Context, caller pii.Subject, taskID string
 }
 
 // Delete removes a task after an authorization check, unwinding every
-// convention (tuple, search entry; the audit event is kept, append-only).
+// convention. The audit event is emitted FIRST: without a shared
+// transaction, recording intent before destroying is the only way to
+// guarantee a destructive delete never happens with no audit trail
+// (ADR-0011 §2). A failed audit aborts before anything is lost; the
+// residual seams (row/tuple/search left inconsistent on a later step's
+// failure) are the tracked M3 limitation (issue #15).
 func (s *Service) Delete(ctx context.Context, caller pii.Subject, taskID string) error {
 	if err := s.authorize(ctx, caller, taskID); err != nil {
+		return err
+	}
+	if err := s.audit.Emit(ctx, caller, "ergonomos.task.deleted",
+		audit.Object{Type: Type, ID: taskID, Permalink: "/tasks/" + taskID}, nil); err != nil {
 		return err
 	}
 	if err := s.repo.Delete(ctx, taskID); err != nil {
 		return err
 	}
-	if err := s.authz.Delete(ctx, caller, Relation, obj(taskID)); err != nil {
-		return err
-	}
 	if err := s.search.Remove(ctx, taskID); err != nil {
 		return err
 	}
-	return s.audit.Emit(ctx, caller, "ergonomos.task.deleted",
-		audit.Object{Type: Type, ID: taskID, Permalink: "/tasks/" + taskID}, nil)
+	return s.authz.Delete(ctx, caller, Relation, obj(taskID))
 }
 
 func (s *Service) authorize(ctx context.Context, caller pii.Subject, taskID string) error {

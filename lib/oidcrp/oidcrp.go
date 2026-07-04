@@ -103,10 +103,20 @@ func randID(n int) string {
 	return hex.EncodeToString(b)
 }
 
+// stateCookie names the short-lived cookie that binds the OIDC state to
+// the browser that started the login (prevents login-CSRF: a state minted
+// in one browser can't be redeemed in a victim's browser).
+const stateCookie = "oidc_state"
+
 // Login starts the auth-code + PKCE flow.
 func (rp *RelyingParty) Login(w http.ResponseWriter, r *http.Request) {
 	state, verifier := randID(16), oauth2.GenerateVerifier()
 	rp.logins.Put(state, verifier)
+	http.SetCookie(w, &http.Cookie{
+		Name: stateCookie, Value: state, Path: "/",
+		HttpOnly: true, Secure: rp.cfg.Secure, SameSite: http.SameSiteLaxMode,
+		MaxAge: 600, // the login must complete within 10 minutes
+	})
 	http.Redirect(w, r, rp.oauth.AuthCodeURL(state, oauth2.S256ChallengeOption(verifier)), http.StatusFound)
 }
 
@@ -114,6 +124,14 @@ func (rp *RelyingParty) Login(w http.ResponseWriter, r *http.Request) {
 // SuccessURL.
 func (rp *RelyingParty) Callback(w http.ResponseWriter, r *http.Request) {
 	state := r.URL.Query().Get("state")
+	// The state must match the cookie set in Login — the browser that
+	// started the flow must be the one completing it (login-CSRF defense).
+	sc, err := r.Cookie(stateCookie)
+	if err != nil || sc.Value == "" || sc.Value != state {
+		http.Error(w, "state mismatch", http.StatusBadRequest)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{Name: stateCookie, Value: "", Path: "/", MaxAge: -1})
 	verifier, ok := rp.logins.Get(state)
 	if !ok {
 		http.Error(w, "unknown or expired login state", http.StatusBadRequest)

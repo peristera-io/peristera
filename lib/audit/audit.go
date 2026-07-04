@@ -63,6 +63,9 @@ func NewEmitter(sink Sink, pseud *pii.Pseudonyms) *Emitter {
 // Emit records that actor performed action on obj. The actor subject is
 // resolved to its pseudonym token before the event is written.
 func (e *Emitter) Emit(ctx context.Context, actor pii.Subject, action Action, obj Object, detail map[string]any) error {
+	if actor.Zero() {
+		return fmt.Errorf("audit: event needs an actor")
+	}
 	if action == "" || obj.Type == "" || obj.ID == "" {
 		return fmt.Errorf("audit: event needs action, object type and id (got action=%q obj.Type=%q obj.ID=%q)", action, obj.Type, obj.ID)
 	}

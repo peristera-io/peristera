@@ -51,6 +51,15 @@ func TestEmitStoresPseudonymNotRawSubject(t *testing.T) {
 	}
 }
 
+func TestEmitRejectsZeroActor(t *testing.T) {
+	em := NewEmitter(&capturingSink{}, pii.NewInMemoryPseudonyms())
+	err := em.Emit(context.Background(), pii.Subject{}, "ergonomos.task.created",
+		Object{Type: "ergonomos/task", ID: "x"}, nil)
+	if err == nil {
+		t.Error("Emit with a zero actor must error (no bogus pseudonym)")
+	}
+}
+
 func TestEmitStableActorTokenAcrossEvents(t *testing.T) {
 	ctx := context.Background()
 	sink := &capturingSink{}

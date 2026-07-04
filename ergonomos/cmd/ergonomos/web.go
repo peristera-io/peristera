@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/peristera-io/peristera/ergonomos/internal/task"
@@ -8,6 +9,16 @@ import (
 	"github.com/peristera-io/peristera/lib/oidcrp"
 	"github.com/peristera-io/peristera/lib/pii"
 )
+
+// statusFor maps a service error to an HTTP status: a missing task is 404,
+// everything else (authorization, store errors) is 403 — the stub's coarse
+// mapping, kept simple for M3.
+func statusFor(err error) int {
+	if errors.Is(err, task.ErrNotFound) {
+		return http.StatusNotFound
+	}
+	return http.StatusForbidden
+}
 
 // webApp is the HTMX UI over the task service. Rendering lives in
 // internal/web (so it can be a11y-checked headlessly); this file is the
@@ -80,7 +91,7 @@ func (a *webApp) setDone(w http.ResponseWriter, r *http.Request) {
 	}
 	done := r.FormValue("done") == "true"
 	if _, err := a.svc.SetDone(r.Context(), caller, r.PathValue("id"), done); err != nil {
-		http.Error(w, err.Error(), http.StatusForbidden)
+		http.Error(w, err.Error(), statusFor(err))
 		return
 	}
 	a.render(w, r, false)

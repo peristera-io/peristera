@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"net/url"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -80,7 +81,17 @@ func (r *TenantReconciler) ensureDSNSecret(ctx context.Context, tenant *v1alpha1
 		return fmt.Errorf("reading cluster app credentials: %w", err)
 	}
 	pw := string(creds.Data["password"])
-	dsn := fmt.Sprintf("postgresql://app:%s@db-rw.%s.svc.cluster.local:5432/%s?sslmode=require", pw, ns, app)
+	// Build via net/url so the password is percent-encoded — CNPG's default
+	// password alphabet is URL-safe today, but an externally-set/rotated
+	// password containing @ / : ? # would otherwise corrupt the DSN.
+	u := url.URL{
+		Scheme:   "postgresql",
+		User:     url.UserPassword("app", pw),
+		Host:     fmt.Sprintf("db-rw.%s.svc.cluster.local:5432", ns),
+		Path:     "/" + app,
+		RawQuery: "sslmode=require",
+	}
+	dsn := u.String()
 
 	sec := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},

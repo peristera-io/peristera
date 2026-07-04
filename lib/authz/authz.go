@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/peristera-io/peristera/lib/pii"
@@ -163,9 +164,16 @@ func (c *Client) ListObjects(ctx context.Context, user pii.Subject, relation, ob
 		return nil, err
 	}
 	// OpenFGA returns fully-qualified "<type>:<id>"; strip the type prefix.
+	// Guard the prefix: an entry that isn't of the requested type (or is
+	// malformed/empty) must be skipped, never sliced blindly — otherwise a
+	// short entry panics and a wrong-type entry yields a corrupt id.
+	prefix := objectType + ":"
 	ids := make([]string, 0, len(out.Objects))
 	for _, o := range out.Objects {
-		ids = append(ids, o[len(objectType)+1:])
+		if !strings.HasPrefix(o, prefix) {
+			continue
+		}
+		ids = append(ids, o[len(prefix):])
 	}
 	return ids, nil
 }
