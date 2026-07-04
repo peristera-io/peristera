@@ -57,6 +57,13 @@ CREATE TABLE version_chunks (
     chunk_hash text NOT NULL REFERENCES chunks(hash),
     PRIMARY KEY (version_id, idx)
 );
+-- Index the FK column: Postgres does not auto-create it, and GC / ref-count
+-- decrement look up "which versions reference this chunk?".
+CREATE INDEX version_chunks_chunk_hash_idx ON version_chunks (chunk_hash);
+
+-- Partial index for the GC orphan scan: SELECT hash FROM chunks WHERE
+-- ref_count = 0 — without it every sweep is a full table scan.
+CREATE INDEX chunks_orphan_idx ON chunks (hash) WHERE ref_count = 0;
 
 -- +goose Down
 DROP TABLE version_chunks;

@@ -2,6 +2,13 @@
 // a later session — the object/version/chunk repositories built on the
 // transactional-storage helper (root ADR-0015). This session lands the
 // schema and the boot-time migration entry point.
+//
+// Wiring discipline for the repositories (next session): blob writes are a
+// filesystem side effect OUTSIDE the DB transaction, so a chunk's blob must
+// be durably stored (blob.Put, which fsyncs) BEFORE the transaction that
+// commits its manifest/ref_count. A crash between the two then orphans a
+// blob (harmless, GC-collectable) rather than dangling a manifest reference
+// (corrupt).
 package store
 
 import (

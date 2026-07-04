@@ -57,6 +57,11 @@ func ChunkHash(plaintext []byte) string {
 // ad is the content-scoped associated data (ADR-0001 §6): invariant across
 // every reference to the chunk, so a deduped blob verifies for all of them.
 // Positional binding lives in the manifest, not here.
+//
+// The \x00 separators are unambiguous only because every field is \x00-free
+// and `hash` is fixed-width hex. If a future format feeds a raw-binary or
+// variable-alphabet address here (the E2EE ciphertext-addressing switch),
+// switch to length-prefixed fields — tracked with the E2EE format work.
 func (c *Cipher) ad(hash string) []byte {
 	ad := make([]byte, 0, len(adDomain)+1+len(c.tenant)+1+len(hash)+1)
 	ad = append(ad, adDomain...)

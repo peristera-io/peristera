@@ -7,10 +7,12 @@ package blob
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"syscall"
 )
 
 // Store is the blob backend.
@@ -105,7 +107,30 @@ func (f *FS) Put(ctx context.Context, key string, r io.Reader) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmpName, p)
+	if err := os.Rename(tmpName, p); err != nil {
+		return err
+	}
+	// fsync the parent directory so the rename (the directory entry) is
+	// durable: without it a crash after Put returns could lose the blob
+	// while its manifest reference is already committed — a dangling
+	// reference. Callers must also store the blob before committing the
+	// DB transaction (store package doc / issue).
+	return syncDir(filepath.Dir(p))
+}
+
+// syncDir fsyncs a directory so recent renames/creations within it are
+// durable. Filesystems that don't support directory fsync return EINVAL,
+// which is not an error here.
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	if err := d.Sync(); err != nil && !errors.Is(err, syscall.EINVAL) {
+		return err
+	}
+	return nil
 }
 
 func (f *FS) Get(_ context.Context, key string) (io.ReadCloser, error) {

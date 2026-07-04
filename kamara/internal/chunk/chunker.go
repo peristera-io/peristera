@@ -44,6 +44,9 @@ func cutpoint(data []byte) int {
 	if n < normal {
 		normal = n
 	}
+	// The fingerprint is accumulated only from offset MinSize onward: the
+	// first MinSize bytes can never be a cut point (min-chunk-size skip,
+	// standard FastCDC), so they don't influence this chunk's own boundary.
 	var fp uint64
 	i := MinSize
 	for ; i < normal; i++ {
