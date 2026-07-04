@@ -25,3 +25,7 @@ ADR, not in chat history.
 - [ADR-0006](0006-zitadel-integration.md) — Zitadel integration: shared deployment, virtual instance per tenant
 - [ADR-0007](0007-permalinks-and-api-versioning.md) — Object identity, permalinks, and API versioning
 - [ADR-0008](0008-control-plane-architecture.md) — Control-plane architecture: Tenant CRD + controller
+- [ADR-0009](0009-personal-data-metadata.md) — Personal-data metadata: the GDPR-by-design contract
+- [ADR-0010](0010-openfga-model-conventions.md) — OpenFGA authorization model conventions
+- [ADR-0011](0011-audit-events.md) — Audit events
+- [ADR-0012](0012-search-feed.md) — Unified search feed (Postgres FTS)

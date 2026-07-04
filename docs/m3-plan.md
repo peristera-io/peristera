@@ -60,18 +60,21 @@ in `lib/`, MIT). Ergonomos is their first consumer; Kamara (M4) the second
    (mutations feed the index); the cross-app query UI can wait — but the
    ADR fixes the contract so later apps feed it too.
 
-Plus two non-convention attachments due at M3:
+Plus one non-convention attachment due at M3:
 
 - **Accessibility CI** (README §5 M0 deferral, "with M3 — the first real
   UI"). Automated a11y checks (axe-core/pa11y) against the Ergonomos UI;
-  EN 301 549 / EAA as the bar.
-- **`lib/` extraction of the OIDC relying-party + session code**
-  (issue #2). Ergonomos is the third copy of the auth-code+PKCE+session
-   flow (stub, control plane, now this) — the rule-of-three moment.
-  Extract `lib/oidcrp` (+ session) first, refactor stub and control plane
-  onto it, then Ergonomos consumes it. This also lands the session-store
-  convention (its own ADR, promised before M3) and resolves issues #3
-  (cache eviction) and the logout/version drifts noted with #2.
+  EN 301 549 / EAA as the bar. Wired in M3b with the first UI.
+
+**Moved out of M3a (review, 2026-07-04):** the `lib/oidcrp` + session
+extraction (issue #2) is now an **M3b** item, not M3a. It is the one thing
+here that is *retrofittable by definition* — a rule-of-three cleanup of
+working code, not an unretrofittable convention — so bundling it into the
+"GDPR spine" milestone both diluted that thesis and pushed M3a over the
+sizing rule. Per working-agreement #7 it is paid when Ergonomos (M3b)
+opens the auth code anyway: extract `lib/oidcrp` (+ session, + its ADR,
+resolving issues #2/#3 and the logout/version drift) in the same pass that
+writes the third relying party.
 
 ## The Ergonomos stub (M3b)
 
@@ -91,26 +94,27 @@ A catalog app in the tenant namespace, like the M1 stub but real:
 - Deployed by the control plane: the catalog contract grows to "an app
   can need a database + an OpenFGA store" (Round 6 Q4).
 
-## Session schedule (indicative — sizing is at risk, see Q1)
+## Session schedule (indicative — M3a slimmed after the review, see below)
 
 | Phase | Session | Work |
 |---|---|---|
-| M3a | 1 | ADRs: personal-data metadata, OpenFGA conventions, audit events, search feed (write them first, together — they interlock) |
-| M3a | 2 | `lib/` extraction: `oidcrp` + session (issue #2/#3), refactor stub + control plane onto it |
-| M3a | 3 | `lib/` convention packages: personal-data metadata + audit + FTS feed skeletons, with unit tests |
-| M3b | 4 | Control plane: OpenFGA per tenant, app-needs-a-database in the catalog contract; migration tooling |
-| M3b | 5 | Ergonomos task stub — godog spec-first; tasks CRUD wired through all four conventions |
+| M3a | 1 | ✅ ADRs 0009–0012: personal-data metadata, OpenFGA conventions, audit events, search feed (written together — they interlock) |
+| M3a | 2 | `lib/pii` (registry + resolver + export/erase hooks + per-subject pseudonym) with unit tests |
+| M3a | 3 | `lib/audit` (emit path, append-only) + `lib/search` (FTS feed) with unit tests |
+| M3b | 4 | Control plane: OpenFGA per tenant, database-per-app in the catalog contract, goose migration tooling (+ADR-0013 catalog contract, ADR-0014 migrations) |
+| M3b | 5 | Ergonomos task stub — godog spec-first; extract `lib/oidcrp` here (issue #2); tasks CRUD wired through all four conventions |
 | M3b | 6 | HTMX UI + a11y CI; polish; worklog + README; demo recording |
 
 **Abort valve:** if M3a overruns, ship the ADRs + the conventions Ergonomos
 *actually touches* (metadata, audit, owner-relation) and defer the search
 query UI — but never defer the ADRs; a missing convention decision is the
-expensive kind of debt.
+expensive kind of debt. (The `lib/oidcrp` extraction already moved to M3b.)
 
 ## Folded-in issues (agreement #7)
 
-- **#2** shared `lib/` OIDC/session — M3a session 2 (core to the milestone).
-- **#3** cache eviction — rides along with the session extraction.
+- **#2** shared `lib/` OIDC/session — **M3b session 5** (moved from M3a;
+  paid when Ergonomos opens the auth code).
+- **#3** cache eviction — rides along with the session extraction (M3b).
 - **#6** initial-admin credential lifecycle — control-plane/IAM work, due
   around M3; slot into session 4 if force-change's dependency (account
   recovery) is cheap, else keep as a tracked issue with a note here.
