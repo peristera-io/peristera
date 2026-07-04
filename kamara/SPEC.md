@@ -81,10 +81,13 @@ Shape (columns firmed up in M4a):
 - `objects` — id (UUIDv7), owner subject, name (display), timestamps.
 - `versions` — id (UUIDv7), object_id, ordinal, size, created.
 - `chunks` — content hash (storage key), size, `ref_count`,
-  **reserved E2EE columns** (`nonce`, `wrapped_dek`, `origin_version_id`,
-  `origin_chunk_index`) — nullable at-rest, populated when E2EE lands so
-  it is additive, not a migration. *(decided — reserve them now)*
-- `version_chunks` — version_id, index, chunk hash.
+  **reserved E2EE columns** (`wrapped_dek`, `origin_version_id`,
+  `origin_chunk_index`) — nullable at-rest, populated when E2EE lands so it
+  is additive, not a migration. The at-rest **nonce lives in the blob
+  header**, not here (Kamara ADR-0001 §5/§7). *(decided)*
+- `version_chunks` — version_id, index, chunk hash. This is the
+  **manifest**: it carries the positional binding (which chunk at which
+  index of which version), written inside the ADR-0015 transaction.
 - Plus the per-tenant **format config** row (§6).
 
 Authorization is **not** in these tables — it lives in OpenFGA (ADR-0010).
@@ -106,10 +109,18 @@ The owner column is display/PII-scoping only, never the access decision.
      — read first on open, so an at-rest tenant can later require an E2EE
      format and old clients refuse cleanly rather than corrupt;
   3. the **reserved E2EE columns** (§5).
-- **Associated-data binding (adopt even at-rest).** Every stored chunk's
-  AEAD carries fixed-length associated data binding it to
-  `(tenant, object, version, chunk-index)`, so storage-layer access can't
-  swap/reorder/replay chunks across objects. *(decided)*
+- **Content-scoped associated-data binding (adopt even at-rest).** Each
+  stored chunk's AEAD binds to `(tenant, chunk-hash, format-version)` —
+  invariant across all references, so a deduped blob verifies for every
+  reference and can't be decrypted as a *different* chunk. Positional
+  binding (order within a version) lives in the manifest (§5), not the
+  AEAD — a per-`(object,version,index)` AD would defeat dedup. *(decided;
+  corrected at the session-1 review — Kamara ADR-0001 §6)*
+- **Encrypt exactly once.** A chunk is encrypted on first store (random
+  nonce in the blob header); later identical-content writes just increment
+  `ref_count`. Dedup-by-plaintext-hash carries the usual "does this content
+  exist here?" side channel — fine within a single at-rest trust domain,
+  closed by ciphertext-addressing in the E2EE era (Kamara ADR-0001 §7).
 
 ## 7. Storage API v0
 
@@ -148,6 +159,11 @@ algorithm named in the format config (R37); cross-version reuse +
 ref-counting in M4a (R38); filesystem `BlobStore` first, S3 behind the
 interface at M6 (R39); per-tenant DEK (k8s Secret) envelope-encrypting
 chunks at-rest (R40).
+
+Corrected at the M4a session-1 review (2026-07-04): the associated-data
+binding is content-scoped (not object/version/index — incompatible with
+dedup) and the at-rest nonce lives in the blob header, not a metadata
+column (Kamara ADR-0001 §5–§7).
 
 **Still open (firm up during M4a, record in `adr/`):** exact chunk-record
 and manifest columns; the resumable-upload protocol shape (session-based

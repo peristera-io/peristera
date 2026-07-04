@@ -12,9 +12,10 @@ event, and the search feed — all in the **same per-tenant Postgres
 database** — plus the OpenFGA authorization tuple, which is a **separate
 system**. The M3 deep review confirmed the lack of a shared transaction
 left real seams, the worst being a delete that destroyed the row but lost
-the audit event (violating ADR-0011 §2). The key observation: three of the
-four stores are one database, so a plain local transaction — not an
-outbox — removes most of the exposure.
+the audit event — a mutation left with no audit record, breaking the
+every-mutation-is-audited guarantee ADR-0011 exists to provide. The key
+observation: three of the four stores are one database, so a plain local
+transaction — not an outbox — removes most of the exposure.
 
 ## Decision
 
@@ -29,11 +30,16 @@ outbox — removes most of the exposure.
    all land or none do. This eliminates the destroy-without-audit case and
    the row-without-search / audit-without-row seams.
 3. **The OpenFGA tuple write stays outside the transaction** (it is a
-   different system with no shared transaction). This is the *one*
-   remaining, documented seam — a committed mutation with a not-yet-written
-   or not-yet-deleted tuple. Harmless to reads (a row with no tuple is
-   invisible; a tuple with no row is dropped by the id-filtered fetch);
-   the dangling-tuple sweeper stays deferred (#15).
+   different system with no shared transaction), and — inheriting
+   ADR-0010's convention — the tuple is written *after* the row commits and
+   deleted *after* the row is gone. This is the *one* remaining seam: a
+   committed mutation with a not-yet-written or already-deleted tuple.
+   Harmless to reads (a row with no tuple is invisible; a tuple with no row
+   is dropped by the id-filtered fetch). Note "harmless to reads" is not
+   "nothing to do": a create whose tuple write fails permanently is an
+   *incomplete* create (an invisible row) that must be retried or failed,
+   per ADR-0010 — not silently accepted. The dangling-tuple sweeper is
+   tracked separately (issue #20).
 4. **Reads and the personal-data export/erase hooks use the database
    directly** (no transaction) — only mutations need atomicity in M4.
 

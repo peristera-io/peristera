@@ -110,13 +110,30 @@ func (p *PseudonymStore) Lookup(ctx context.Context, s pii.Subject) (string, boo
 	return tok, err == nil, err
 }
 
+// errSubjectMapped signals a lost allocation race so lib/pii's TokenFor
+// re-reads the winner (it only needs a non-nil error).
+var errSubjectMapped = errors.New("store: subject already mapped")
+
 func (p *PseudonymStore) Save(ctx context.Context, token string, s pii.Subject) error {
-	// UNIQUE(instance,user_id) enforces one token per subject; a duplicate
-	// subject errors, which lib/pii's TokenFor handles by re-reading.
-	_, err := p.db.ExecContext(ctx,
-		`INSERT INTO subject_pseudonyms (token, instance, user_id) VALUES ($1,$2,$3)`,
+	// ON CONFLICT DO NOTHING (not a bare INSERT): a lost race must NOT abort
+	// the surrounding transaction (Postgres 25P02 would poison the whole
+	// mutation, ADR-0015). 0 rows affected = another writer won → return an
+	// error so TokenFor re-reads the winner (matches SearchIndex.Upsert).
+	res, err := p.db.ExecContext(ctx,
+		`INSERT INTO subject_pseudonyms (token, instance, user_id) VALUES ($1,$2,$3)
+		 ON CONFLICT (instance, user_id) DO NOTHING`,
 		token, s.Instance, s.UserID)
-	return err
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return errSubjectMapped
+	}
+	return nil
 }
 
 func (p *PseudonymStore) Resolve(ctx context.Context, token string) (pii.Subject, bool, error) {
