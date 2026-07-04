@@ -21,6 +21,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -180,16 +181,24 @@ func (c *Client) DeleteInstance(ctx context.Context, id string) error {
 }
 
 // AddTrustedDomain lets the shared Login v2 (which calls the API under
-// the deployment's ExternalDomain) serve this instance. Idempotent:
-// "already exists" answers are swallowed.
+// the deployment's ExternalDomain) serve this instance. Idempotent: an
+// already-exists answer is swallowed (Zitadel phrases it "AlreadyExists").
 func (c *Client) AddTrustedDomain(ctx context.Context, tenantBase, instanceID, domain string) error {
 	err := c.do(ctx, http.MethodPost,
 		fmt.Sprintf("%s/v2beta/instances/%s/trusted-domains", tenantBase, instanceID), "",
 		map[string]any{"domain": domain}, nil)
-	if err != nil && bytes.Contains([]byte(err.Error()), []byte("already exists")) {
+	if err != nil && isAlreadyExists(err) {
 		return nil
 	}
 	return err
+}
+
+// isAlreadyExists matches Zitadel's already-exists errors robustly across
+// phrasings ("AlreadyExists", "already exists") — space-insensitive,
+// case-insensitive (a more durable check than a single literal; issue #8).
+func isAlreadyExists(err error) bool {
+	s := strings.ToLower(strings.ReplaceAll(err.Error(), " ", ""))
+	return strings.Contains(s, "alreadyexists")
 }
 
 // FirstOrgID returns the instance's first organization (created with it).

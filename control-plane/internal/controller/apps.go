@@ -64,6 +64,13 @@ func (r *TenantReconciler) ensureApps(ctx context.Context, tenant *v1alpha1.Tena
 		}
 	}
 
+	// Each app is its own OIDC client (own redirect URIs), so register one
+	// per app rather than sharing the tenant's primary client.
+	orgID, err := r.IAM.FirstOrgID(ctx, tenant.Status.Issuer)
+	if err != nil {
+		return err
+	}
+
 	for _, app := range catalog {
 		host := fmt.Sprintf("%s.%s", app.Name, r.tenantDomain(tenant))
 		publicURL := fmt.Sprintf("http://%s:%s", host, r.ExternalPort)
@@ -72,9 +79,15 @@ func (r *TenantReconciler) ensureApps(ctx context.Context, tenant *v1alpha1.Tena
 			"app.kubernetes.io/managed-by": "peristera-control-plane",
 		}
 
+		clientID, err := r.IAM.EnsureWebApp(ctx, tenant.Status.Issuer, orgID, app.Name,
+			[]string{publicURL + "/auth/callback"}, []string{publicURL + "/"})
+		if err != nil {
+			return fmt.Errorf("ensuring OIDC client for %s: %w", app.Name, err)
+		}
+
 		env := []corev1.EnvVar{
 			{Name: "OIDC_ISSUER", Value: tenant.Status.Issuer},
-			{Name: "OIDC_CLIENT_ID", Value: tenant.Status.ClientID},
+			{Name: "OIDC_CLIENT_ID", Value: clientID},
 			{Name: "PUBLIC_URL", Value: publicURL},
 			{Name: "LISTEN_ADDR", Value: fmt.Sprintf(":%d", app.Port)},
 		}
