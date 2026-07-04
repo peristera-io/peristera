@@ -36,8 +36,8 @@ type CatalogApp struct {
 
 var catalog = []CatalogApp{
 	{Name: "stub", Image: "peristera-stub:dev", Port: 5556},
-	// Ergonomos (M3b session 5) will be added here with
-	// NeedsDatabase + NeedsOpenFGA true.
+	{Name: "ergonomos", Image: "peristera-ergonomos:dev", Port: 5570,
+		NeedsDatabase: true, NeedsOpenFGA: true},
 }
 
 // anyAppNeedsOpenFGA reports whether the catalog requires the per-tenant
