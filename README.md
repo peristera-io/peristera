@@ -33,17 +33,18 @@ non-blocking findings are tracked as GitHub issues.
 Only `iam/` and `control-plane/` exist on disk; the other project folders
 (`lib/`, `ergonomos/`, `kamara/`) appear with their first code, per §8.
 
-**In progress: M3 — Ergonomos** (plan: `docs/m3-plan.md`, params settled
-in `Q&A.md` Round 6; split into M3a conventions + M3b app).
-**M3a complete** (2026-07-04): the GDPR-by-design spine — ADRs 0009–0012
-(personal-data metadata, OpenFGA conventions, audit events, search feed),
-0013 (catalog contract), 0014 (goose migrations), built as the MIT `lib/`
-module (`id`, `pii`, `audit`, `search`), each reviewed by fresh-context
-agents. **M3b in progress:** the control-plane catalog contract now
-provisions database-per-app + per-tenant OpenFGA (session 4). Remaining:
-the Ergonomos task stub itself — new module, `lib/oidcrp` extraction
-(issue #2), goose migrations, tasks wired through all four conventions,
-HTMX UI, a11y CI (sessions 5–6).
+**M3 complete (2026-07-04): Ergonomos, the first app that stores user
+data, wired through the GDPR-by-design spine.** ADRs 0009–0014
+(personal-data metadata, OpenFGA conventions, audit events, search feed,
+catalog contract, goose migrations), built as the MIT `lib/` module
+(`id`, `pii`, `authz`, `audit`, `search`, `oidcrp`, `session`). Ergonomos
+is a single-user task app deployed per tenant with its own database +
+OpenFGA; every task mutation flows through personal-data metadata (export/
+erase), authorization (OpenFGA owner tuples, permission-filtered lists),
+audit (pseudonymized actor), and the search feed — verified live in the
+tenant database. Accessibility gate (axe-core, WCAG 2.1 AA) in CI. Each
+session fresh-context-reviewed. Next: **M4 — Kamara stub** (file storage:
+chunked browser upload + a storage API Ergonomos can call).
 
 *Update this block whenever reality changes — a stale status line is exactly
 the rot §8 warns against.*

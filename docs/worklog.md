@@ -209,6 +209,37 @@ bottom. One entry = date, what happened, and pointers to artifacts.
   M2 write-up (guidelines entry on controllers, README §5 update, demo
   recording).**
 
+## 2026-07-04 — M3 complete: Ergonomos live, all conventions verified (sessions 5–6)
+
+- **lib/oidcrp + lib/session** extracted (issue #2/#3 closed): the shared
+  auth-code+PKCE+session flow, TTL-evicting store, cookie hardening
+  (SameSite=Lax + Secure flag), end_session logout. Stub and control plane
+  refactored onto it; 7-scenario e2e still green. Dockerfiles moved to
+  repo-root build context (sibling lib/ dependency).
+- **lib/authz** — the fourth convention lib (OpenFGA HTTP client). All four
+  convention libs now exist; pii refactored to an app-owned Registry.
+- **Ergonomos** (new module): task domain wired through all four
+  conventions (unit-tested with fakes), Postgres stores, goose migrations,
+  HTMX UI; deployed as a catalog app (NeedsDatabase+NeedsOpenFGA).
+- **Live end-to-end** on fresh tenants (erg2/erg3): the session-4
+  provisioning ran for real (per-app CNPG database + per-tenant OpenFGA),
+  operator logged into Ergonomos, task creation fired **all four
+  conventions** — verified in the tenant DB: task rows (UUIDv7), audit
+  events with a *pseudonymized* actor token, search FTS match, OpenFGA
+  owner tuples with instance-namespaced subjects.
+- Two live gaps found + fixed: per-app OIDC clients (apps were sharing the
+  stub's), robust AlreadyExists matching (structured Zitadel error, #8
+  closed).
+- **Session-6 a11y CI gate**: axe-core (via Playwright) over the
+  headlessly-rendered Ergonomos page at WCAG 2.1 AA — 19 checks, 0
+  violations; the M0 a11y deferral, due at M3.
+- Two review rounds (4 agents); fixes applied, issues #15/#16/#17 filed
+  (multi-store consistency, Postgres store tests, per-app DB roles/DSN
+  rotation), #8 closed.
+- **M3 done.** ADRs 0009–0014, the MIT lib/ (id, pii, authz, audit,
+  search, oidcrp, session), and Ergonomos. Kill-criterion clock: pre-M6,
+  on plan. **Next: M4 — Kamara stub** (file storage).
+
 ## 2026-07-04 — M3a complete + M3b foundations (sessions 1–4)
 
 Autonomous run: settle M3 params (Q&A R6), then session-by-session with a
