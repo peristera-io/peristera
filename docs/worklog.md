@@ -209,6 +209,29 @@ bottom. One entry = date, what happened, and pointers to artifacts.
   M2 write-up (guidelines entry on controllers, README §5 update, demo
   recording).**
 
+## 2026-07-04 — M3 deep review (4 adversarial agents) + hardening
+
+- Ran a deeper, adversarial review of the M3 data path (4 fresh-context
+  agents: consistency seams, lib correctness, authz/isolation,
+  migrations/ops), each producing concrete failure sequences + CONFIRMED
+  vs PLAUSIBLE verdicts.
+- **Core identity/authz design validated**: OIDC `sub` not forgeable (ID
+  token fully verified), no cross-tenant token replay, every mutation
+  OpenFGA-Check'd, List OpenFGA-only. No isolation/forgery flaw.
+- **6 confirmed bugs fixed** (commit 2433e35, verified live on erg3):
+  authz.ListObjects prefix guard (was panic/500); Ergonomos Delete emits
+  audit **before** destroying (was a silent destructive delete with no
+  audit record — the worst finding); SetDone ErrNoRows→404 (was a 403
+  leaking the driver string); control-plane DSN via net/url (percent-
+  encode the password); lib/oidcrp state↔cookie binding (login-CSRF);
+  audit.Emit rejects a zero actor.
+- Key insight: **#15 is smaller than framed** — 3 of the 4 stores share
+  one Postgres DB, so the proper fix is one local transaction, not an
+  outbox. Updated #15 accordingly; the tx wrapper is deferred to the
+  shared storage helper (M4). Filed #18 (per-tenant NetworkPolicy +
+  OpenFGA authn, MSP-alpha), #19 (OpenFGA model version accumulation);
+  noted the missing owner index on #13.
+
 ## 2026-07-04 — M3 complete: Ergonomos live, all conventions verified (sessions 5–6)
 
 - **lib/oidcrp + lib/session** extracted (issue #2/#3 closed): the shared
