@@ -38,21 +38,30 @@ type SubjectData interface {
 	EraseSubject(ctx context.Context, s Subject) error
 }
 
-// Descriptors are process-global by design: a type's personal-data shape
-// (which fields, how to resolve the subject, retention class) is the same
-// for every tenant, so it is registered once at init, not per tenant.
-// (Per-tenant state — the pseudonym mapping — lives in a Pseudonyms
-// instance instead.) regMu also guards the retention `classes` map.
-var (
-	regMu       sync.RWMutex
-	descriptors = map[string]Descriptor{}
-)
+// Registry holds an app's personal-data descriptors — the Article 30 view.
+// An app owns one (there is exactly one Service/app per process); tests use
+// a fresh Registry so instance-bound Hooks don't collide across cases.
+// Cross-app whole-tenant orchestration is HTTP (deferred), not a shared
+// process registry, so an app-owned registry is the correct grain.
+type Registry struct {
+	mu          sync.RWMutex
+	descriptors map[string]Descriptor
+}
 
-// Register records a descriptor. A type with personal data that is not
-// registered cannot be exported or erased generically — so registration is
-// the gate ADR-0009 relies on. Re-registering a type panics (a type has
-// exactly one descriptor).
-func Register(d Descriptor) {
+// NewRegistry returns an empty registry.
+func NewRegistry() *Registry {
+	return &Registry{descriptors: map[string]Descriptor{}}
+}
+
+// Default is the process registry the package-level funcs use — an app's
+// init-time Register lands here.
+var Default = NewRegistry()
+
+// Register records a descriptor. A personal-data type that is not
+// registered cannot be exported or erased generically — registration is
+// the gate ADR-0009 relies on. Re-registering a type panics (one
+// descriptor per type).
+func (r *Registry) Register(d Descriptor) {
 	if d.Type == "" {
 		panic("pii: descriptor needs a Type")
 	}
@@ -62,20 +71,20 @@ func Register(d Descriptor) {
 	if d.Retention.Name == "" {
 		d.Retention = None
 	}
-	regMu.Lock()
-	defer regMu.Unlock()
-	if _, dup := descriptors[d.Type]; dup {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, dup := r.descriptors[d.Type]; dup {
 		panic("pii: type already registered: " + d.Type)
 	}
-	descriptors[d.Type] = d
+	r.descriptors[d.Type] = d
 }
 
-// Registry returns all descriptors, sorted by Type — the Article 30 view.
-func Registry() []Descriptor {
-	regMu.RLock()
-	defer regMu.RUnlock()
-	out := make([]Descriptor, 0, len(descriptors))
-	for _, d := range descriptors {
+// Descriptors returns all descriptors, sorted by Type — the Article 30 view.
+func (r *Registry) Descriptors() []Descriptor {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]Descriptor, 0, len(r.descriptors))
+	for _, d := range r.descriptors {
 		out = append(out, d)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Type < out[j].Type })
@@ -83,9 +92,9 @@ func Registry() []Descriptor {
 }
 
 // ExportSubject gathers every registered type's data for a subject.
-func ExportSubject(ctx context.Context, s Subject) (map[string]any, error) {
+func (r *Registry) ExportSubject(ctx context.Context, s Subject) (map[string]any, error) {
 	out := map[string]any{}
-	for _, d := range Registry() {
+	for _, d := range r.Descriptors() {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -103,8 +112,8 @@ func ExportSubject(ctx context.Context, s Subject) (map[string]any, error) {
 // EraseSubject erases every registered type's data for a subject. Derived
 // stores (search index) are dropped/rebuilt by the caller *after* this
 // returns — the erasure ordering rule (ADR-0009 §3).
-func EraseSubject(ctx context.Context, s Subject) error {
-	for _, d := range Registry() {
+func (r *Registry) EraseSubject(ctx context.Context, s Subject) error {
+	for _, d := range r.Descriptors() {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -113,4 +122,22 @@ func EraseSubject(ctx context.Context, s Subject) error {
 		}
 	}
 	return nil
+}
+
+// Package-level helpers delegate to Default (the common single-app path).
+
+// Register records a descriptor in the Default registry.
+func Register(d Descriptor) { Default.Register(d) }
+
+// Descriptors returns the Default registry's Article 30 view.
+func Descriptors() []Descriptor { return Default.Descriptors() }
+
+// ExportSubject exports across the Default registry.
+func ExportSubject(ctx context.Context, s Subject) (map[string]any, error) {
+	return Default.ExportSubject(ctx, s)
+}
+
+// EraseSubject erases across the Default registry.
+func EraseSubject(ctx context.Context, s Subject) error {
+	return Default.EraseSubject(ctx, s)
 }

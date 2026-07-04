@@ -31,9 +31,9 @@ func TestRegisterAndRegistryIsSorted(t *testing.T) {
 	Register(Descriptor{Type: "zeta/z", Hooks: &fakeHooks{}})
 	Register(Descriptor{Type: "alpha/a", Hooks: &fakeHooks{}, Retention: RetentionClass{Name: "x"}})
 
-	reg := Registry()
+	reg := Descriptors()
 	if len(reg) != 2 || reg[0].Type != "alpha/a" || reg[1].Type != "zeta/z" {
-		t.Fatalf("Registry not sorted: %+v", reg)
+		t.Fatalf("Descriptors not sorted: %+v", reg)
 	}
 	// Default retention applied when unset.
 	if reg[1].Retention.Name != "none" {
@@ -85,18 +85,17 @@ func TestExportPropagatesHookError(t *testing.T) {
 	}
 }
 
-// resetRegistry clears package state between tests (test-only).
+// resetRegistry clears the Default registry between tests (test-only).
 func resetRegistry() {
-	regMu.Lock()
-	defer regMu.Unlock()
-	descriptors = map[string]Descriptor{}
+	Default.mu.Lock()
+	defer Default.mu.Unlock()
+	Default.descriptors = map[string]Descriptor{}
 }
 
-// resetClasses restores the retention taxonomy to just None (test-only),
-// mirroring resetRegistry so a test's RegisterClass doesn't leak.
+// resetClasses restores the retention taxonomy to just None (test-only).
 func resetClasses() {
-	regMu.Lock()
-	defer regMu.Unlock()
+	classMu.Lock()
+	defer classMu.Unlock()
 	classes = map[string]RetentionClass{None.Name: None}
 }
 

@@ -1,6 +1,9 @@
 package pii
 
-import "time"
+import (
+	"sync"
+	"time"
+)
 
 // RetentionClass is the erasure mirror (ADR-0009 §4): how long data of a
 // kind must be *kept*, and why. Erasure refuses or defers what a class (or
@@ -23,9 +26,12 @@ type RetentionClass struct {
 // blocked by retention.
 var None = RetentionClass{Name: "none"}
 
-// classes shares regMu (registry.go) with the descriptor registry — both
-// are init-time taxonomies read at runtime; one lock keeps them consistent.
-var classes = map[string]RetentionClass{None.Name: None}
+// The retention taxonomy is process-global (it is fixed policy, not
+// per-tenant); classMu guards it.
+var (
+	classMu sync.RWMutex
+	classes = map[string]RetentionClass{None.Name: None}
+)
 
 // RegisterClass adds a retention class. Registering a name twice panics —
 // classes are a fixed, opinionated taxonomy, not runtime configuration.
@@ -33,8 +39,8 @@ func RegisterClass(c RetentionClass) {
 	if c.Name == "" {
 		panic("pii: retention class needs a name")
 	}
-	regMu.Lock()
-	defer regMu.Unlock()
+	classMu.Lock()
+	defer classMu.Unlock()
 	if _, dup := classes[c.Name]; dup {
 		panic("pii: retention class already registered: " + c.Name)
 	}
@@ -43,8 +49,8 @@ func RegisterClass(c RetentionClass) {
 
 // Class looks up a registered retention class.
 func Class(name string) (RetentionClass, bool) {
-	regMu.RLock()
-	defer regMu.RUnlock()
+	classMu.RLock()
+	defer classMu.RUnlock()
 	c, ok := classes[name]
 	return c, ok
 }
