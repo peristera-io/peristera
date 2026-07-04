@@ -65,8 +65,9 @@ kubectl rollout restart deploy/coredns -n kube-system >/dev/null
 kubectl rollout status deploy/coredns -n kube-system --timeout=120s
 
 echo "==> images + control plane"
-docker build -q -t peristera-stub:dev iam/
-docker build -q -t peristera-control-plane:dev control-plane/
+# Repo-root context: images depend on the sibling lib/ module.
+docker build -q -f iam/Dockerfile -t peristera-stub:dev .
+docker build -q -f control-plane/Dockerfile -t peristera-control-plane:dev .
 k3d image import -c "$CLUSTER" peristera-stub:dev peristera-control-plane:dev
 kubectl apply -f control-plane/deploy/crd/peristera.io_tenants.yaml >/dev/null
 kubectl apply -f control-plane/deploy/manifests/control-plane.yaml >/dev/null

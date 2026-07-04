@@ -127,7 +127,7 @@ func (s *Server) uiIndex(w http.ResponseWriter, r *http.Request) {
 		rows = append(rows, toRow(&list.Items[i]))
 	}
 	user, _ := s.user(r)
-	_ = pageTmpl.Execute(w, map[string]any{"User": user, "Tenants": rows})
+	_ = pageTmpl.Execute(w, map[string]any{"User": user.Claims, "Tenants": rows})
 }
 
 func (s *Server) uiCreate(w http.ResponseWriter, r *http.Request) {

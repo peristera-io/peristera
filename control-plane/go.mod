@@ -3,10 +3,10 @@ module github.com/peristera-io/peristera/control-plane
 go 1.26.0
 
 require (
-	github.com/coreos/go-oidc/v3 v3.19.0
+	github.com/coreos/go-oidc/v3 v3.19.0 // indirect
 	github.com/cucumber/godog v0.15.1
 	github.com/oapi-codegen/runtime v1.4.2
-	golang.org/x/oauth2 v0.36.0
+	golang.org/x/oauth2 v0.36.0 // indirect
 	k8s.io/api v0.36.0
 	k8s.io/apimachinery v0.36.2
 	k8s.io/client-go v0.36.0
@@ -73,3 +73,7 @@ require (
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.2 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
+
+require github.com/peristera-io/peristera/lib v0.0.0-00010101000000-000000000000
+
+replace github.com/peristera-io/peristera/lib => ../lib

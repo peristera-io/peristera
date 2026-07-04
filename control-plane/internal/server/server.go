@@ -11,13 +11,12 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/coreos/go-oidc/v3/oidc"
-	"golang.org/x/oauth2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/peristera-io/peristera/control-plane/internal/server/gen"
 	"github.com/peristera-io/peristera/control-plane/internal/zitadel"
+	"github.com/peristera-io/peristera/lib/oidcrp"
 )
 
 type Config struct {
@@ -32,10 +31,8 @@ type Server struct {
 	IAM *zitadel.Client
 	Cfg Config
 
-	oauth    oauth2.Config
-	verifier *oidc.IDTokenVerifier
-	sessions *sessionStore
-	tokens   *tokenCache
+	rp     *oidcrp.RelyingParty // browser flow (shared, lib/oidcrp)
+	tokens *tokenCache          // bearer-token validation cache (API path)
 }
 
 // NeedLeaderElection: the UI/API serves on every replica; only the
@@ -59,27 +56,24 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("ensuring own OIDC app: %w", err)
 	}
 
-	provider, err := oidc.NewProvider(ctx, s.Cfg.Issuer)
-	if err != nil {
-		return fmt.Errorf("oidc discovery: %w", err)
-	}
-	s.verifier = provider.Verifier(&oidc.Config{ClientID: clientID})
-	s.oauth = oauth2.Config{
+	s.rp, err = oidcrp.New(ctx, oidcrp.Config{
+		Issuer:      s.Cfg.Issuer,
 		ClientID:    clientID,
-		Endpoint:    provider.Endpoint(),
 		RedirectURL: s.Cfg.PublicURL + "/auth/callback",
-		Scopes:      []string{oidc.ScopeOpenID, "profile", "email"},
+		CookieName:  "cp_session",
+	})
+	if err != nil {
+		return fmt.Errorf("oidc relying party: %w", err)
 	}
-	s.sessions = newSessionStore()
 	s.tokens = newTokenCache(time.Minute)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok"))
 	})
-	mux.HandleFunc("GET /auth/login", s.authLogin)
-	mux.HandleFunc("GET /auth/callback", s.authCallback)
-	mux.HandleFunc("GET /auth/logout", s.authLogout)
+	mux.HandleFunc("GET /auth/login", s.rp.Login)
+	mux.HandleFunc("GET /auth/callback", s.rp.Callback)
+	mux.HandleFunc("GET /auth/logout", s.rp.Logout)
 	mux.Handle("/api/v1/", http.StripPrefix("/api/v1",
 		s.requireAuth(gen.Handler(&api{s}), true)))
 	mux.Handle("/", s.requireAuth(s.uiMux(), false))
