@@ -60,26 +60,42 @@ and the transactional-storage convention.
 
 ## Definition of done (M4a)
 
-- [ ] Chunk/storage engine: content-defined chunking, content-addressed
-      blobs behind a streaming `BlobStore`, ref-counted chunks + GC (if
-      R7 Q5 says now), the E2EE-ready format (version byte, format config,
-      reserved columns, AD binding).
-- [ ] Storage API v0 (OpenAPI-first): create object, chunked/resumable
-      upload, streamed/ranged get, permission-filtered list, delete —
-      OpenFGA-authorized.
-- [ ] Wired through the four conventions (pii export/erase, authz owner
+- [x] Chunk/storage engine: content-defined chunking, content-addressed
+      blobs behind a streaming `BlobStore`, ref-counted chunks + GC, the
+      E2EE-ready format (version byte, format config, reserved columns, AD
+      binding).
+- [x] Storage API v0 (OpenAPI-first): upload, streamed get,
+      permission-filtered list, metadata, delete — OpenFGA-authorized.
+      (Resumable/ranged transfer deferred to M4b with the browser UI.)
+- [x] Wired through the four conventions (pii export/erase, authz owner
       tuples, audit events, search feed), inside the shared transaction.
-- [ ] Deployed as a catalog app (NeedsDatabase + NeedsOpenFGA; the blob
-      backend provisioned per tenant).
-- [ ] **Ergonomos calls Kamara's API** to attach a file to a task
-      (the integration acceptance test).
+- [x] Deployed as a catalog app (NeedsDatabase + NeedsOpenFGA; per-tenant
+      blob PVC + per-tenant DEK Secret provisioned), live on k3d.
+- [ ] **Live authenticated round-trip through the deployed storage API**
+      (upload→list→download→delete) — the storage-API-v0 acceptance test.
+      *(Revised from "Ergonomos calls Kamara's API"; see below and R41.)*
 - [ ] godog specs green (spec-first); `kamara/` seeded (README, SPEC,
       legal, `adr/`).
+
+**Acceptance revised (Q&A R41).** The original M4a acceptance —
+*Ergonomos calls Kamara's API to attach a file* — was found to force the
+platform-wide **service-to-service auth** decision (how one app
+authenticates to another). That decision defines *all* S2S interaction in
+Peristera and must be designed deliberately, not settled to make one test
+pass. So: M4a's acceptance is a live authenticated API round-trip (no
+cross-app call, no S2S decision); the cross-app file-attach moves to M4b
+via **option C** (browser uploads to Kamara with the user's own session;
+Ergonomos stores only the file-id reference — each app authorizes its own
+user, so no cross-app trust); and the S2S/zero-trust model gets its own
+design milestone (see `docs/s2s-auth-milestone.md`) before M6.
 
 ## Definition of done (M4b)
 
 - [ ] HTMX file UI: upload (chunked/resumable, progress), list, download,
       delete; a11y CI gate as with Ergonomos.
+- [ ] **File attachment via option C**: browser uploads to Kamara with the
+      user's session; Ergonomos stores the returned file-id on the task and
+      renders a link (user-authorized on both sides, no S2S trust).
 - [ ] Demo: browser upload + Ergonomos file attachment, end to end.
 
 ## Out of scope (deferred, not dropped)

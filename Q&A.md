@@ -587,4 +587,23 @@ token), and the single-tenant mutual-trust assumption is already how the
 apps are deployed. Pick A, B, or C — and if A, confirm the `oidcrp` change
 to retain the user access token is acceptable.
 
->
+> **Deferred deliberately — none of A/B/C settled as the platform S2S
+model here.** This decision defines *all* service-to-service interaction in
+Peristera, so it must not be set as a side effect of the file-attach test.
+Skip A (forwarding the user token would prematurely bake in "any valid
+tenant user token is trusted between services" — the opposite of
+zero-trust). Skip B for now too, but note B (machine identity + RFC-8693
+token exchange) is what real zero-trust-inside-the-namespace requires.
+
+Resolution:
+- **M4a acceptance revised** to a *live authenticated round-trip through
+  the deployed storage API* (upload→list→download→delete) — proves the API
+  and deployment end-to-end without any cross-app call.
+- **The Ergonomos file-attach flow moves to M4b via option C** (browser
+  uploads to Kamara with the user's own session; Ergonomos stores only the
+  file-id reference). C keeps each app authorizing its own user, so it needs
+  no S2S trust decision.
+- **A dedicated milestone will design platform service-to-service auth /
+  intra-tenant zero-trust** (machine identity, token-exchange/actor tokens,
+  NetworkPolicy #18, per-service OpenFGA authn #19), sequenced before M6.
+
