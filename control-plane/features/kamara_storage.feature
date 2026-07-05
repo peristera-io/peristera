@@ -13,5 +13,6 @@ Feature: Kamara storage API
     When I upload "hello kamara" as "hello.txt" to kamara of tenant "kam"
     Then the file is listed in kamara of tenant "kam"
     And downloading the file from kamara of tenant "kam" returns "hello kamara"
+    And another user cannot reach the file in kamara of tenant "kam"
     And deleting the file from kamara of tenant "kam" succeeds
     And the file is not listed in kamara of tenant "kam"

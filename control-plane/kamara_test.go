@@ -53,11 +53,14 @@ func (w *world) tenantIssuer(slug string) (string, error) {
 	return t.Status.Issuer, nil
 }
 
-// kamaraTok mints (once per tenant) a PAT for a machine user in the
-// tenant's own Zitadel instance — a default-instance token would not pass
-// Kamara's userinfo check against the tenant issuer.
-func (w *world) kamaraTok(slug string) (string, error) {
-	if t := w.kamaraToks[slug]; t != "" {
+// kamaraTokAs mints (once per tenant+user) a PAT for a named machine user
+// in the tenant's own Zitadel instance — a default-instance token would not
+// pass Kamara's userinfo check against the tenant issuer. Two distinct
+// usernames give two distinct subjects, which is how the isolation check
+// (an intruder can't reach the owner's file) gets a second identity.
+func (w *world) kamaraTokAs(slug, username string) (string, error) {
+	key := slug + "/" + username
+	if t := w.kamaraToks[key]; t != "" {
 		return t, nil
 	}
 	issuer, err := w.tenantIssuer(slug)
@@ -73,20 +76,25 @@ func (w *world) kamaraTok(slug string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("org in tenant issuer: %w", err)
 	}
-	userID, err := iam.EnsureMachineUser(ctx, issuer, orgID, "kamara-smoke")
+	userID, err := iam.EnsureMachineUser(ctx, issuer, orgID, username)
 	if err != nil {
-		return "", fmt.Errorf("machine user: %w", err)
+		return "", fmt.Errorf("machine user %q: %w", username, err)
 	}
 	pat, err := iam.CreatePAT(ctx, issuer, orgID, userID)
 	if err != nil {
-		return "", fmt.Errorf("PAT: %w", err)
+		return "", fmt.Errorf("PAT for %q: %w", username, err)
 	}
-	w.kamaraToks[slug] = pat
+	w.kamaraToks[key] = pat
 	return pat, nil
 }
 
-func (w *world) kamaraReq(method, slug, path string, body io.Reader) (*http.Response, error) {
-	tok, err := w.kamaraTok(slug)
+// kamaraTok is the file owner's token ("kamara-smoke").
+func (w *world) kamaraTok(slug string) (string, error) {
+	return w.kamaraTokAs(slug, "kamara-smoke")
+}
+
+func (w *world) kamaraReqAs(username, method, slug, path string, body io.Reader) (*http.Response, error) {
+	tok, err := w.kamaraTokAs(slug, username)
 	if err != nil {
 		return nil, err
 	}
@@ -96,6 +104,11 @@ func (w *world) kamaraReq(method, slug, path string, body io.Reader) (*http.Resp
 	}
 	req.Header.Set("Authorization", "Bearer "+tok)
 	return http.DefaultClient.Do(req)
+}
+
+// kamaraReq acts as the file owner.
+func (w *world) kamaraReq(method, slug, path string, body io.Reader) (*http.Response, error) {
+	return w.kamaraReqAs("kamara-smoke", method, slug, path, body)
 }
 
 func (w *world) kamaraUpload(contents, name, slug string) error {
@@ -122,7 +135,11 @@ func (w *world) kamaraUpload(contents, name, slug string) error {
 }
 
 func (w *world) kamaraListIDs(slug string) ([]string, error) {
-	resp, err := w.kamaraReq(http.MethodGet, slug, "/v1/files", nil)
+	return w.kamaraListIDsAs("kamara-smoke", slug)
+}
+
+func (w *world) kamaraListIDsAs(username, slug string) ([]string, error) {
+	resp, err := w.kamaraReqAs(username, http.MethodGet, slug, "/v1/files", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -187,6 +204,40 @@ func (w *world) kamaraDownloadEquals(slug, want string) error {
 	}
 	if string(b) != want {
 		return fmt.Errorf("download = %q, want %q", b, want)
+	}
+	return nil
+}
+
+// kamaraIntruderDenied proves cross-subject isolation live through real
+// OpenFGA: a second tenant user (no owner tuple) is forbidden from reading,
+// downloading, or deleting the owner's file, and never sees it in a listing.
+// Existence is not leaked — the authz Check runs before any load, so a
+// non-owner gets 403, not 404. Runs while the file still exists (before the
+// owner's delete step).
+func (w *world) kamaraIntruderDenied(slug string) error {
+	const who = "kamara-intruder"
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodGet, "/v1/files/" + w.kamaraFile},
+		{http.MethodGet, "/v1/files/" + w.kamaraFile + "/content"},
+		{http.MethodDelete, "/v1/files/" + w.kamaraFile},
+	} {
+		resp, err := w.kamaraReqAs(who, tc.method, slug, tc.path, nil)
+		if err != nil {
+			return err
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden {
+			return fmt.Errorf("intruder %s %s: status %d, want 403", tc.method, tc.path, resp.StatusCode)
+		}
+	}
+	ids, err := w.kamaraListIDsAs(who, slug)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if id == w.kamaraFile {
+			return fmt.Errorf("intruder's listing leaked the owner's file %s", w.kamaraFile)
+		}
 	}
 	return nil
 }

@@ -222,6 +222,10 @@ func (r *TenantReconciler) ensureDEK(ctx context.Context, tenant *v1alpha1.Tenan
 	if _, err := rand.Read(key); err != nil {
 		return fmt.Errorf("generating DEK: %w", err)
 	}
+	// Stored base64 in StringData so the mounted file is a single base64
+	// string (44 chars, no binary/newline ambiguity). Kamara's decodeKey
+	// (cmd/kamara/main.go) trims and base64-decodes it — keep the two in
+	// sync: the mounted file must be one base64 layer, not raw bytes.
 	sec := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 		StringData: map[string]string{dekFileName: base64.StdEncoding.EncodeToString(key)},

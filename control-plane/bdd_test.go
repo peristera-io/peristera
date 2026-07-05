@@ -513,6 +513,7 @@ func TestFeatures(t *testing.T) {
 			sc.Step(`^I upload "([^"]*)" as "([^"]*)" to kamara of tenant "([^"]*)"$`, w.kamaraUpload)
 			sc.Step(`^the file is listed in kamara of tenant "([^"]*)"$`, w.kamaraFileListed)
 			sc.Step(`^downloading the file from kamara of tenant "([^"]*)" returns "([^"]*)"$`, w.kamaraDownloadEquals)
+			sc.Step(`^another user cannot reach the file in kamara of tenant "([^"]*)"$`, w.kamaraIntruderDenied)
 			sc.Step(`^deleting the file from kamara of tenant "([^"]*)" succeeds$`, w.kamaraDelete)
 			sc.Step(`^the file is not listed in kamara of tenant "([^"]*)"$`, w.kamaraFileNotListed)
 		},
