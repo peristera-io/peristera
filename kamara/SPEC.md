@@ -88,7 +88,11 @@ and the four conventions.
 
 Shape (columns firmed up in M4a):
 
-- `objects` — id (UUIDv7), owner subject, name (display), timestamps.
+- `folders` — id (UUIDv7), owner subject, `parent_id` (nullable, NULL =
+  root), name, timestamps. Folders are first-class objects with their own
+  OpenFGA tuples (Kamara ADR-0002, M4b). *(decided — R9)*
+- `objects` — id (UUIDv7), owner subject, name (display), `folder_id`
+  (nullable, NULL = the owner's root — M4b), timestamps.
 - `versions` — id (UUIDv7), object_id, ordinal, size, created.
 - `chunks` — content hash (storage key), size, `ref_count`,
   **reserved E2EE columns** (`wrapped_dek`, `origin_version_id`,
@@ -102,6 +106,14 @@ Shape (columns firmed up in M4a):
 
 Authorization is **not** in these tables — it lives in OpenFGA (ADR-0010).
 The owner column is display/PII-scoping only, never the access decision.
+
+**Hierarchy authorization (M4b).** Folders and files each have an OpenFGA
+`owner` (user), a `parent` (folder), and a computed `can_access = owner OR
+can_access from parent`. Create/move writes the `owner` tuple and, inside a
+folder, a `parent` tuple; access checks and listings use `can_access`.
+Per-owner trees today, so `can_access` reduces to `owner` — but the
+inheritance edges are real, so folder sharing later is a viewer tuple, not a
+schema change (Kamara ADR-0002; model accretion #19).
 
 ## 6. Encryption stance
 

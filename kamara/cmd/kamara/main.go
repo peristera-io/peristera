@@ -26,14 +26,41 @@ import (
 )
 
 // fgaModel is Kamara's contribution to the tenant authorization model
-// (ADR-0010): a file has an owner who is a user.
+// (ADR-0010; model accretion #19). A folder and a file each have an owner
+// (a user) and an optional parent folder; access is `can_access` — owner,
+// or inherited up the folder chain (`can_access from parent`). Per-owner
+// trees today; folder sharing later adds tuples, not a new model shape
+// (Kamara ADR-0002).
 const fgaModel = `{
   "schema_version": "1.1",
   "type_definitions": [
     {"type": "user"},
+    {"type": "kamara/folder",
+     "relations": {
+       "owner": {"this": {}},
+       "parent": {"this": {}},
+       "can_access": {"union": {"child": [
+         {"computedUserset": {"relation": "owner"}},
+         {"tupleToUserset": {"tupleset": {"relation": "parent"}, "computedUserset": {"relation": "can_access"}}}
+       ]}}
+     },
+     "metadata": {"relations": {
+       "owner": {"directly_related_user_types": [{"type": "user"}]},
+       "parent": {"directly_related_user_types": [{"type": "kamara/folder"}]}
+     }}},
     {"type": "kamara/file",
-     "relations": {"owner": {"this": {}}},
-     "metadata": {"relations": {"owner": {"directly_related_user_types": [{"type": "user"}]}}}}
+     "relations": {
+       "owner": {"this": {}},
+       "parent": {"this": {}},
+       "can_access": {"union": {"child": [
+         {"computedUserset": {"relation": "owner"}},
+         {"tupleToUserset": {"tupleset": {"relation": "parent"}, "computedUserset": {"relation": "can_access"}}}
+       ]}}
+     },
+     "metadata": {"relations": {
+       "owner": {"directly_related_user_types": [{"type": "user"}]},
+       "parent": {"directly_related_user_types": [{"type": "kamara/folder"}]}
+     }}}
   ]
 }`
 
