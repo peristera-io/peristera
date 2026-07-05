@@ -34,8 +34,10 @@ type world struct {
 	former       map[string]string // slug → issuer before deletion
 	updateErr    error
 	pollInterval time.Duration
-	token        string // PAT of the machine operator (lazy)
+	token        string            // PAT of the machine operator (lazy)
 	lastStatus   int
+	kamaraToks   map[string]string // slug → tenant-instance PAT (lazy)
+	kamaraFile   string            // id of the file under test
 }
 
 func (w *world) createTenant(slug, displayName string) error {
@@ -478,7 +480,8 @@ func TestFeatures(t *testing.T) {
 		t.Fatalf("scheme: %v", err)
 	}
 
-	w := &world{k8s: k8s, issuers: map[string]string{}, former: map[string]string{}, pollInterval: 3 * time.Second}
+	w := &world{k8s: k8s, issuers: map[string]string{}, former: map[string]string{},
+		kamaraToks: map[string]string{}, pollInterval: 3 * time.Second}
 
 	suite := godog.TestSuite{
 		ScenarioInitializer: func(sc *godog.ScenarioContext) {
@@ -505,9 +508,17 @@ func TestFeatures(t *testing.T) {
 			sc.Step(`^the API shows tenant "([^"]*)" with phase "([^"]*)" within (\d+) minutes$`, w.apiTenantPhase)
 			sc.Step(`^I delete tenant "([^"]*)" via the API$`, w.apiDeleteTenant)
 			sc.Step(`^the API answers 404 for tenant "([^"]*)" within (\d+) minutes$`, w.apiTenant404)
+			// Kamara storage-API round-trip (M4a, Q&A R41).
+			sc.Step(`^kamara of tenant "([^"]*)" is healthy within (\d+) minutes$`, w.kamaraHealthy)
+			sc.Step(`^I upload "([^"]*)" as "([^"]*)" to kamara of tenant "([^"]*)"$`, w.kamaraUpload)
+			sc.Step(`^the file is listed in kamara of tenant "([^"]*)"$`, w.kamaraFileListed)
+			sc.Step(`^downloading the file from kamara of tenant "([^"]*)" returns "([^"]*)"$`, w.kamaraDownloadEquals)
+			sc.Step(`^deleting the file from kamara of tenant "([^"]*)" succeeds$`, w.kamaraDelete)
+			sc.Step(`^the file is not listed in kamara of tenant "([^"]*)"$`, w.kamaraFileNotListed)
 		},
 		Options: &godog.Options{
 			Format: "pretty", Paths: []string{"features"}, Strict: true, TestingT: t,
+			Tags: os.Getenv("GODOG_TAGS"), // e.g. "@kamara" to run one feature
 		},
 	}
 	if suite.Run() != 0 {

@@ -71,11 +71,13 @@ and the transactional-storage convention.
       tuples, audit events, search feed), inside the shared transaction.
 - [x] Deployed as a catalog app (NeedsDatabase + NeedsOpenFGA; per-tenant
       blob PVC + per-tenant DEK Secret provisioned), live on k3d.
-- [ ] **Live authenticated round-trip through the deployed storage API**
-      (upload→list→download→delete) — the storage-API-v0 acceptance test.
-      *(Revised from "Ergonomos calls Kamara's API"; see below and R41.)*
-- [ ] godog specs green (spec-first); `kamara/` seeded (README, SPEC,
-      legal, `adr/`).
+- [x] **Live authenticated round-trip through the deployed storage API**
+      (upload→list→download→delete) — the storage-API-v0 acceptance test,
+      green on k3d against tenant `kam` with a PAT from the tenant's own
+      issuer. *(Revised from "Ergonomos calls Kamara's API"; see below /
+      R41.)*
+- [x] godog specs green (spec-first, `features/kamara_storage.feature`);
+      `kamara/` seeded (README, SPEC, legal, `adr/`).
 
 **Acceptance revised (Q&A R41).** The original M4a acceptance —
 *Ergonomos calls Kamara's API to attach a file* — was found to force the
