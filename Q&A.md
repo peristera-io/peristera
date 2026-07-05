@@ -542,3 +542,49 @@ add the per-tenant key with the backup story — simpler now, but then
 "at-rest encryption" isn't actually delivered in M4?
 
 >ok
+
+## Round 8 — M4a session 4 (inter-app auth for the file-attach acceptance test)
+
+Context: Kamara is deployed and live (answers on its domain, API enforces
+bearer auth). The last M4a item is the acceptance test — **Ergonomos
+attaches a file to a task by calling Kamara's storage API**. That forces
+one genuinely new decision that shapes the whole platform, not just Kamara:
+**how one app authenticates to another app's API.** Kamara already
+validates a bearer token against the tenant's OIDC userinfo endpoint and
+takes `sub` as the file owner; the open question is *what token Ergonomos
+presents*.
+
+**R41. Inter-app auth model for Ergonomos → Kamara?** Options:
+
+- **(A) Forward the logged-in user's access token.** Ergonomos keeps the
+  user's OIDC access token (today `lib/oidcrp` retains only the ID token —
+  a small change) and forwards it as the bearer to Kamara. The file is
+  owned by the *actual user*; no new credentials. Cheapest path to the
+  literal acceptance test. Caveat: within one tenant every app trusts every
+  other, so Kamara accepts any valid tenant token — authorization is purely
+  user-level (OpenFGA), no app-level identity. Access-token lifetime is
+  short (fine for a request-scoped attach; long ops would need refresh).
+
+- **(B) Service account + on-behalf-of (OAuth2 token-exchange, RFC 8693).**
+  Ergonomos has its own machine credentials and exchanges them (plus the
+  user context) for a token that names *both* actor (Ergonomos) and subject
+  (the user). Proper machine identity, richer audit (who acted vs. on whose
+  behalf), decoupled from user-token lifetime. Heavier: per-app service
+  accounts, token-exchange support/config in Zitadel, a trust model.
+
+- **(C) Browser-direct upload, reference-only in Ergonomos.** The user's
+  browser uploads to Kamara with its *own* session, gets a file id, and
+  Ergonomos just stores that id on the task. No inter-app service auth at
+  all. This is the natural **M4b** browser pattern, but it means the M4a
+  acceptance test isn't literally "Ergonomos calls Kamara's API."
+
+**Recommendation: (A) for M4a**, with **(B) as the M6 hardening** when the
+multi-app/SaaS story justifies real machine identity and actor-aware audit,
+and **(C)** as the expected M4b browser flow. (A) is the smallest step that
+satisfies the plan's literal acceptance test with the file owned by the
+real user, needs only a minor `oidcrp` change (retain + refresh the access
+token), and the single-tenant mutual-trust assumption is already how the
+apps are deployed. Pick A, B, or C — and if A, confirm the `oidcrp` change
+to retain the user access token is acceptable.
+
+>
