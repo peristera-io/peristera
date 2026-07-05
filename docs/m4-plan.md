@@ -91,14 +91,16 @@ Ergonomos stores only the file-id reference — each app authorizes its own
 user, so no cross-app trust); and the S2S/zero-trust model gets its own
 design milestone (see `docs/s2s-auth-milestone.md`) before M6.
 
-## Definition of done (M4b)
+## Definition of done (M4b / M4c)
 
-- [ ] HTMX file UI: upload (chunked/resumable, progress), list, download,
-      delete; a11y CI gate as with Ergonomos.
-- [ ] **File attachment via option C**: browser uploads to Kamara with the
-      user's session; Ergonomos stores the returned file-id on the task and
-      renders a link (user-authorized on both sides, no S2S trust).
-- [ ] Demo: browser upload + Ergonomos file attachment, end to end.
+**Reshaped and split — see `docs/m4b-plan.md`** (Q&A Round 9). M4b/M4c became
+the browser file experience over a new **folder hierarchy** in the Peristera
+design language (Tailwind pilot): M4b = hierarchy model + API + browser auth
++ minimal UI; M4c = polish (extractable uploader, progress bar, file-details
+drawer, design tokens, a11y gate, demo). The **Ergonomos attach flow moved
+to the S2S milestone** (`docs/s2s-auth-milestone.md`, #29) as its acceptance
+test — it validates the platform service-to-service model rather than
+front-running it.
 
 ## Out of scope (deferred, not dropped)
 

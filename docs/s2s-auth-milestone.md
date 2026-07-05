@@ -36,6 +36,15 @@ browser-mediated, no-S2S-trust flow — "option C").
   authorizing its own user. No inter-service trust at all. Used for the M4b
   file-attach; not a general answer for server-initiated app-to-app work.
 
+## Acceptance test (its real consumer)
+
+The **Ergonomos file-attach flow** is this milestone's acceptance test
+(moved here from M4b, Q&A R9): Ergonomos attaches a file to a task by
+obtaining a credential and calling Kamara's storage API under whatever S2S
+model this milestone chooses. Designing the model and proving it with a real
+cross-app call happen together — the decision is validated by its first
+consumer, not on paper.
+
 ## What this milestone must design
 
 - The platform S2S authentication model (very likely **B**), as an ADR that

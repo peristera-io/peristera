@@ -607,3 +607,48 @@ Resolution:
   intra-tenant zero-trust** (machine identity, token-exchange/actor tokens,
   NetworkPolicy #18, per-service OpenFGA authn #19), sequenced before M6.
 
+
+## Round 9 — M4b/M4c (Kamara file UI + folder hierarchy)
+
+Reshaped after M4a: the Ergonomos attach flow moves to the inter-service
+(S2S) milestone #29 as its acceptance test; M4b/M4c become the browser file
+experience over a new folder hierarchy, in the Peristera design language
+(Tailwind pilot), built so an upload SDK, version history, and sharing stay
+additive. All recommendations below were **approved as defaults** (answer:
+"ok for all the defaults").
+
+**R42. Hierarchy model?** Rec: folders as first-class objects (own UUID +
+OpenFGA tuples + `parent`), files gain a nullable `folder_id` (null = root);
+new `folders` table, not a path string — keeps move/rename/share clean and
+URLs UUID-based (ADR-0007). >ok
+
+**R43. Folder permissions?** Rec: per-owner trees for M4b; a file inherits
+its folder via an OpenFGA `parent` relation; cross-user sharing deferred
+(needs #19 + collaboration/S2S). >ok
+
+**R44. Operation set?** Rec: browse, create folder, upload-into-current,
+rename, move, delete (files + folders), single-file download; bulk/zip
+folder download deferred. >ok
+
+**R45. Tailwind + design tokens?** Rec: build-time standalone Tailwind CLI
+(no Node in the pod) → `go:embed` static CSS; one Kamara `tailwind.config`
+with a small named theme (extractable to a shared preset later);
+hand-written components; string-catalog i18n; Kamara is the pilot, Ergonomos
+migrates later. >ok
+
+**R46. Details drawer & versioning?** Rec: build the file-details pullout
+drawer now (metadata + stubbed Versions section); no version history or
+new-version write path in M4b (create new files only). >ok
+
+**R47. Browser auth?** Rec: add the `lib/oidcrp` cookie flow to Kamara
+alongside the bearer API; both resolve to the same `pii.Subject`. >ok
+
+**R48. Split the milestone?** Rec: M4b = hierarchy model + API + browser
+auth + minimal Tailwind UI; M4c = polish (extractable uploader, progress
+bar, details drawer, design-token cleanup, a11y gate, demo). >ok
+
+**Kamara SDK (design note, not a question):** an embeddable drag-drop upload
+widget is feasible later — the API already returns a handle and dedup makes
+re-uploads cheap. M4b/M4c build the uploader as a self-contained component
+so extraction is lift-and-shift; cross-app auth for a third-party embed
+rides on the S2S milestone #29.
