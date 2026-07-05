@@ -262,8 +262,11 @@ func (s *Service) DeleteFolder(ctx context.Context, caller pii.Subject, folderID
 }
 
 // reparent updates the containment tuple of child (a fully-qualified object)
-// from old to new folder (either nil). Best-effort after the DB commit — the
-// same out-of-transaction seam as the owner tuple (root ADR-0015).
+// from old to new folder (either nil), after the DB commit — the same
+// out-of-transaction seam as the owner tuple (root ADR-0015). NOT
+// self-healing: if the old-tuple delete fails, the stale tuple keeps the
+// subtree reachable via its former parent (fail-open). Latent while trees
+// are per-owner; must be closed before sharing (Kamara ADR-0002, issue).
 func (s *Service) reparent(ctx context.Context, child string, old, dest *string) error {
 	if old != nil {
 		if err := s.authz.DeleteObjectTuple(ctx, folderObj(*old), ParentRelation, child); err != nil {
@@ -280,14 +283,19 @@ func (s *Service) reparent(ctx context.Context, child string, old, dest *string)
 
 // wouldCycle reports whether moving `moving` under `dest` would create a
 // cycle — i.e. dest is `moving` itself or somewhere in its subtree. Walk
-// from dest up to the root; hitting `moving` means dest is inside it.
+// from dest up to the root; hitting `moving` means dest is inside it. A
+// pre-existing cycle in the ancestry (should be impossible, but a concurrent
+// move could form one — issue tracked) is treated as a cycle so the walk
+// terminates instead of looping forever.
 func (s *Service) wouldCycle(ctx context.Context, moving, dest string) (bool, error) {
 	rd := s.tx.Reader()
+	seen := map[string]bool{}
 	cur := &dest
 	for cur != nil {
-		if *cur == moving {
+		if *cur == moving || seen[*cur] {
 			return true, nil
 		}
+		seen[*cur] = true
 		f, ok, err := rd.Objects.GetFolder(ctx, *cur)
 		if err != nil {
 			return false, err

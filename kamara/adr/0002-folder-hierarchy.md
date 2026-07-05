@@ -42,10 +42,21 @@ child folders or files; the domain enforces this and the FK columns are
   untouched and identity is stable.
 - The authorization graph must be kept consistent with the folder tree:
   every create/move maintains the `parent` tuple alongside the `folder_id`/
-  `parent_id` column. The tuple write is the same out-of-transaction seam as
-  the owner tuple (root ADR-0015): DB first, tuple after — a crash can leave
-  a re-parented row whose `parent` tuple lags, reconciled the same way as
-  the owner-tuple seam.
+  `parent_id` column. This is the same out-of-transaction seam as the owner
+  tuple (root ADR-0015): DB first, tuples after. **It is not self-healing —
+  no reconciler exists yet** (neither for owner nor parent tuples). A move
+  rewrites two independent tuples (delete old parent, write new); if the
+  *old* delete fails or the process crashes between them, the stale parent
+  tuple keeps the subtree reachable via its former ancestor — a **fail-open**
+  window. Today this is latent: per-owner trees make `can_access ≡ owner`, so
+  no one inherits through a folder. **Before folder sharing ships, this seam
+  must be closed** (a tuple-reconciliation job keyed off `parent_id`, or a
+  transactional outbox). Until then, treat inherited access as best-effort.
+- Cycles must not form in `parent_id`. `MoveFolder` refuses a move into the
+  moving folder's own subtree, but the check is not serialized against
+  concurrent moves; the walk and the erase depth-sort are hardened to
+  terminate on a cycle rather than loop, and serializing the check is
+  tracked separately.
 - Cross-user sharing, recursive delete, and bulk/zip download are
   explicitly deferred; the model and schema already accommodate them.
 - Cycle prevention (a folder moved under its own descendant) is a domain

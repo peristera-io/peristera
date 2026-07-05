@@ -305,15 +305,22 @@ func decodeName(w http.ResponseWriter, r *http.Request) (string, bool) {
 	return body.Name, true
 }
 
-// decodeMove reads the destination folder id under `field` (null/absent =
-// root) from a JSON body.
+// decodeMove reads the destination id under `field` from a JSON body:
+// the field must be present — explicit null means "move to root", a value
+// means that folder. Requiring presence avoids a typo'd field name silently
+// yanking the item to the root.
 func decodeMove(w http.ResponseWriter, r *http.Request, field string) (*string, bool) {
 	var body map[string]*string
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid JSON body")
 		return nil, false
 	}
-	return body[field], true
+	dest, present := body[field]
+	if !present {
+		writeErr(w, http.StatusBadRequest, `"`+field+`" field is required (use null for root)`)
+		return nil, false
+	}
+	return dest, true
 }
 
 // fail maps a domain error to a status: not-found → 404, forbidden → 403,

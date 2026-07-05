@@ -118,7 +118,12 @@ func deepestFirst(fs []Folder) []Folder {
 	}
 	depth := func(f Folder) int {
 		d, cur := 0, f.ParentID
+		seen := map[string]bool{f.ID: true} // guard against a malformed cycle
 		for cur != nil {
+			if seen[*cur] {
+				break
+			}
+			seen[*cur] = true
 			p, ok := byID[*cur]
 			if !ok {
 				break
