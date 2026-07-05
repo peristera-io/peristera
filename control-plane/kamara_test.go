@@ -208,6 +208,144 @@ func (w *world) kamaraDownloadEquals(slug, want string) error {
 	return nil
 }
 
+// --- folder hierarchy (Kamara ADR-0002) ---
+
+func (w *world) kamaraCreateFolder(name, slug string) error {
+	resp, err := w.kamaraReq(http.MethodPost, slug, "/v1/folders?name="+name, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("create folder: status %d: %s", resp.StatusCode, b)
+	}
+	var f struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&f); err != nil {
+		return err
+	}
+	if f.ID == "" {
+		return fmt.Errorf("create folder returned no id")
+	}
+	w.kamaraFolder = f.ID
+	return nil
+}
+
+func (w *world) kamaraUploadInto(contents, name, slug string) error {
+	resp, err := w.kamaraReq(http.MethodPost, slug, "/v1/files?name="+name+"&folder="+w.kamaraFolder, strings.NewReader(contents))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("upload into folder: status %d: %s", resp.StatusCode, b)
+	}
+	var f struct {
+		ID     string  `json:"id"`
+		Folder *string `json:"folder"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&f); err != nil {
+		return err
+	}
+	if f.Folder == nil || *f.Folder != w.kamaraFolder {
+		return fmt.Errorf("uploaded file folder = %v, want %s", f.Folder, w.kamaraFolder)
+	}
+	w.kamaraFile = f.ID
+	return nil
+}
+
+// kamaraChildFileIDs lists the file ids directly under parent (empty =
+// root) as the given user.
+func (w *world) kamaraChildFileIDs(user, slug, parent string) ([]string, error) {
+	path := "/v1/folders"
+	if parent != "" {
+		path += "?parent=" + parent
+	}
+	resp, err := w.kamaraReqAs(user, http.MethodGet, slug, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("list children: status %d: %s", resp.StatusCode, b)
+	}
+	var out struct {
+		Files []struct {
+			ID string `json:"id"`
+		} `json:"files"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(out.Files))
+	for _, f := range out.Files {
+		ids = append(ids, f.ID)
+	}
+	return ids, nil
+}
+
+func (w *world) kamaraFolderListsFile(slug string) error {
+	ids, err := w.kamaraChildFileIDs("kamara-smoke", slug, w.kamaraFolder)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if id == w.kamaraFile {
+			return nil
+		}
+	}
+	return fmt.Errorf("folder %s does not list file %s (got %v)", w.kamaraFolder, w.kamaraFile, ids)
+}
+
+func (w *world) kamaraIntruderCantListFolder(slug string) error {
+	resp, err := w.kamaraReqAs("kamara-intruder", http.MethodGet, slug, "/v1/folders?parent="+w.kamaraFolder, nil)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		return fmt.Errorf("intruder listing folder: status %d, want 403", resp.StatusCode)
+	}
+	return nil
+}
+
+func (w *world) kamaraMoveFileToRoot(slug string) error {
+	resp, err := w.kamaraReq(http.MethodPost, slug, "/v1/files/"+w.kamaraFile+"/move", strings.NewReader(`{"folder":null}`))
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("move to root: status %d", resp.StatusCode)
+	}
+	ids, err := w.kamaraChildFileIDs("kamara-smoke", slug, "")
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if id == w.kamaraFile {
+			return nil
+		}
+	}
+	return fmt.Errorf("file %s not in root after move (got %v)", w.kamaraFile, ids)
+}
+
+func (w *world) kamaraDeleteFolder(slug string) error {
+	resp, err := w.kamaraReq(http.MethodDelete, slug, "/v1/folders/"+w.kamaraFolder, nil)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("delete folder: status %d", resp.StatusCode)
+	}
+	return nil
+}
+
 // kamaraIntruderDenied proves cross-subject isolation live through real
 // OpenFGA: a second tenant user (no owner tuple) is forbidden from reading,
 // downloading, or deleting the owner's file, and never sees it in a listing.

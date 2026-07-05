@@ -46,6 +46,11 @@ paths:
           required: true
           description: The file's display name.
           schema: { type: string, minLength: 1 }
+        - name: folder
+          in: query
+          required: false
+          description: Destination folder id; omit for the owner's root.
+          schema: { type: string }
       requestBody:
         required: true
         content:
@@ -103,12 +108,129 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /files/{id}/rename:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    post:
+      operationId: renameFile
+      summary: Rename a file (identity/URL unchanged — ADR-0007).
+      requestBody: { $ref: "#/components/requestBodies/Name" }
+      responses:
+        "204": { description: Renamed. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /files/{id}/move:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    post:
+      operationId: moveFile
+      summary: Move a file to another folder (null = root).
+      requestBody: { $ref: "#/components/requestBodies/MoveFile" }
+      responses:
+        "204": { description: Moved. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /folders:
+    get:
+      operationId: listChildren
+      summary: List the folders and files directly under a parent (omit for root).
+      parameters:
+        - name: parent
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: The parent's child folders and files.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Listing" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: createFolder
+      summary: Create a folder under a parent (omit for root).
+      parameters:
+        - name: name
+          in: query
+          required: true
+          schema: { type: string, minLength: 1 }
+        - name: parent
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "201":
+          description: The created folder.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Folder" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /folders/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    delete:
+      operationId: deleteFolder
+      summary: Delete an empty folder (empty-first — Kamara ADR-0002).
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /folders/{id}/rename:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    post:
+      operationId: renameFolder
+      summary: Rename a folder.
+      requestBody: { $ref: "#/components/requestBodies/Name" }
+      responses:
+        "204": { description: Renamed. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /folders/{id}/move:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    post:
+      operationId: moveFolder
+      summary: Move a folder under another parent (null = root); rejects cycles.
+      requestBody: { $ref: "#/components/requestBodies/MoveFolder" }
+      responses:
+        "204": { description: Moved. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
+  requestBodies:
+    Name:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [name]
+            properties:
+              name: { type: string, minLength: 1 }
+    MoveFile:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              folder: { type: [string, "null"], description: Destination folder id; null = root. }
+    MoveFolder:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              parent: { type: [string, "null"], description: Destination parent id; null = root. }
   responses:
     BadRequest:
       description: Malformed request.
@@ -135,17 +257,43 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
+    Conflict:
+      description: The operation conflicts with current state (e.g. folder not empty).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
   schemas:
     File:
       type: object
-      required: [id, name, size, permalink, created, updated]
+      required: [id, name, size, folder, permalink, created, updated]
       properties:
         id: { type: string, description: UUIDv7 identity. }
         name: { type: string }
         size: { type: integer, format: int64, description: Bytes. }
+        folder: { type: [string, "null"], description: Containing folder id; null = root. }
         permalink: { type: string, description: Canonical URL path. }
         created: { type: string, format: date-time }
         updated: { type: string, format: date-time }
+    Folder:
+      type: object
+      required: [id, name, parent, permalink, created, updated]
+      properties:
+        id: { type: string, description: UUIDv7 identity. }
+        name: { type: string }
+        parent: { type: [string, "null"], description: Parent folder id; null = root. }
+        permalink: { type: string, description: Canonical URL path. }
+        created: { type: string, format: date-time }
+        updated: { type: string, format: date-time }
+    Listing:
+      type: object
+      required: [folders, files]
+      properties:
+        folders:
+          type: array
+          items: { $ref: "#/components/schemas/Folder" }
+        files:
+          type: array
+          items: { $ref: "#/components/schemas/File" }
     FileList:
       type: object
       required: [files]

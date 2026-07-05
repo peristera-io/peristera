@@ -38,6 +38,7 @@ type world struct {
 	lastStatus   int
 	kamaraToks   map[string]string // slug → tenant-instance PAT (lazy)
 	kamaraFile   string            // id of the file under test
+	kamaraFolder string            // id of the folder under test
 }
 
 func (w *world) createTenant(slug, displayName string) error {
@@ -516,6 +517,12 @@ func TestFeatures(t *testing.T) {
 			sc.Step(`^another user cannot reach the file in kamara of tenant "([^"]*)"$`, w.kamaraIntruderDenied)
 			sc.Step(`^deleting the file from kamara of tenant "([^"]*)" succeeds$`, w.kamaraDelete)
 			sc.Step(`^the file is not listed in kamara of tenant "([^"]*)"$`, w.kamaraFileNotListed)
+			sc.Step(`^I create a folder "([^"]*)" in kamara of tenant "([^"]*)"$`, w.kamaraCreateFolder)
+			sc.Step(`^I upload "([^"]*)" as "([^"]*)" into that folder in kamara of tenant "([^"]*)"$`, w.kamaraUploadInto)
+			sc.Step(`^that folder lists the file in kamara of tenant "([^"]*)"$`, w.kamaraFolderListsFile)
+			sc.Step(`^another user cannot list that folder in kamara of tenant "([^"]*)"$`, w.kamaraIntruderCantListFolder)
+			sc.Step(`^moving the file to the root in kamara of tenant "([^"]*)" succeeds$`, w.kamaraMoveFileToRoot)
+			sc.Step(`^deleting that folder in kamara of tenant "([^"]*)" succeeds$`, w.kamaraDeleteFolder)
 		},
 		Options: &godog.Options{
 			Format: "pretty", Paths: []string{"features"}, Strict: true, TestingT: t,

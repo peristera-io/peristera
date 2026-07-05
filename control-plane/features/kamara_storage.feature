@@ -16,3 +16,13 @@ Feature: Kamara storage API
     And another user cannot reach the file in kamara of tenant "kam"
     And deleting the file from kamara of tenant "kam" succeeds
     And the file is not listed in kamara of tenant "kam"
+
+  Scenario: Files organize into a folder hierarchy
+    Given a tenant "kam" exists
+    And kamara of tenant "kam" is healthy within 3 minutes
+    When I create a folder "docs" in kamara of tenant "kam"
+    And I upload "in folder" as "report.txt" into that folder in kamara of tenant "kam"
+    Then that folder lists the file in kamara of tenant "kam"
+    And another user cannot list that folder in kamara of tenant "kam"
+    And moving the file to the root in kamara of tenant "kam" succeeds
+    And deleting that folder in kamara of tenant "kam" succeeds
