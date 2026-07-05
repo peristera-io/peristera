@@ -18,11 +18,15 @@ import (
 	"github.com/peristera-io/peristera/kamara/internal/file"
 )
 
-//go:embed style.css
+//go:embed style.css htmx.min.js
 var assets embed.FS
 
 // Stylesheet returns the compiled Tailwind CSS (served at /style.css).
 func Stylesheet() ([]byte, error) { return assets.ReadFile("style.css") }
+
+// Script returns the vendored htmx runtime (served at /htmx.js) — embedded
+// rather than pulled from a CDN, so the origin ships no third-party JS.
+func Script() ([]byte, error) { return assets.ReadFile("htmx.min.js") }
 
 // msg is the string catalog — no hardcoded strings in templates (README §4;
 // EN only for now, FR/DE/LB are targets).
@@ -90,7 +94,7 @@ var pageTmpl = template.Must(template.New("page").Funcs(funcs).Parse(`<!doctype 
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{msg "title"}}</title>
 {{if .Inline}}<style>{{stylesheet}}</style>{{else}}<link rel="stylesheet" href="/style.css">{{end}}
-<script src="https://unpkg.com/htmx.org@2.0.4"></script>
+<script src="/htmx.js" defer></script>
 </head>
 <body class="min-h-screen bg-stone-50 text-stone-900">
 <header class="border-b border-stone-200 bg-white">
@@ -129,7 +133,7 @@ var pageTmpl = template.Must(template.New("page").Funcs(funcs).Parse(`<!doctype 
   <span aria-hidden="true" class="text-stone-400">📄</span>
   <span class="grow font-medium text-stone-900">{{.Name}}</span>
   <span class="text-sm text-stone-500">{{bytes .Size}}</span>
-  <a href="/v1/files/{{.ID}}/content" class="text-sm text-brand underline">{{msg "download"}}</a>
+  <a href="/files/{{.ID}}/download" class="text-sm text-brand underline">{{msg "download"}}</a>
  </li>
  {{end}}
 </ul>

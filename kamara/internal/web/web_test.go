@@ -32,10 +32,11 @@ func TestPageRendersDocument(t *testing.T) {
 		"Projects",                     // breadcrumb
 		"Designs",                      // folder
 		"report.pdf",                   // file
-		"2.0 KiB",                      // humanized size
-		`href="/v1/files/f1/content"`,  // download link
-		`hx-get="/browse?folder=sub"`,  // htmx folder navigation
-		`href="/style.css"`,            // linked stylesheet (not inlined)
+		"2.0 KiB",                       // humanized size
+		`href="/files/f1/download"`,     // cookie-authed download link
+		`hx-get="/browse?folder=sub"`,   // htmx folder navigation
+		`href="/style.css"`,             // linked stylesheet (not inlined)
+		`src="/htmx.js"`,                // vendored htmx (not a CDN)
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("page missing %q", want)

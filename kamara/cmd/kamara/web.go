@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"errors"
+	"log"
 	"net/http"
+	"strconv"
 
 	"github.com/peristera-io/peristera/kamara/internal/file"
 	"github.com/peristera-io/peristera/kamara/internal/web"
@@ -23,12 +25,38 @@ type webApp struct {
 	instance string // the tenant domain (issuer host), the subject's instance
 }
 
-// routes are the guarded browser routes (mounted behind rp.Middleware).
+// routes are the guarded browser routes (mounted behind rp.Middleware). The
+// browser surface is cookie-authed end to end — it never links to the bearer
+// /v1 API (which is for machine callers).
 func (a *webApp) routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /{$}", a.page)     // full page at the root
-	mux.HandleFunc("GET /browse", a.frag)  // htmx fragment (folder navigation)
+	mux.HandleFunc("GET /{$}", a.page)                     // full page at the root
+	mux.HandleFunc("GET /browse", a.frag)                  // htmx fragment (folder navigation)
+	mux.HandleFunc("GET /files/{id}/download", a.download) // cookie-authed download
 	return mux
+}
+
+// download streams a file to the logged-in browser (cookie session), so the
+// UI needs no bearer token. Authorization is the same can_access check.
+func (a *webApp) download(w http.ResponseWriter, r *http.Request) {
+	caller, ok := a.caller(r)
+	if !ok {
+		http.Redirect(w, r, "/auth/login", http.StatusFound)
+		return
+	}
+	id := r.PathValue("id")
+	o, err := a.svc.Get(r.Context(), caller, id) // authorizes + gives the name
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", "attachment; filename="+strconv.Quote(o.Name))
+	if err := a.svc.Download(r.Context(), caller, id, w); err != nil {
+		// Status/bytes may be flushed; only log (a JSON error would corrupt
+		// the stream). Integrity errors are rare.
+		log.Printf("kamara web: download %s: %v", id, err)
+	}
 }
 
 // caller resolves the logged-in browser session to a subject. The relying

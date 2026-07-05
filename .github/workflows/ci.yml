@@ -76,6 +76,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+      - name: Check the stylesheet is regenerated from the templates
+        working-directory: kamara/web
+        run: |
+          npm ci
+          npm run build
+          git -C "$GITHUB_WORKSPACE" diff --exit-code kamara/internal/web/style.css \
+            || { echo "::error::kamara/internal/web/style.css is stale — run 'npm run build' in kamara/web"; exit 1; }
       - name: Render the Kamara page
         working-directory: kamara
         run: go run ./cmd/a11y-render > /tmp/kamara-page.html

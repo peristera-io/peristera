@@ -3,7 +3,7 @@
   "private": true,
   "description": "Tailwind CSS build for the Kamara UI (Peristera design-language pilot). Generates internal/web/style.css, which is go:embed-ed — the runtime image has no Node.",
   "scripts": {
-    "build": "tailwindcss -i input.css -o ../internal/web/style.css --content '../internal/web/**/*.go' --minify"
+    "build": "tailwindcss -i input.css -o ../internal/web/style.css --minify"
   },
   "devDependencies": {
     "@tailwindcss/cli": "^4.3.2",

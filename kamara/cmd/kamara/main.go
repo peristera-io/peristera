@@ -131,6 +131,9 @@ func main() {
 		ClientID:    mustEnv("OIDC_CLIENT_ID"),
 		RedirectURL: publicURL + "/auth/callback",
 		CookieName:  "kamara_session",
+		// Mark cookies Secure when served over HTTPS so the session isn't
+		// transmitted over plaintext (dev on http keeps it usable).
+		Secure: strings.HasPrefix(publicURL, "https://"),
 	})
 	if err != nil {
 		log.Fatalf("oidc: %v", err)
@@ -140,6 +143,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) })
 	mux.HandleFunc("GET /style.css", serveCSS)
+	mux.HandleFunc("GET /htmx.js", serveJS)
 	mux.Handle("/v1/", h.Routes()) // bearer API (authed inside)
 	mux.HandleFunc("GET /auth/login", rp.Login)
 	mux.HandleFunc("GET /auth/callback", rp.Callback)
@@ -196,6 +200,18 @@ func serveCSS(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/css; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=3600")
 	_, _ = w.Write(css)
+}
+
+// serveJS serves the vendored, embedded htmx runtime (no CDN).
+func serveJS(w http.ResponseWriter, _ *http.Request) {
+	js, err := web.Script()
+	if err != nil {
+		http.Error(w, "script unavailable", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	_, _ = w.Write(js)
 }
 
 func issuerHost(issuer string) string {
