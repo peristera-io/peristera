@@ -1,0 +1,6 @@
+# Keep image build contexts lean. node_modules (Tailwind CLI, Playwright)
+# are dev/CI-only — the runtime binaries embed their generated assets.
+**/node_modules
+.git
+.dev-secrets
+**/*_test.go

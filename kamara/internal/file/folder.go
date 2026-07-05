@@ -100,6 +100,35 @@ func (s *Service) ListChildren(ctx context.Context, caller pii.Subject, folder *
 	return Listing{Folders: folders, Files: files}, nil
 }
 
+// Ancestors returns the folder and its ancestors root-first (for a
+// breadcrumb), after an access check on the folder. The visited-set guards
+// against a malformed cycle.
+func (s *Service) Ancestors(ctx context.Context, caller pii.Subject, folderID string) ([]Folder, error) {
+	if err := s.authorizeFolder(ctx, caller, folderID); err != nil {
+		return nil, err
+	}
+	rd := s.tx.Reader()
+	var chain []Folder
+	seen := map[string]bool{}
+	cur := &folderID
+	for cur != nil && !seen[*cur] {
+		seen[*cur] = true
+		f, ok, err := rd.Objects.GetFolder(ctx, *cur)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			break
+		}
+		chain = append(chain, f)
+		cur = f.ParentID
+	}
+	for i, j := 0, len(chain)-1; i < j; i, j = i+1, j-1 {
+		chain[i], chain[j] = chain[j], chain[i]
+	}
+	return chain, nil
+}
+
 // RenameFile changes a file's display name.
 func (s *Service) RenameFile(ctx context.Context, caller pii.Subject, objectID, name string) error {
 	if name == "" {

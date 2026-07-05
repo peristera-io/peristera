@@ -15,13 +15,16 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 
 	"github.com/peristera-io/peristera/kamara/internal/api"
 	"github.com/peristera-io/peristera/kamara/internal/blob"
 	"github.com/peristera-io/peristera/kamara/internal/crypto"
 	"github.com/peristera-io/peristera/kamara/internal/file"
 	"github.com/peristera-io/peristera/kamara/internal/store"
+	"github.com/peristera-io/peristera/kamara/internal/web"
 	"github.com/peristera-io/peristera/lib/authz"
+	"github.com/peristera-io/peristera/lib/oidcrp"
 	"github.com/peristera-io/peristera/lib/pii"
 )
 
@@ -120,9 +123,28 @@ func main() {
 	auth := api.NewUserinfoAuth(issuer, instance, 0)
 	h := api.New(svc, auth, 0)
 
+	// Browser UI: the OIDC relying-party (cookie session) beside the bearer
+	// API — same service, two front doors. Both resolve to a pii.Subject.
+	publicURL := strings.TrimSuffix(env("PUBLIC_URL", "http://localhost:5580"), "/")
+	rp, err := oidcrp.New(ctx, oidcrp.Config{
+		Issuer:      issuer,
+		ClientID:    mustEnv("OIDC_CLIENT_ID"),
+		RedirectURL: publicURL + "/auth/callback",
+		CookieName:  "kamara_session",
+	})
+	if err != nil {
+		log.Fatalf("oidc: %v", err)
+	}
+	app := &webApp{svc: svc, rp: rp, instance: instance}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) })
-	mux.Handle("/v1/", h.Routes())
+	mux.HandleFunc("GET /style.css", serveCSS)
+	mux.Handle("/v1/", h.Routes()) // bearer API (authed inside)
+	mux.HandleFunc("GET /auth/login", rp.Login)
+	mux.HandleFunc("GET /auth/callback", rp.Callback)
+	mux.HandleFunc("GET /auth/logout", rp.Logout)
+	mux.Handle("/", rp.Middleware(app.routes(), rp.RedirectToLogin("/auth/login")))
 
 	addr := env("LISTEN_ADDR", ":5580")
 	log.Printf("kamara on %s (issuer %s)", addr, issuer)
@@ -161,6 +183,19 @@ func decodeKey(b []byte) []byte {
 		log.Fatalf("dek: not %d raw bytes and not valid base64: %v", crypto.KeySize, err)
 	}
 	return dec
+}
+
+// serveCSS serves the embedded Tailwind stylesheet (unauthenticated — the
+// login page needs it too), with a content type and long cache.
+func serveCSS(w http.ResponseWriter, _ *http.Request) {
+	css, err := web.Stylesheet()
+	if err != nil {
+		http.Error(w, "stylesheet unavailable", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	_, _ = w.Write(css)
 }
 
 func issuerHost(issuer string) string {

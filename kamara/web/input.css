@@ -1,0 +1,12 @@
+@import "tailwindcss";
+
+/* Scan the Go templates for utility classes (Tailwind v4 content source). */
+@source "../internal/web/*.go";
+
+/* Peristera design language — seed tokens (Q&A R9). Kept minimal and named
+   so they can be lifted into a shared preset later. Kamara is the pilot;
+   other apps adopt these tokens when the shared design system is built. */
+@theme {
+  --color-brand: #0f766e; /* teal-700 — the Peristera accent */
+  --radius-base: 0.5rem;
+}

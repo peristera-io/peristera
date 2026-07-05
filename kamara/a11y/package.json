@@ -1,0 +1,13 @@
+{
+  "name": "kamara-a11y",
+  "private": true,
+  "description": "Accessibility check for the Kamara UI (axe-core via Playwright).",
+  "type": "module",
+  "scripts": {
+    "check": "node check.mjs"
+  },
+  "dependencies": {
+    "axe-core": "^4.10.2",
+    "playwright": "^1.61.1"
+  }
+}
