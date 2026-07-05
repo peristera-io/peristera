@@ -32,13 +32,31 @@ type CatalogApp struct {
 	// NeedsOpenFGA gives the app the tenant's per-namespace OpenFGA
 	// (ADR-0010) and injects OPENFGA_API_URL.
 	NeedsOpenFGA bool
+	// NeedsBlob provisions a per-tenant PersistentVolumeClaim for the app's
+	// content-addressed blob store and mounts it at KAMARA_BLOB_DIR (the
+	// first stateful-beyond-Postgres catalog app — Kamara, ADR-0013/SPEC §4).
+	NeedsBlob bool
+	// NeedsDEK generates a per-tenant data-encryption key as a Secret and
+	// mounts it at KAMARA_DEK_FILE — the seed of the per-tenant key
+	// hierarchy for at-rest chunk encryption (Kamara SPEC §6, ADR-0009 §6).
+	NeedsDEK bool
 }
 
 var catalog = []CatalogApp{
 	{Name: "stub", Image: "peristera-stub:dev", Port: 5556},
 	{Name: "ergonomos", Image: "peristera-ergonomos:dev", Port: 5570,
 		NeedsDatabase: true, NeedsOpenFGA: true},
+	{Name: "kamara", Image: "peristera-kamara:dev", Port: 5580,
+		NeedsDatabase: true, NeedsOpenFGA: true, NeedsBlob: true, NeedsDEK: true},
 }
+
+// Blob and DEK mount points inside the app pod; the app reads these paths
+// from KAMARA_BLOB_DIR / KAMARA_DEK_FILE.
+const (
+	blobMountPath = "/mnt/kamara-blob"
+	dekMountPath  = "/mnt/kamara-dek"
+	dekFileName   = "dek"
+)
 
 // anyAppNeedsOpenFGA reports whether the catalog requires the per-tenant
 // OpenFGA to be provisioned.
@@ -110,19 +128,56 @@ func (r *TenantReconciler) ensureApps(ctx context.Context, tenant *v1alpha1.Tena
 			})
 		}
 
+		// Stateful extras (Kamara): a per-tenant blob PVC and a per-tenant
+		// DEK Secret, mounted into the pod. Provisioned before the
+		// Deployment references them (the pod stays Pending until they bind).
+		var volumes []corev1.Volume
+		var mounts []corev1.VolumeMount
+		if app.NeedsBlob {
+			if err := r.ensureBlob(ctx, tenant, ns, app.Name); err != nil {
+				return err
+			}
+			env = append(env, corev1.EnvVar{Name: "KAMARA_BLOB_DIR", Value: blobMountPath})
+			volumes = append(volumes, corev1.Volume{
+				Name: "blob",
+				VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: app.Name + "-blob",
+				}},
+			})
+			mounts = append(mounts, corev1.VolumeMount{Name: "blob", MountPath: blobMountPath})
+		}
+		if app.NeedsDEK {
+			if err := r.ensureDEK(ctx, tenant, ns, app.Name); err != nil {
+				return err
+			}
+			env = append(env, corev1.EnvVar{Name: "KAMARA_DEK_FILE", Value: dekMountPath + "/" + dekFileName})
+			volumes = append(volumes, corev1.Volume{
+				Name: "dek",
+				VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+					SecretName: app.Name + "-dek",
+					Items:      []corev1.KeyToPath{{Key: dekFileName, Path: dekFileName}},
+				}},
+			})
+			mounts = append(mounts, corev1.VolumeMount{Name: "dek", MountPath: dekMountPath, ReadOnly: true})
+		}
+
 		deploy := &appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: ns, Labels: labels},
 			Spec: appsv1.DeploymentSpec{
 				Selector: &metav1.LabelSelector{MatchLabels: labels},
 				Template: corev1.PodTemplateSpec{
 					ObjectMeta: metav1.ObjectMeta{Labels: labels},
-					Spec: corev1.PodSpec{Containers: []corev1.Container{{
-						Name:            app.Name,
-						Image:           app.Image,
-						ImagePullPolicy: corev1.PullIfNotPresent,
-						Ports:           []corev1.ContainerPort{{ContainerPort: app.Port}},
-						Env:             env,
-					}}},
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{{
+							Name:            app.Name,
+							Image:           app.Image,
+							ImagePullPolicy: corev1.PullIfNotPresent,
+							Ports:           []corev1.ContainerPort{{ContainerPort: app.Port}},
+							Env:             env,
+							VolumeMounts:    mounts,
+						}},
+						Volumes: volumes,
+					},
 				},
 			},
 		}

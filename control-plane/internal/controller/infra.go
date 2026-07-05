@@ -2,12 +2,15 @@ package controller
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"net/url"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -17,6 +20,14 @@ import (
 
 	"github.com/peristera-io/peristera/control-plane/apis/v1alpha1"
 )
+
+// blobVolumeSize is the per-tenant blob PVC request. Dev sizing; a
+// per-plan size and a logical quota are a SaaS-era concern (issue #27).
+const blobVolumeSize = "10Gi"
+
+// dekKeySize is the data-encryption-key length (XChaCha20-Poly1305 key,
+// crypto.KeySize). Kept here to avoid the control plane importing Kamara.
+const dekKeySize = 32
 
 // cnpgDatabaseGVK is CloudNativePG's declarative managed-database resource
 // (a database inside an existing Cluster).
@@ -170,6 +181,52 @@ func (r *TenantReconciler) ensureOpenFGA(ctx context.Context, tenant *v1alpha1.T
 		}
 	}
 	return nil
+}
+
+// ensureBlob provisions a per-tenant PersistentVolumeClaim for an app's
+// content-addressed blob store (Kamara). Create-only, like the rest of app
+// provisioning; the tenant owns it so off-boarding garbage-collects it.
+func (r *TenantReconciler) ensureBlob(ctx context.Context, tenant *v1alpha1.Tenant, ns, app string) error {
+	name := app + "-blob"
+	if err := r.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, &corev1.PersistentVolumeClaim{}); err == nil {
+		return nil
+	} else if !apierrors.IsNotFound(err) {
+		return err
+	}
+	pvc := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+			Resources: corev1.VolumeResourceRequirements{
+				Requests: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse(blobVolumeSize)},
+			},
+		},
+	}
+	return r.setOwnerAndCreate(ctx, tenant, pvc)
+}
+
+// ensureDEK generates a per-tenant data-encryption key as a Secret (Kamara,
+// ADR-0009 §6). The key is stored base64-encoded so the mounted file is
+// text — no binary/trailing-newline ambiguity when the app reads it. This
+// is the seed of the per-tenant key hierarchy; deleting the Secret is
+// whole-tenant crypto-shredding. Generated once, never rotated here (key
+// rotation is a later hardening).
+func (r *TenantReconciler) ensureDEK(ctx context.Context, tenant *v1alpha1.Tenant, ns, app string) error {
+	name := app + "-dek"
+	if err := r.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, &corev1.Secret{}); err == nil {
+		return nil
+	} else if !apierrors.IsNotFound(err) {
+		return err
+	}
+	key := make([]byte, dekKeySize)
+	if _, err := rand.Read(key); err != nil {
+		return fmt.Errorf("generating DEK: %w", err)
+	}
+	sec := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+		StringData: map[string]string{dekFileName: base64.StdEncoding.EncodeToString(key)},
+	}
+	return r.setOwnerAndCreate(ctx, tenant, sec)
 }
 
 // setOwnerAndCreate stamps the tenant as owner (for GC on off-boarding)
