@@ -134,6 +134,24 @@ func (c *Client) Delete(ctx context.Context, user pii.Subject, relation, object 
 	}, nil)
 }
 
+// WriteObjectTuple records an object-to-object relation — the "user" is a
+// fully-qualified object (e.g. "kamara/folder:<id>"), not a subject. Used
+// for containment edges (a file/folder's parent folder) that drive
+// inherited access. Build the object with Obj.
+func (c *Client) WriteObjectTuple(ctx context.Context, user, relation, object string) error {
+	return c.do(ctx, http.MethodPost, "/stores/"+c.storeID+"/write", map[string]any{
+		"writes": map[string]any{"tuple_keys": []any{rawTuple(user, relation, object)}},
+	}, nil)
+}
+
+// DeleteObjectTuple removes an object-to-object relation (e.g. on move or
+// delete). See WriteObjectTuple.
+func (c *Client) DeleteObjectTuple(ctx context.Context, user, relation, object string) error {
+	return c.do(ctx, http.MethodPost, "/stores/"+c.storeID+"/write", map[string]any{
+		"deletes": map[string]any{"tuple_keys": []any{rawTuple(user, relation, object)}},
+	}, nil)
+}
+
 // Check answers whether user has relation on object — the authorization
 // decision. OpenFGA is the sole source of truth (ADR-0010 §4).
 func (c *Client) Check(ctx context.Context, user pii.Subject, relation, object string) (bool, error) {
@@ -179,8 +197,12 @@ func (c *Client) ListObjects(ctx context.Context, user pii.Subject, relation, ob
 }
 
 func tuple(user pii.Subject, relation, object string) map[string]any {
+	return rawTuple(user.OpenFGAObject(), relation, object)
+}
+
+func rawTuple(user, relation, object string) map[string]any {
 	return map[string]any{
-		"user":     user.OpenFGAObject(),
+		"user":     user,
 		"relation": relation,
 		"object":   object,
 	}

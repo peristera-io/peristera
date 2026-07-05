@@ -18,18 +18,38 @@ import (
 // dbtx.Executor (root ADR-0015).
 type ObjectRepo struct{ db dbtx.Executor }
 
-const objCols = `id, owner_instance, owner_user, name, size, created_at, updated_at`
+const objCols = `id, owner_instance, owner_user, name, size, folder_id, created_at, updated_at`
+
+func nullToPtr(ns sql.NullString) *string {
+	if !ns.Valid {
+		return nil
+	}
+	s := ns.String
+	return &s
+}
 
 func scanObject(row interface{ Scan(...any) error }) (file.Object, error) {
 	var o file.Object
-	err := row.Scan(&o.ID, &o.Owner.Instance, &o.Owner.UserID, &o.Name, &o.Size, &o.Created, &o.Updated)
+	var folder sql.NullString
+	err := row.Scan(&o.ID, &o.Owner.Instance, &o.Owner.UserID, &o.Name, &o.Size, &folder, &o.Created, &o.Updated)
+	o.FolderID = nullToPtr(folder)
 	return o, err
 }
 
 func (r *ObjectRepo) InsertObject(ctx context.Context, o file.Object) error {
 	_, err := r.db.ExecContext(ctx,
-		`INSERT INTO objects (`+objCols+`) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-		o.ID, o.Owner.Instance, o.Owner.UserID, o.Name, o.Size, o.Created, o.Updated)
+		`INSERT INTO objects (`+objCols+`) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+		o.ID, o.Owner.Instance, o.Owner.UserID, o.Name, o.Size, o.FolderID, o.Created, o.Updated)
+	return err
+}
+
+func (r *ObjectRepo) SetObjectFolder(ctx context.Context, id string, folderID *string) error {
+	_, err := r.db.ExecContext(ctx, `UPDATE objects SET folder_id=$2, updated_at=now() WHERE id=$1`, id, folderID)
+	return err
+}
+
+func (r *ObjectRepo) SetObjectName(ctx context.Context, id, name string) error {
+	_, err := r.db.ExecContext(ctx, `UPDATE objects SET name=$2, updated_at=now() WHERE id=$1`, id, name)
 	return err
 }
 
@@ -197,6 +217,107 @@ func (r *ObjectRepo) DeleteChunks(ctx context.Context, hashes []string) error {
 	}
 	_, err := r.db.ExecContext(ctx, `DELETE FROM chunks WHERE hash = ANY($1)`, hashes)
 	return err
+}
+
+// --- folders (Kamara ADR-0002) ---
+
+const folderCols = `id, owner_instance, owner_user, parent_id, name, created_at, updated_at`
+
+func scanFolder(row interface{ Scan(...any) error }) (file.Folder, error) {
+	var f file.Folder
+	var parent sql.NullString
+	err := row.Scan(&f.ID, &f.Owner.Instance, &f.Owner.UserID, &parent, &f.Name, &f.Created, &f.Updated)
+	f.ParentID = nullToPtr(parent)
+	return f, err
+}
+
+func (r *ObjectRepo) InsertFolder(ctx context.Context, f file.Folder) error {
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO folders (`+folderCols+`) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+		f.ID, f.Owner.Instance, f.Owner.UserID, f.ParentID, f.Name, f.Created, f.Updated)
+	return err
+}
+
+func (r *ObjectRepo) GetFolder(ctx context.Context, id string) (file.Folder, bool, error) {
+	f, err := scanFolder(r.db.QueryRowContext(ctx, `SELECT `+folderCols+` FROM folders WHERE id=$1`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return file.Folder{}, false, nil
+	}
+	return f, err == nil, err
+}
+
+func (r *ObjectRepo) FoldersInParent(ctx context.Context, owner pii.Subject, parent *string) ([]file.Folder, error) {
+	// IS NOT DISTINCT FROM matches a NULL parent (root) as well as a value.
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+folderCols+` FROM folders
+		  WHERE owner_instance=$1 AND owner_user=$2 AND parent_id IS NOT DISTINCT FROM $3::text
+		  ORDER BY name`, owner.Instance, owner.UserID, parent)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []file.Folder
+	for rows.Next() {
+		f, err := scanFolder(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+func (r *ObjectRepo) ObjectsInFolder(ctx context.Context, owner pii.Subject, folder *string) ([]file.Object, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+objCols+` FROM objects
+		  WHERE owner_instance=$1 AND owner_user=$2 AND folder_id IS NOT DISTINCT FROM $3::text
+		  ORDER BY name`, owner.Instance, owner.UserID, folder)
+	if err != nil {
+		return nil, err
+	}
+	return collectObjects(rows)
+}
+
+func (r *ObjectRepo) FolderHasChildren(ctx context.Context, id string) (bool, error) {
+	var has bool
+	err := r.db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM folders WHERE parent_id=$1)
+		     OR EXISTS(SELECT 1 FROM objects WHERE folder_id=$1)`, id).Scan(&has)
+	return has, err
+}
+
+func (r *ObjectRepo) SetFolderParent(ctx context.Context, id string, parent *string) error {
+	_, err := r.db.ExecContext(ctx, `UPDATE folders SET parent_id=$2, updated_at=now() WHERE id=$1`, id, parent)
+	return err
+}
+
+func (r *ObjectRepo) SetFolderName(ctx context.Context, id, name string) error {
+	_, err := r.db.ExecContext(ctx, `UPDATE folders SET name=$2, updated_at=now() WHERE id=$1`, id, name)
+	return err
+}
+
+func (r *ObjectRepo) DeleteFolder(ctx context.Context, id string) error {
+	_, err := r.db.ExecContext(ctx, `DELETE FROM folders WHERE id=$1`, id)
+	return err
+}
+
+func (r *ObjectRepo) FoldersByOwner(ctx context.Context, owner pii.Subject) ([]file.Folder, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+folderCols+` FROM folders WHERE owner_instance=$1 AND owner_user=$2 ORDER BY created_at`,
+		owner.Instance, owner.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []file.Folder
+	for rows.Next() {
+		f, err := scanFolder(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
 }
 
 var _ file.Repo = (*ObjectRepo)(nil)

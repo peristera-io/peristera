@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	crand "crypto/rand"
+	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/peristera-io/peristera/kamara/internal/blob"
@@ -19,12 +21,20 @@ import (
 
 type memRepo struct {
 	objs      map[string]Object
+	folders   map[string]Folder
 	manifests map[string][]engine.ChunkRef // objectID → refs
 	refCount  map[string]int               // chunk hash → ref count
 }
 
 func newMemRepo() *memRepo {
-	return &memRepo{objs: map[string]Object{}, manifests: map[string][]engine.ChunkRef{}, refCount: map[string]int{}}
+	return &memRepo{objs: map[string]Object{}, folders: map[string]Folder{}, manifests: map[string][]engine.ChunkRef{}, refCount: map[string]int{}}
+}
+
+func ptrEq(a, b *string) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }
 
 func (m *memRepo) InsertObject(_ context.Context, o Object) error { m.objs[o.ID] = o; return nil }
@@ -85,51 +95,155 @@ func (m *memRepo) DecRef(_ context.Context, hashes []string) ([]string, error) {
 }
 func (m *memRepo) DeleteChunks(_ context.Context, _ []string) error { return nil }
 
+func (m *memRepo) SetObjectFolder(_ context.Context, id string, folder *string) error {
+	o := m.objs[id]
+	o.FolderID = folder
+	m.objs[id] = o
+	return nil
+}
+func (m *memRepo) SetObjectName(_ context.Context, id, name string) error {
+	o := m.objs[id]
+	o.Name = name
+	m.objs[id] = o
+	return nil
+}
+func (m *memRepo) InsertFolder(_ context.Context, f Folder) error { m.folders[f.ID] = f; return nil }
+func (m *memRepo) GetFolder(_ context.Context, id string) (Folder, bool, error) {
+	f, ok := m.folders[id]
+	return f, ok, nil
+}
+func (m *memRepo) FoldersInParent(_ context.Context, owner pii.Subject, parent *string) ([]Folder, error) {
+	var out []Folder
+	for _, f := range m.folders {
+		if f.Owner == owner && ptrEq(f.ParentID, parent) {
+			out = append(out, f)
+		}
+	}
+	return out, nil
+}
+func (m *memRepo) ObjectsInFolder(_ context.Context, owner pii.Subject, folder *string) ([]Object, error) {
+	var out []Object
+	for _, o := range m.objs {
+		if o.Owner == owner && ptrEq(o.FolderID, folder) {
+			out = append(out, o)
+		}
+	}
+	return out, nil
+}
+func (m *memRepo) FolderHasChildren(_ context.Context, id string) (bool, error) {
+	for _, f := range m.folders {
+		if f.ParentID != nil && *f.ParentID == id {
+			return true, nil
+		}
+	}
+	for _, o := range m.objs {
+		if o.FolderID != nil && *o.FolderID == id {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+func (m *memRepo) SetFolderParent(_ context.Context, id string, parent *string) error {
+	f := m.folders[id]
+	f.ParentID = parent
+	m.folders[id] = f
+	return nil
+}
+func (m *memRepo) SetFolderName(_ context.Context, id, name string) error {
+	f := m.folders[id]
+	f.Name = name
+	m.folders[id] = f
+	return nil
+}
+func (m *memRepo) DeleteFolder(_ context.Context, id string) error { delete(m.folders, id); return nil }
+func (m *memRepo) FoldersByOwner(_ context.Context, owner pii.Subject) ([]Folder, error) {
+	var out []Folder
+	for _, f := range m.folders {
+		if f.Owner == owner {
+			out = append(out, f)
+		}
+	}
+	return out, nil
+}
+
 var _ Repo = (*memRepo)(nil)
 
-// --- in-memory authz ---
+// --- in-memory authz (models the OpenFGA can_access = owner or via parent) ---
 
-type memAuthz struct{ tuples map[string]bool }
+type memAuthz struct {
+	owners  map[string]map[string]bool // object → set of owner subject strings
+	parents map[string]string          // child object → parent object
+}
 
-func newMemAuthz() *memAuthz                  { return &memAuthz{tuples: map[string]bool{}} }
-func k(u pii.Subject, rel, obj string) string { return obj + "|" + rel + "|" + u.String() }
-func (a *memAuthz) Write(_ context.Context, u pii.Subject, rel, obj string) error {
-	a.tuples[k(u, rel, obj)] = true
+func newMemAuthz() *memAuthz {
+	return &memAuthz{owners: map[string]map[string]bool{}, parents: map[string]string{}}
+}
+
+func (a *memAuthz) Write(_ context.Context, u pii.Subject, _, obj string) error {
+	if a.owners[obj] == nil {
+		a.owners[obj] = map[string]bool{}
+	}
+	a.owners[obj][u.OpenFGAObject()] = true
 	return nil
 }
-func (a *memAuthz) Delete(_ context.Context, u pii.Subject, rel, obj string) error {
-	delete(a.tuples, k(u, rel, obj))
+func (a *memAuthz) Delete(_ context.Context, u pii.Subject, _, obj string) error {
+	if s := a.owners[obj]; s != nil {
+		delete(s, u.OpenFGAObject())
+	}
 	return nil
+}
+func (a *memAuthz) WriteObjectTuple(_ context.Context, parent, _, child string) error {
+	a.parents[child] = parent
+	return nil
+}
+func (a *memAuthz) DeleteObjectTuple(_ context.Context, parent, _, child string) error {
+	if a.parents[child] == parent {
+		delete(a.parents, child)
+	}
+	return nil
+}
+func (a *memAuthz) canAccess(userStr, obj string) bool {
+	if a.owners[obj][userStr] {
+		return true
+	}
+	if p, ok := a.parents[obj]; ok {
+		return a.canAccess(userStr, p)
+	}
+	return false
 }
 func (a *memAuthz) Check(_ context.Context, u pii.Subject, rel, obj string) (bool, error) {
-	return a.tuples[k(u, rel, obj)], nil
+	us := u.OpenFGAObject()
+	if rel == Relation { // direct owner
+		return a.owners[obj][us], nil
+	}
+	return a.canAccess(us, obj), nil // AccessRelation (can_access)
 }
 func (a *memAuthz) ListObjects(_ context.Context, u pii.Subject, rel, typ string) ([]string, error) {
+	us := u.OpenFGAObject()
+	prefix := typ + ":"
+	seen := map[string]bool{}
 	var ids []string
-	for key := range a.tuples {
-		o, r, us, ok := split3(key)
-		if ok && r == rel && us == u.String() && len(o) > len(typ) && o[:len(typ)+1] == typ+":" {
-			ids = append(ids, o[len(typ)+1:])
+	consider := func(obj string) {
+		if seen[obj] || !strings.HasPrefix(obj, prefix) {
+			return
 		}
+		seen[obj] = true
+		ok := a.canAccess(us, obj)
+		if rel == Relation {
+			ok = a.owners[obj][us]
+		}
+		if ok {
+			ids = append(ids, obj[len(prefix):])
+		}
+	}
+	for obj := range a.owners {
+		consider(obj)
+	}
+	for obj := range a.parents {
+		consider(obj)
 	}
 	slices.Sort(ids)
 	return ids, nil
-}
-
-func split3(s string) (a, b, c string, ok bool) {
-	var parts []string
-	start := 0
-	for i := 0; i < len(s); i++ {
-		if s[i] == '|' {
-			parts = append(parts, s[start:i])
-			start = i + 1
-		}
-	}
-	parts = append(parts, s[start:])
-	if len(parts) != 3 {
-		return "", "", "", false
-	}
-	return parts[0], parts[1], parts[2], true
 }
 
 // --- tx + conventions ---
@@ -179,7 +293,7 @@ func TestUploadDownloadRoundTrip(t *testing.T) {
 	alice := pii.Subject{Instance: "demo.example", UserID: "alice"}
 	content := bytes.Repeat([]byte("kamara "), 500_000) // ~3.5 MB
 
-	o, err := svc.Upload(ctx, alice, "notes.txt", bytes.NewReader(content))
+	o, err := svc.Upload(ctx, alice, nil, "notes.txt", bytes.NewReader(content))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,8 +323,8 @@ func TestListIsPermissionFiltered(t *testing.T) {
 	alice := pii.Subject{Instance: "demo.example", UserID: "alice"}
 	bob := pii.Subject{Instance: "demo.example", UserID: "bob"}
 
-	a, _ := svc.Upload(ctx, alice, "a.txt", bytes.NewReader([]byte("a")))
-	_, _ = svc.Upload(ctx, bob, "b.txt", bytes.NewReader([]byte("b")))
+	a, _ := svc.Upload(ctx, alice, nil, "a.txt", bytes.NewReader([]byte("a")))
+	_, _ = svc.Upload(ctx, bob, nil, "b.txt", bytes.NewReader([]byte("b")))
 
 	got, err := svc.List(ctx, alice)
 	if err != nil {
@@ -226,7 +340,7 @@ func TestUnauthorizedDownloadAndDelete(t *testing.T) {
 	svc, _, _, _, _, _, _ := newService(t)
 	alice := pii.Subject{Instance: "demo.example", UserID: "alice"}
 	bob := pii.Subject{Instance: "demo.example", UserID: "bob"}
-	o, _ := svc.Upload(ctx, alice, "secret.txt", bytes.NewReader([]byte("secret")))
+	o, _ := svc.Upload(ctx, alice, nil, "secret.txt", bytes.NewReader([]byte("secret")))
 
 	if err := svc.Download(ctx, bob, o.ID, &bytes.Buffer{}); err == nil {
 		t.Error("bob must not download alice's file")
@@ -241,7 +355,7 @@ func TestDeleteReclaimsChunks(t *testing.T) {
 	svc, _, repo, _, _, _, blobs := newService(t)
 	alice := pii.Subject{Instance: "demo.example", UserID: "alice"}
 	content := bytes.Repeat([]byte("x"), 2_000_000)
-	o, _ := svc.Upload(ctx, alice, "f.bin", bytes.NewReader(content))
+	o, _ := svc.Upload(ctx, alice, nil, "f.bin", bytes.NewReader(content))
 
 	hashes, _ := repo.ChunkHashesOf(ctx, o.ID)
 	if len(hashes) == 0 {
@@ -267,8 +381,8 @@ func TestDedupKeepsSharedChunks(t *testing.T) {
 	alice := pii.Subject{Instance: "demo.example", UserID: "alice"}
 	content := bytes.Repeat([]byte("shared"), 400_000)
 
-	o1, _ := svc.Upload(ctx, alice, "one.txt", bytes.NewReader(content))
-	o2, _ := svc.Upload(ctx, alice, "two.txt", bytes.NewReader(content))
+	o1, _ := svc.Upload(ctx, alice, nil, "one.txt", bytes.NewReader(content))
+	o2, _ := svc.Upload(ctx, alice, nil, "two.txt", bytes.NewReader(content))
 
 	// Deleting one copy must NOT remove the shared chunks (ref_count > 0),
 	// so the other copy still downloads.
@@ -285,18 +399,133 @@ func TestDedupKeepsSharedChunks(t *testing.T) {
 	_ = blobs
 }
 
+func TestFolderCreateUploadAndList(t *testing.T) {
+	ctx := context.Background()
+	svc, _, _, _, _, _, _ := newService(t)
+	alice := pii.Subject{Instance: "demo.example", UserID: "alice"}
+
+	f, err := svc.CreateFolder(ctx, alice, nil, "docs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fID := f.ID
+	o, err := svc.Upload(ctx, alice, &fID, "in-folder.txt", bytes.NewReader([]byte("x")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Root shows the folder, not the file (the file lives in the folder).
+	root, _ := svc.ListChildren(ctx, alice, nil)
+	if len(root.Folders) != 1 || root.Folders[0].ID != f.ID {
+		t.Errorf("root folders = %+v", root.Folders)
+	}
+	if len(root.Files) != 0 {
+		t.Errorf("root should have no files, got %+v", root.Files)
+	}
+	// The folder shows the file.
+	in, _ := svc.ListChildren(ctx, alice, &fID)
+	if len(in.Files) != 1 || in.Files[0].ID != o.ID {
+		t.Errorf("folder files = %+v", in.Files)
+	}
+}
+
+func TestFolderAccessIsInherited(t *testing.T) {
+	ctx := context.Background()
+	svc, _, _, _, _, _, _ := newService(t)
+	alice := pii.Subject{Instance: "demo.example", UserID: "alice"}
+	bob := pii.Subject{Instance: "demo.example", UserID: "bob"}
+
+	f, _ := svc.CreateFolder(ctx, alice, nil, "private")
+	fID := f.ID
+	o, _ := svc.Upload(ctx, alice, &fID, "secret.txt", bytes.NewReader([]byte("s")))
+
+	// Owner reaches the file via folder inheritance.
+	if err := svc.Download(ctx, alice, o.ID, &bytes.Buffer{}); err != nil {
+		t.Fatalf("owner denied own file: %v", err)
+	}
+	// A stranger reaches neither the folder nor the inherited file.
+	if _, err := svc.ListChildren(ctx, bob, &fID); err == nil {
+		t.Error("bob listed alice's folder")
+	}
+	if err := svc.Download(ctx, bob, o.ID, &bytes.Buffer{}); err == nil {
+		t.Error("bob downloaded a file in alice's folder")
+	}
+}
+
+func TestMoveFileBetweenFolders(t *testing.T) {
+	ctx := context.Background()
+	svc, _, _, _, _, _, _ := newService(t)
+	alice := pii.Subject{Instance: "demo.example", UserID: "alice"}
+	a, _ := svc.CreateFolder(ctx, alice, nil, "a")
+	b, _ := svc.CreateFolder(ctx, alice, nil, "b")
+	aID, bID := a.ID, b.ID
+	o, _ := svc.Upload(ctx, alice, &aID, "f.txt", bytes.NewReader([]byte("x")))
+
+	if err := svc.MoveFile(ctx, alice, o.ID, &bID); err != nil {
+		t.Fatal(err)
+	}
+	inA, _ := svc.ListChildren(ctx, alice, &aID)
+	inB, _ := svc.ListChildren(ctx, alice, &bID)
+	if len(inA.Files) != 0 || len(inB.Files) != 1 || inB.Files[0].ID != o.ID {
+		t.Errorf("after move: A=%+v B=%+v", inA.Files, inB.Files)
+	}
+	// Access still resolves (inherited via the new parent).
+	if err := svc.Download(ctx, alice, o.ID, &bytes.Buffer{}); err != nil {
+		t.Errorf("owner lost access after move: %v", err)
+	}
+}
+
+func TestFolderDeleteIsEmptyFirst(t *testing.T) {
+	ctx := context.Background()
+	svc, _, _, _, _, _, _ := newService(t)
+	alice := pii.Subject{Instance: "demo.example", UserID: "alice"}
+	f, _ := svc.CreateFolder(ctx, alice, nil, "d")
+	fID := f.ID
+	o, _ := svc.Upload(ctx, alice, &fID, "f.txt", bytes.NewReader([]byte("x")))
+
+	if err := svc.DeleteFolder(ctx, alice, f.ID); !errorsIs(err, ErrNotEmpty) {
+		t.Errorf("delete non-empty folder: got %v, want ErrNotEmpty", err)
+	}
+	if err := svc.Delete(ctx, alice, o.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DeleteFolder(ctx, alice, f.ID); err != nil {
+		t.Errorf("delete emptied folder: %v", err)
+	}
+}
+
+func TestFolderMoveCyclePrevented(t *testing.T) {
+	ctx := context.Background()
+	svc, _, _, _, _, _, _ := newService(t)
+	alice := pii.Subject{Instance: "demo.example", UserID: "alice"}
+	a, _ := svc.CreateFolder(ctx, alice, nil, "a")
+	aID := a.ID
+	b, _ := svc.CreateFolder(ctx, alice, &aID, "b") // b under a
+	bID := b.ID
+
+	// Moving a under its own child b is a cycle.
+	if err := svc.MoveFolder(ctx, alice, a.ID, &bID); !errorsIs(err, ErrCycle) {
+		t.Errorf("cycle move: got %v, want ErrCycle", err)
+	}
+}
+
+func errorsIs(err, target error) bool { return err != nil && errors.Is(err, target) }
+
 func TestExportAndErase(t *testing.T) {
 	ctx := context.Background()
-	svc, reg, _, _, _, idx, _ := newService(t)
+	svc, reg, repo, _, _, idx, _ := newService(t)
 	alice := pii.Subject{Instance: "demo.example", UserID: "alice"}
-	o, _ := svc.Upload(ctx, alice, "private.txt", bytes.NewReader([]byte("private")))
+	// A folder with a file inside, plus a root file — erase must reach all.
+	f, _ := svc.CreateFolder(ctx, alice, nil, "folder")
+	fID := f.ID
+	inner, _ := svc.Upload(ctx, alice, &fID, "inner.txt", bytes.NewReader([]byte("in")))
+	o, _ := svc.Upload(ctx, alice, nil, "private.txt", bytes.NewReader([]byte("private")))
 
 	out, err := reg.ExportSubject(ctx, alice)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := out[Type]; !ok {
-		t.Error("export missing the file")
+		t.Error("export missing the file domain")
 	}
 	if err := reg.EraseSubject(ctx, alice); err != nil {
 		t.Fatal(err)
@@ -304,8 +533,20 @@ func TestExportAndErase(t *testing.T) {
 	if _, ok := idx.docs[o.ID]; ok {
 		t.Error("search entry not removed on erase")
 	}
+	if _, ok := idx.docs[f.ID]; ok {
+		t.Error("folder search entry not removed on erase")
+	}
+	// Rows gone: object, inner object, folder.
+	for _, id := range []string{o.ID, inner.ID} {
+		if _, ok, _ := repo.GetObject(ctx, id); ok {
+			t.Errorf("object %s survived erase", id)
+		}
+	}
+	if _, ok, _ := repo.GetFolder(ctx, f.ID); ok {
+		t.Error("folder survived erase")
+	}
 	after, _ := reg.ExportSubject(ctx, alice)
 	if _, ok := after[Type]; ok {
-		t.Error("file still exportable after erase")
+		t.Error("still exportable after erase")
 	}
 }

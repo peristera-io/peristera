@@ -25,8 +25,20 @@ import (
 // Type is the app-namespaced object type (root ADR-0007/0010).
 const Type = "kamara/file"
 
-// Relation is the OpenFGA ownership relation.
+// FolderType is the app-namespaced folder type (Kamara ADR-0002).
+const FolderType = "kamara/folder"
+
+// Relation is the OpenFGA ownership relation (the tuple written on create).
 const Relation = "owner"
+
+// ParentRelation links a file/folder to its containing folder; AccessRelation
+// is the computed access check (owner or inherited up the tree). Per-owner
+// trees today, but the inheritance edges are real so sharing is later a
+// tuple, not a model change (Kamara ADR-0002).
+const (
+	ParentRelation = "parent"
+	AccessRelation = "can_access"
+)
 
 // ErrNotFound is returned when an object id doesn't exist.
 var ErrNotFound = errors.New("file: not found")
@@ -36,16 +48,18 @@ var ErrNotFound = errors.New("file: not found")
 var ErrForbidden = errors.New("file: not authorized")
 
 // Object is a stored file (identity = UUIDv7, URLs carry it — ADR-0007).
+// FolderID is its location: nil means the owner's root (Kamara ADR-0002).
 type Object struct {
-	ID      string
-	Owner   pii.Subject
-	Name    string
-	Size    int64
-	Created time.Time
-	Updated time.Time
+	ID       string
+	Owner    pii.Subject
+	Name     string
+	Size     int64
+	FolderID *string
+	Created  time.Time
+	Updated  time.Time
 }
 
-// Permalink is the canonical URL.
+// Permalink is the canonical URL (stable across moves — ADR-0007).
 func (o Object) Permalink() string { return "/files/" + o.ID }
 
 // Repo is the object/version/chunk metadata persistence port (Postgres in
@@ -71,6 +85,28 @@ type Repo interface {
 	DecRef(ctx context.Context, hashes []string) (orphans []string, err error)
 	// DeleteChunks removes chunk rows (used for the collected orphans).
 	DeleteChunks(ctx context.Context, hashes []string) error
+
+	// SetObjectFolder moves a file to a folder (nil = root); SetObjectName
+	// renames it. Both bump updated_at.
+	SetObjectFolder(ctx context.Context, id string, folderID *string) error
+	SetObjectName(ctx context.Context, id, name string) error
+
+	// --- folders (Kamara ADR-0002) ---
+
+	InsertFolder(ctx context.Context, f Folder) error
+	GetFolder(ctx context.Context, id string) (Folder, bool, error)
+	// FoldersInParent lists an owner's child folders of parent (nil = root).
+	FoldersInParent(ctx context.Context, owner pii.Subject, parent *string) ([]Folder, error)
+	// ObjectsInFolder lists an owner's files in folder (nil = root).
+	ObjectsInFolder(ctx context.Context, owner pii.Subject, folder *string) ([]Object, error)
+	// FolderHasChildren reports whether any folder or file references it
+	// (deletion is empty-first).
+	FolderHasChildren(ctx context.Context, id string) (bool, error)
+	SetFolderParent(ctx context.Context, id string, parent *string) error
+	SetFolderName(ctx context.Context, id, name string) error
+	DeleteFolder(ctx context.Context, id string) error
+	// FoldersByOwner returns all an owner's folders (export/erase scoping).
+	FoldersByOwner(ctx context.Context, owner pii.Subject) ([]Folder, error)
 }
 
 // Authorizer is the subset of lib/authz the domain uses.
@@ -79,6 +115,9 @@ type Authorizer interface {
 	Delete(ctx context.Context, user pii.Subject, relation, object string) error
 	Check(ctx context.Context, user pii.Subject, relation, object string) (bool, error)
 	ListObjects(ctx context.Context, user pii.Subject, relation, objectType string) ([]string, error)
+	// Object-to-object containment edges (a file/folder's parent folder).
+	WriteObjectTuple(ctx context.Context, user, relation, object string) error
+	DeleteObjectTuple(ctx context.Context, user, relation, object string) error
 }
 
 // Stores bundles the same-database convention stores of one transaction.
@@ -118,23 +157,31 @@ func NewService(reg *pii.Registry, txr TxRunner, az Authorizer, blobs blob.Store
 	return s
 }
 
-func obj(id string) string { return Type + ":" + id }
+func obj(id string) string       { return Type + ":" + id }
+func folderObj(id string) string { return FolderType + ":" + id }
 
 // Upload stores a file. The chunk blobs are written durably FIRST (outside
 // any transaction — Kamara ADR-0001/store discipline), then one
 // transaction commits the object + version + manifest + chunk ref-counts +
 // audit + search. A crash between the two orphans blobs (GC-collectable),
 // never a dangling manifest. The OpenFGA tuple is the one out-of-tx step.
-func (s *Service) Upload(ctx context.Context, owner pii.Subject, name string, r io.Reader) (Object, error) {
+func (s *Service) Upload(ctx context.Context, owner pii.Subject, folderID *string, name string, r io.Reader) (Object, error) {
 	if name == "" {
 		return Object{}, fmt.Errorf("file: name required")
+	}
+	// A file placed in a folder requires access to that folder (root — nil —
+	// is the owner's own, always allowed).
+	if folderID != nil {
+		if err := s.authorizeFolder(ctx, owner, *folderID); err != nil {
+			return Object{}, err
+		}
 	}
 	refs, total, err := engine.Ingest(ctx, r, s.cipher, s.blobs)
 	if err != nil {
 		return Object{}, err
 	}
 	now := s.now().UTC()
-	o := Object{ID: id.V7(), Owner: owner, Name: name, Size: total, Created: now, Updated: now}
+	o := Object{ID: id.V7(), Owner: owner, Name: name, Size: total, FolderID: folderID, Created: now, Updated: now}
 	verID := id.V7()
 	if err := s.tx.InTx(ctx, func(st Stores) error {
 		if err := st.Objects.InsertObject(ctx, o); err != nil {
@@ -155,6 +202,12 @@ func (s *Service) Upload(ctx context.Context, owner pii.Subject, name string, r 
 	if err := s.authz.Write(ctx, owner, Relation, obj(o.ID)); err != nil {
 		return Object{}, fmt.Errorf("file: writing owner tuple: %w", err)
 	}
+	// Containment edge for inherited access (Kamara ADR-0002).
+	if folderID != nil {
+		if err := s.authz.WriteObjectTuple(ctx, folderObj(*folderID), ParentRelation, obj(o.ID)); err != nil {
+			return Object{}, fmt.Errorf("file: writing parent tuple: %w", err)
+		}
+	}
 	return o, nil
 }
 
@@ -172,7 +225,7 @@ func (s *Service) Download(ctx context.Context, caller pii.Subject, objectID str
 
 // List returns the caller's files, permission-filtered through OpenFGA.
 func (s *Service) List(ctx context.Context, caller pii.Subject) ([]Object, error) {
-	ids, err := s.authz.ListObjects(ctx, caller, Relation, Type)
+	ids, err := s.authz.ListObjects(ctx, caller, AccessRelation, Type)
 	if err != nil {
 		return nil, err
 	}
@@ -188,10 +241,18 @@ func (s *Service) Delete(ctx context.Context, caller pii.Subject, objectID strin
 		return err
 	}
 	var orphans []string
+	var folderID *string
 	if err := s.tx.InTx(ctx, func(st Stores) error {
 		if err := st.Audit.Emit(ctx, caller, "kamara.file.deleted",
 			audit.Object{Type: Type, ID: objectID, Permalink: "/files/" + objectID}, nil); err != nil {
 			return err
+		}
+		// Capture the folder before deletion so its containment tuple can be
+		// cleaned up after commit.
+		if o, ok, err := st.Objects.GetObject(ctx, objectID); err != nil {
+			return err
+		} else if ok {
+			folderID = o.FolderID
 		}
 		hashes, err := st.Objects.ChunkHashesOf(ctx, objectID)
 		if err != nil {
@@ -216,6 +277,11 @@ func (s *Service) Delete(ctx context.Context, caller pii.Subject, objectID strin
 	for _, h := range orphans {
 		_ = s.blobs.Delete(ctx, h)
 	}
+	if folderID != nil {
+		// Containment tuple cleanup (best-effort; a dangling parent tuple to
+		// a deleted file is harmless, reconciled like the owner-tuple seam).
+		_ = s.authz.DeleteObjectTuple(ctx, folderObj(*folderID), ParentRelation, obj(objectID))
+	}
 	return s.authz.Delete(ctx, caller, Relation, obj(objectID))
 }
 
@@ -235,12 +301,23 @@ func (s *Service) Get(ctx context.Context, caller pii.Subject, objectID string) 
 }
 
 func (s *Service) authorize(ctx context.Context, caller pii.Subject, objectID string) error {
-	ok, err := s.authz.Check(ctx, caller, Relation, obj(objectID))
+	return s.authorizeAccess(ctx, caller, obj(objectID))
+}
+
+func (s *Service) authorizeFolder(ctx context.Context, caller pii.Subject, folderID string) error {
+	return s.authorizeAccess(ctx, caller, folderObj(folderID))
+}
+
+// authorizeAccess checks the computed can_access relation (owner or
+// inherited up the folder tree — Kamara ADR-0002) on a fully-qualified
+// OpenFGA object.
+func (s *Service) authorizeAccess(ctx context.Context, caller pii.Subject, object string) error {
+	ok, err := s.authz.Check(ctx, caller, AccessRelation, object)
 	if err != nil {
 		return err
 	}
 	if !ok {
-		return fmt.Errorf("%w: %s on %s", ErrForbidden, caller, objectID)
+		return fmt.Errorf("%w: %s on %s", ErrForbidden, caller, object)
 	}
 	return nil
 }

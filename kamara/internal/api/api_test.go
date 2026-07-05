@@ -21,16 +21,25 @@ import (
 // has its own tests).
 type fakeSvc struct {
 	objs    map[string]file.Object
+	folders map[string]file.Folder
 	content map[string][]byte
 	owner   map[string]pii.Subject
 	seq     int
 }
 
 func newFakeSvc() *fakeSvc {
-	return &fakeSvc{objs: map[string]file.Object{}, content: map[string][]byte{}, owner: map[string]pii.Subject{}}
+	return &fakeSvc{objs: map[string]file.Object{}, folders: map[string]file.Folder{},
+		content: map[string][]byte{}, owner: map[string]pii.Subject{}}
 }
 
-func (f *fakeSvc) Upload(_ context.Context, owner pii.Subject, name string, r io.Reader) (file.Object, error) {
+func ptrEq(a, b *string) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+func (f *fakeSvc) Upload(_ context.Context, owner pii.Subject, folderID *string, name string, r io.Reader) (file.Object, error) {
 	b, err := io.ReadAll(r)
 	if err != nil {
 		return file.Object{}, err // e.g. the MaxBytesReader limit, like the real engine
@@ -38,11 +47,104 @@ func (f *fakeSvc) Upload(_ context.Context, owner pii.Subject, name string, r io
 	f.seq++
 	id := string(rune('a' + f.seq))
 	now := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)
-	o := file.Object{ID: id, Owner: owner, Name: name, Size: int64(len(b)), Created: now, Updated: now}
+	o := file.Object{ID: id, Owner: owner, Name: name, Size: int64(len(b)), FolderID: folderID, Created: now, Updated: now}
 	f.objs[id] = o
 	f.content[id] = b
 	f.owner[id] = owner
 	return o, nil
+}
+
+func (f *fakeSvc) authzFolder(caller pii.Subject, id string) error {
+	if _, ok := f.folders[id]; !ok {
+		return file.ErrNotFound
+	}
+	if f.owner[id] != caller {
+		return file.ErrForbidden
+	}
+	return nil
+}
+
+func (f *fakeSvc) CreateFolder(_ context.Context, owner pii.Subject, parent *string, name string) (file.Folder, error) {
+	f.seq++
+	id := "F" + string(rune('a'+f.seq))
+	fol := file.Folder{ID: id, Owner: owner, ParentID: parent, Name: name}
+	f.folders[id] = fol
+	f.owner[id] = owner
+	return fol, nil
+}
+
+func (f *fakeSvc) ListChildren(_ context.Context, caller pii.Subject, folder *string) (file.Listing, error) {
+	var l file.Listing
+	for id, fol := range f.folders {
+		if f.owner[id] == caller && ptrEq(fol.ParentID, folder) {
+			l.Folders = append(l.Folders, fol)
+		}
+	}
+	for id, o := range f.objs {
+		if f.owner[id] == caller && ptrEq(o.FolderID, folder) {
+			l.Files = append(l.Files, o)
+		}
+	}
+	return l, nil
+}
+
+func (f *fakeSvc) RenameFile(_ context.Context, caller pii.Subject, id, name string) error {
+	if err := f.authz(caller, id); err != nil {
+		return err
+	}
+	o := f.objs[id]
+	o.Name = name
+	f.objs[id] = o
+	return nil
+}
+
+func (f *fakeSvc) MoveFile(_ context.Context, caller pii.Subject, id string, dest *string) error {
+	if err := f.authz(caller, id); err != nil {
+		return err
+	}
+	o := f.objs[id]
+	o.FolderID = dest
+	f.objs[id] = o
+	return nil
+}
+
+func (f *fakeSvc) RenameFolder(_ context.Context, caller pii.Subject, id, name string) error {
+	if err := f.authzFolder(caller, id); err != nil {
+		return err
+	}
+	fol := f.folders[id]
+	fol.Name = name
+	f.folders[id] = fol
+	return nil
+}
+
+func (f *fakeSvc) MoveFolder(_ context.Context, caller pii.Subject, id string, dest *string) error {
+	if err := f.authzFolder(caller, id); err != nil {
+		return err
+	}
+	fol := f.folders[id]
+	fol.ParentID = dest
+	f.folders[id] = fol
+	return nil
+}
+
+func (f *fakeSvc) DeleteFolder(_ context.Context, caller pii.Subject, id string) error {
+	if err := f.authzFolder(caller, id); err != nil {
+		return err
+	}
+	for _, o := range f.objs {
+		if ptrEq(o.FolderID, &id) {
+			return file.ErrNotEmpty
+		}
+	}
+	for cid, fol := range f.folders {
+		if cid != id && ptrEq(fol.ParentID, &id) {
+			return file.ErrNotEmpty
+		}
+	}
+	delete(f.folders, id)
+	delete(f.owner, id)
+	return nil
 }
 
 func (f *fakeSvc) authz(caller pii.Subject, id string) error {
@@ -214,6 +316,60 @@ func TestUploadTooLarge(t *testing.T) {
 	body := strings.Repeat("A", 100)
 	if rec := do(t, h, "POST", "/v1/files?name=big.bin", "alice-tok", body); rec.Code != http.StatusRequestEntityTooLarge {
 		t.Errorf("oversized upload: got %d, want 413", rec.Code)
+	}
+}
+
+func TestFolderAPIRoundTrip(t *testing.T) {
+	h, _, _, _ := testHandler()
+
+	// Create a folder; it appears in the root listing.
+	rec := do(t, h, "POST", "/v1/folders?name=docs", "alice-tok", "")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create folder: %d %s", rec.Code, rec.Body)
+	}
+	var fol folderDTO
+	_ = json.Unmarshal(rec.Body.Bytes(), &fol)
+	if fol.Name != "docs" || fol.Permalink != "/folders/"+fol.ID {
+		t.Errorf("folder = %+v", fol)
+	}
+	rec = do(t, h, "GET", "/v1/folders", "alice-tok", "")
+	var root struct {
+		Folders []folderDTO
+		Files   []fileDTO
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &root)
+	if len(root.Folders) != 1 || root.Folders[0].ID != fol.ID {
+		t.Errorf("root listing = %+v", root.Folders)
+	}
+
+	// Upload into the folder; it appears when listing that folder.
+	rec = do(t, h, "POST", "/v1/files?name=f.txt&folder="+fol.ID, "alice-tok", "hi")
+	var created fileDTO
+	_ = json.Unmarshal(rec.Body.Bytes(), &created)
+	if created.Folder == nil || *created.Folder != fol.ID {
+		t.Errorf("uploaded file folder = %v", created.Folder)
+	}
+	rec = do(t, h, "GET", "/v1/folders?parent="+fol.ID, "alice-tok", "")
+	var in struct{ Files []fileDTO }
+	_ = json.Unmarshal(rec.Body.Bytes(), &in)
+	if len(in.Files) != 1 || in.Files[0].ID != created.ID {
+		t.Errorf("folder listing = %+v", in.Files)
+	}
+
+	// Deleting a non-empty folder is a 409; after moving the file to root
+	// it's a 204.
+	if rec = do(t, h, "DELETE", "/v1/folders/"+fol.ID, "alice-tok", ""); rec.Code != http.StatusConflict {
+		t.Errorf("delete non-empty folder: got %d, want 409", rec.Code)
+	}
+	if rec = do(t, h, "POST", "/v1/files/"+created.ID+"/move", "alice-tok", `{"folder":null}`); rec.Code != http.StatusNoContent {
+		t.Errorf("move to root: got %d (%s)", rec.Code, rec.Body)
+	}
+	if rec = do(t, h, "DELETE", "/v1/folders/"+fol.ID, "alice-tok", ""); rec.Code != http.StatusNoContent {
+		t.Errorf("delete emptied folder: got %d", rec.Code)
+	}
+	// Rename the file.
+	if rec = do(t, h, "POST", "/v1/files/"+created.ID+"/rename", "alice-tok", `{"name":"renamed.txt"}`); rec.Code != http.StatusNoContent {
+		t.Errorf("rename: got %d", rec.Code)
 	}
 }
 
