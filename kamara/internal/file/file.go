@@ -31,6 +31,10 @@ const Relation = "owner"
 // ErrNotFound is returned when an object id doesn't exist.
 var ErrNotFound = errors.New("file: not found")
 
+// ErrForbidden is returned when the caller is not authorized on an object.
+// The HTTP layer maps it to 403 (distinct from a 500 on a real failure).
+var ErrForbidden = errors.New("file: not authorized")
+
 // Object is a stored file (identity = UUIDv7, URLs carry it — ADR-0007).
 type Object struct {
 	ID      string
@@ -109,7 +113,7 @@ func NewService(reg *pii.Registry, txr TxRunner, az Authorizer, blobs blob.Store
 	reg.Register(pii.Descriptor{
 		Type:   Type,
 		Fields: []string{"name"},
-		Hooks:  &subjectData{repo: rd.Objects, blobs: blobs, search: rd.Search},
+		Hooks:  &subjectData{repo: rd.Objects, blobs: blobs, search: rd.Search, authz: az},
 	})
 	return s
 }
@@ -215,13 +219,28 @@ func (s *Service) Delete(ctx context.Context, caller pii.Subject, objectID strin
 	return s.authz.Delete(ctx, caller, Relation, obj(objectID))
 }
 
+// Get returns an object's metadata after an authorization check.
+func (s *Service) Get(ctx context.Context, caller pii.Subject, objectID string) (Object, error) {
+	if err := s.authorize(ctx, caller, objectID); err != nil {
+		return Object{}, err
+	}
+	o, ok, err := s.tx.Reader().Objects.GetObject(ctx, objectID)
+	if err != nil {
+		return Object{}, err
+	}
+	if !ok {
+		return Object{}, ErrNotFound
+	}
+	return o, nil
+}
+
 func (s *Service) authorize(ctx context.Context, caller pii.Subject, objectID string) error {
 	ok, err := s.authz.Check(ctx, caller, Relation, obj(objectID))
 	if err != nil {
 		return err
 	}
 	if !ok {
-		return fmt.Errorf("file: %s not authorized on %s", caller, objectID)
+		return fmt.Errorf("%w: %s on %s", ErrForbidden, caller, objectID)
 	}
 	return nil
 }

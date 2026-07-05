@@ -134,13 +134,41 @@ The owner column is display/PII-scoping only, never the access decision.
 
 ## 7. Storage API v0
 
-An HTTP API, OpenFGA-authorized, consumed by other apps and the browser:
+An HTTP API, OpenFGA-authorized, consumed by other apps and the browser.
+Contract is `api/openapi.yaml` (OpenAPI-first, ADR-0007); handlers are a
+thin adapter over the file domain (`internal/api`).
 
-- create object, chunked/resumable upload of a version, get (streamed,
-  ranged), list (permission-filtered), delete. Exact surface is
-  OpenAPI-first (ADR-0007), designed in M4a. *(decided — the approach)*
+**Built (M4a session 3).** The v0 surface under `/v1`:
+
+| Method | Path | Does |
+|---|---|---|
+| `POST` | `/files?name=` | Upload — raw body is the content; server chunks/dedups/encrypts; uploader owns it → 201 metadata |
+| `GET` | `/files` | List the caller's files (permission-filtered via `ListObjects`) |
+| `GET` | `/files/{id}` | File metadata |
+| `GET` | `/files/{id}/content` | Stream the reassembled bytes |
+| `DELETE` | `/files/{id}` | Delete + reclaim orphaned chunks |
+
+- **Authentication (decided — session 3).** Every call carries a bearer
+  token; it is validated against the tenant OIDC provider's **userinfo**
+  endpoint (the same cheap validation the control plane uses), and the
+  `sub` claim becomes the caller's subject `{instance: issuer-host, user:
+  sub}`. So the *authenticated user* owns the file, never "the calling
+  service." A short-TTL cache (lib/session) keeps every call off userinfo.
+- **Upload is single-shot streaming in v0.** The body streams straight
+  into the content-defined chunker; nothing buffers the whole file. The
+  **resumable/ranged** protocol (session-based vs. content-range) stays
+  open and lands with the browser UI (M4b) — the engine already chunks
+  regardless of the wire framing, so it is additive.
+- **Errors:** `ErrNotFound` → 404, `ErrForbidden` → 403, missing/invalid
+  token → 401, missing `name` → 400.
 - The other-app integration (Ergonomos attaching a file) is the acceptance
-  test for "storage API v0."
+  test for "storage API v0," wired in **session 4**. The one **open
+  inter-app question** it forces: how Ergonomos obtains a token to forward
+  — forward the logged-in user's access token (owner = the user, simplest,
+  the v0 assumption) vs. a service account with an OAuth2 actor/on-behalf
+  token (owner = user, actor = Ergonomos, richer audit). Deferred to the
+  session-4 wiring; `oidcrp` currently retains only the ID token, so
+  either path needs the access token kept or a token exchange.
 
 ## 8. Cross-cutting conventions (files are user data)
 
@@ -175,10 +203,16 @@ binding is content-scoped (not object/version/index — incompatible with
 dedup) and the at-rest nonce lives in the blob header, not a metadata
 column (Kamara ADR-0001 §5–§7).
 
-**Still open (firm up during M4a, record in `adr/`):** exact chunk-record
-and manifest columns; the resumable-upload protocol shape (session-based
-vs. content-range); GC trigger/cadence; the storage-API surface
-(OpenAPI); how a per-tenant DEK is generated and mounted.
+Settled at M4a session 3: the storage-API surface (`api/openapi.yaml`) and
+its bearer/userinfo authentication (§7); the chunk-record and manifest
+columns (`internal/store/migrations`).
+
+**Still open (firm up during M4, record in `adr/`):** the resumable-upload
+protocol shape (session-based vs. content-range), landing with the browser
+UI (M4b); how Ergonomos obtains the token it forwards (§7, session 4); GC
+trigger/cadence and the blob-orphan reconciliation sweep (a crashed upload
+leaves a blob with no chunk row — invisible to a row-based sweep); how a
+per-tenant DEK is generated and mounted (session 4 deployment).
 
 **Longer-horizon (not M4):** device-to-device sync, E2EE + federated
 encrypted replicas, resumable-sync protocol, desktop/mobile clients,

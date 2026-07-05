@@ -131,6 +131,11 @@ func (r *ObjectRepo) ManifestOf(ctx context.Context, objectID string) ([]engine.
 // ChunkHashesOf returns every chunk hash the object references (across all
 // its versions), one entry per manifest reference (duplicates preserved so
 // ref-count decrements match the increments).
+//
+// WHOLE-OBJECT-DELETE ONLY: it is object-scoped, not version-scoped, so it
+// is symmetric with the sum of all InsertVersion increments for the object.
+// When per-version reclaim arrives (versioning session), it needs a
+// version-scoped query instead — this one would over-decrement.
 func (r *ObjectRepo) ChunkHashesOf(ctx context.Context, objectID string) ([]string, error) {
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT vc.chunk_hash FROM version_chunks vc

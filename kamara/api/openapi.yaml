@@ -1,0 +1,154 @@
+openapi: 3.1.0
+info:
+  title: Kamara storage API
+  version: 0.1.0
+  description: >
+    The v0 storage API for Kamara, the per-tenant file store. The primary
+    consumer is another app (Ergonomos attaches a file to a task) rather
+    than a human; a browser upload UI is the second client (M4b).
+
+    Every call is authenticated with a bearer token issued by the tenant's
+    OIDC provider and validated against its userinfo endpoint; the caller's
+    subject (the `sub` claim) becomes the file's owner. Authorization is
+    OpenFGA's: a file has an `owner` relation, checked on read/delete and
+    used to permission-filter the listing. Object identity is a UUIDv7 that
+    URLs carry (ADR-0007); a rename never changes a file's URL.
+
+    Upload is a single streaming request in v0 — the server chunks the body
+    content-defined as it arrives. Resumable/ranged transfer (the
+    session-vs-content-range protocol) is deferred to M4b; see kamara/SPEC.md.
+servers:
+  - url: /v1
+security:
+  - bearerAuth: []
+paths:
+  /files:
+    get:
+      operationId: listFiles
+      summary: List the caller's files (permission-filtered via OpenFGA).
+      responses:
+        "200":
+          description: The files the caller owns.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      operationId: uploadFile
+      summary: >
+        Upload a file. The raw request body is the content; the server
+        content-defined-chunks, deduplicates, encrypts at rest, and records
+        the object. The uploader (bearer subject) becomes the owner.
+      parameters:
+        - name: name
+          in: query
+          required: true
+          description: The file's display name.
+          schema: { type: string, minLength: 1 }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        "201":
+          description: The stored file's metadata.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/File" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /files/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: getFile
+      summary: Get a file's metadata.
+      responses:
+        "200":
+          description: File metadata.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/File" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: deleteFile
+      summary: Delete a file and reclaim its now-orphaned chunks.
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /files/{id}/content:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: downloadFile
+      summary: Stream a file's content (reassembled from its chunks).
+      responses:
+        "200":
+          description: The file bytes.
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  responses:
+    BadRequest:
+      description: Malformed request.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: Missing or invalid bearer token.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: Authenticated but not authorized on this object.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: No such object.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+  schemas:
+    File:
+      type: object
+      required: [id, name, size, permalink, created, updated]
+      properties:
+        id: { type: string, description: UUIDv7 identity. }
+        name: { type: string }
+        size: { type: integer, format: int64, description: Bytes. }
+        permalink: { type: string, description: Canonical URL path. }
+        created: { type: string, format: date-time }
+        updated: { type: string, format: date-time }
+    FileList:
+      type: object
+      required: [files]
+      properties:
+        files:
+          type: array
+          items: { $ref: "#/components/schemas/File" }
+    Error:
+      type: object
+      required: [message]
+      properties:
+        message: { type: string }

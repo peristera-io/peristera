@@ -14,6 +14,7 @@ type subjectData struct {
 	repo   Repo
 	blobs  blob.Store
 	search *search.Feeder
+	authz  Authorizer
 }
 
 // ExportSubject returns the subject's file metadata (names, sizes, ids).
@@ -64,6 +65,12 @@ func (d *subjectData) EraseSubject(ctx context.Context, s pii.Subject) error {
 		}
 		// Remove the derived search entry after the source (ADR-0009 §3).
 		if err := d.search.Remove(ctx, o.ID); err != nil {
+			return err
+		}
+		// Remove the OpenFGA owner tuple — it is personal data referencing
+		// the erased subject, so erasure must clean it too (ADR-0010
+		// §Consequences), else a dangling tuple points at a deleted object.
+		if err := d.authz.Delete(ctx, s, Relation, obj(o.ID)); err != nil {
 			return err
 		}
 	}
