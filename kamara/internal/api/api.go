@@ -10,12 +10,18 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 
 	"github.com/peristera-io/peristera/kamara/internal/file"
 	"github.com/peristera-io/peristera/lib/pii"
 )
+
+// DefaultMaxUploadBytes caps a single upload body so one request cannot
+// fill the tenant's blob volume (a per-tenant quota is the real answer —
+// tracked separately). Overridable at construction.
+const DefaultMaxUploadBytes int64 = 5 << 30 // 5 GiB
 
 // Service is the file-domain surface the handlers use (satisfied by
 // *file.Service; an interface so the handlers are testable with a fake).
@@ -36,13 +42,18 @@ type Authenticator interface {
 
 // Handler serves the storage API.
 type Handler struct {
-	svc  Service
-	auth Authenticator
+	svc       Service
+	auth      Authenticator
+	maxUpload int64
 }
 
-// New builds the handler.
-func New(svc Service, auth Authenticator) *Handler {
-	return &Handler{svc: svc, auth: auth}
+// New builds the handler. maxUpload caps the request body of an upload; <= 0
+// uses DefaultMaxUploadBytes.
+func New(svc Service, auth Authenticator, maxUpload int64) *Handler {
+	if maxUpload <= 0 {
+		maxUpload = DefaultMaxUploadBytes
+	}
+	return &Handler{svc: svc, auth: auth, maxUpload: maxUpload}
 }
 
 // Routes returns the mux for the /v1 surface. Mount it under "/v1/".
@@ -71,7 +82,10 @@ func (h *Handler) authed(next subjectHandler) http.Handler {
 		}
 		caller, ok, err := h.auth.Subject(r.Context(), tok)
 		if err != nil {
-			writeErr(w, http.StatusBadGateway, "authenticating: "+err.Error())
+			// A provider hiccup is not the caller's fault and its detail
+			// (issuer URL, transport error) must not leak to the client.
+			log.Printf("kamara: authenticating: %v", err)
+			writeErr(w, http.StatusBadGateway, "authentication unavailable")
 			return
 		}
 		if !ok {
@@ -96,8 +110,16 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, caller pii.Subj
 		writeErr(w, http.StatusBadRequest, "name query parameter is required")
 		return
 	}
-	o, err := h.svc.Upload(r.Context(), caller, name, r.Body)
+	// Cap the body so a single request cannot fill the tenant volume. The
+	// limit error surfaces from the chunker's first over-limit read.
+	body := http.MaxBytesReader(w, r.Body, h.maxUpload)
+	o, err := h.svc.Upload(r.Context(), caller, name, body)
 	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeErr(w, http.StatusRequestEntityTooLarge, "file exceeds maximum upload size")
+			return
+		}
 		h.fail(w, err)
 		return
 	}
@@ -137,10 +159,11 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request, caller pii.Su
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", "attachment; filename="+quoteName(o.Name))
 	if err := h.svc.Download(r.Context(), caller, o.ID, w); err != nil {
-		// Headers may already be flushed; a mid-stream error can only be
-		// logged, not turned into a clean status. Reassembly failures are
-		// integrity errors (a tampered/missing blob), rare in practice.
-		h.fail(w, err)
+		// The status and (some) bytes are already flushed, so this can only
+		// be logged — writing a JSON error here would corrupt the byte
+		// stream. Reassembly failures are integrity errors (a tampered or
+		// missing blob), rare in practice; the client sees a short read.
+		log.Printf("kamara: download %s: %v", o.ID, err)
 		return
 	}
 }

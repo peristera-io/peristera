@@ -31,7 +31,10 @@ func newFakeSvc() *fakeSvc {
 }
 
 func (f *fakeSvc) Upload(_ context.Context, owner pii.Subject, name string, r io.Reader) (file.Object, error) {
-	b, _ := io.ReadAll(r)
+	b, err := io.ReadAll(r)
+	if err != nil {
+		return file.Object{}, err // e.g. the MaxBytesReader limit, like the real engine
+	}
 	f.seq++
 	id := string(rune('a' + f.seq))
 	now := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)
@@ -102,7 +105,7 @@ func testHandler() (http.Handler, *fakeSvc, pii.Subject, pii.Subject) {
 	bob := pii.Subject{Instance: "demo.example", UserID: "bob"}
 	svc := newFakeSvc()
 	auth := fakeAuth{subs: map[string]pii.Subject{"alice-tok": alice, "bob-tok": bob}}
-	return New(svc, auth).Routes(), svc, alice, bob
+	return New(svc, auth, 16).Routes(), svc, alice, bob // tiny cap exercises 413
 }
 
 func do(t *testing.T, h http.Handler, method, path, token, body string) *httptest.ResponseRecorder {
@@ -203,6 +206,14 @@ func TestPermissionsEnforced(t *testing.T) {
 	_ = json.Unmarshal(rec.Body.Bytes(), &list)
 	if len(list.Files) != 0 {
 		t.Errorf("bob's list leaked: %+v", list.Files)
+	}
+}
+
+func TestUploadTooLarge(t *testing.T) {
+	h, _, _, _ := testHandler() // helper caps uploads at 16 bytes
+	body := strings.Repeat("A", 100)
+	if rec := do(t, h, "POST", "/v1/files?name=big.bin", "alice-tok", body); rec.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("oversized upload: got %d, want 413", rec.Code)
 	}
 }
 

@@ -153,7 +153,12 @@ thin adapter over the file domain (`internal/api`).
   endpoint (the same cheap validation the control plane uses), and the
   `sub` claim becomes the caller's subject `{instance: issuer-host, user:
   sub}`. So the *authenticated user* owns the file, never "the calling
-  service." A short-TTL cache (lib/session) keeps every call off userinfo.
+  service." A short-TTL cache (lib/session, 60s) keeps every call off
+  userinfo. **Tradeoff (accepted):** the cache TTL bounds how long a
+  revoked/expired token is still honoured (≤ 60s) — decoupled from real
+  token lifetime, inherited from the control-plane pattern. Acceptable for
+  v0; tighten or introspect token `exp` if revocation latency ever matters
+  more (tracked as an issue).
 - **Upload is single-shot streaming in v0.** The body streams straight
   into the content-defined chunker; nothing buffers the whole file. The
   **resumable/ranged** protocol (session-based vs. content-range) stays

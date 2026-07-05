@@ -8,6 +8,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"log"
@@ -90,7 +91,7 @@ func main() {
 	svc := file.NewService(pii.Default, db, az, blobs, cipher)
 
 	auth := api.NewUserinfoAuth(issuer, instance, 0)
-	h := api.New(svc, auth)
+	h := api.New(svc, auth, 0)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) })
@@ -120,8 +121,11 @@ func loadDEK() []byte {
 	return nil
 }
 
-// decodeKey accepts either raw key bytes (exactly KeySize) or base64.
+// decodeKey accepts either raw key bytes (exactly KeySize) or base64. A
+// mounted k8s Secret is base64 text with a trailing newline, so surrounding
+// whitespace is trimmed before the length check and decode.
 func decodeKey(b []byte) []byte {
+	b = bytes.TrimSpace(b)
 	if len(b) == crypto.KeySize {
 		return b
 	}
