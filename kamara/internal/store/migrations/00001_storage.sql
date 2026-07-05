@@ -22,6 +22,7 @@ CREATE TABLE objects (
     owner_instance text NOT NULL,
     owner_user     text NOT NULL,
     name           text NOT NULL,
+    size           bigint NOT NULL,   -- latest version's size (display/list)
     created_at     timestamptz NOT NULL,
     updated_at     timestamptz NOT NULL
 );
