@@ -6,7 +6,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"strconv"
 
 	"github.com/peristera-io/peristera/kamara/internal/api"
 	"github.com/peristera-io/peristera/kamara/internal/file"
@@ -218,8 +217,8 @@ func (a *webApp) download(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, err)
 		return
 	}
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", "attachment; filename="+strconv.Quote(o.Name))
+	w.Header().Set("Content-Type", api.ContentType(o.ContentType))
+	w.Header().Set("Content-Disposition", api.ContentDisposition("attachment", o.Name))
 	if err := a.svc.Download(r.Context(), caller, id, w); err != nil {
 		// Status/bytes may be flushed; only log (a JSON error would corrupt
 		// the stream). Integrity errors are rare.

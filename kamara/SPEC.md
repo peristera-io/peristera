@@ -189,6 +189,42 @@ thin adapter over the file domain (`internal/api`).
   session-4 wiring; `oidcrp` currently retains only the ID token, so
   either path needs the access token kept or a token exchange.
 
+## 7b. WOPI host — browser office editing (M6, ADR-0018)
+
+Kamara is the WOPI host for the opt-in office engine (Collabora). The engine
+opens and saves a file by calling three endpoints under `/wopi`, a machine
+surface (no cookie, no CSRF) authenticated by a **per-session access token**
+Kamara mints, not the userinfo bearer.
+
+| Method | Path | WOPI op | Does |
+|---|---|---|---|
+| `GET` | `/wopi/files/{id}` | CheckFileInfo | metadata + permissions (BaseFileName, Size, Version, UserCanWrite, …) |
+| `GET` | `/wopi/files/{id}/contents` | GetFile | stream the decrypted bytes, with the stored content type (#28) |
+| `POST` | `/wopi/files/{id}/contents` | PutFile | save-back → a **new version** of the file, owner unchanged |
+
+- **The access token is the whole security boundary.** Collabora publishes no
+  WOPI proof-key (verified in the M6 s0 spike), so there is no second factor.
+  On open, Kamara's `/edit` page (browser, cookie-authed) mints an **opaque,
+  high-entropy token** scoped to `(file, user, permission, TTL)`
+  (`internal/wopi`). Only its SHA-256 is stored (`wopi_sessions`). The engine
+  presents it as `Authorization: Bearer` (or `?access_token=`) on every call;
+  Kamara looks it up, checks expiry, **and re-checks `can_access` against
+  OpenFGA every time** — so a revoked share stops working immediately, not at
+  TTL. The token is bound to one file (the path must match).
+- **Save-back = a new version.** `PutFile` ingests the new bytes through the
+  same chunk engine, appends a version (`ordinal = max+1`) via the existing
+  `versions`/`version_chunks` manifest, and bumps the object's size — the file
+  keeps its identity and owner; the editing user is recorded in the audit
+  event (`kamara.file.version_written`). The new ordinal is echoed in
+  `X-WOPI-ItemVersion`. This lights up the previously-stubbed Versions drawer.
+- **#28 (folded in).** Objects now carry a `content_type`, inferred from the
+  name on upload, so both `GetFile` and the `/v1` + browser downloads serve a
+  correct `Content-Type` and an RFC 6266 `Content-Disposition` (with a
+  `filename*` for non-ASCII names) instead of a blanket `octet-stream`.
+- **Not yet:** WOPI locks (`SupportsLocks=false` — the M6 DoD is single-user
+  open→edit→save; co-editing works on the same document key but is not gated);
+  the `/edit` page + iframe embed (s3).
+
 ## 8. Cross-cutting conventions (files are user data)
 
 Kamara wires the same four conventions as Ergonomos, via `lib/`:

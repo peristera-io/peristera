@@ -24,6 +24,7 @@ import (
 	"github.com/peristera-io/peristera/kamara/internal/file"
 	"github.com/peristera-io/peristera/kamara/internal/store"
 	"github.com/peristera-io/peristera/kamara/internal/web"
+	"github.com/peristera-io/peristera/kamara/internal/wopi"
 	"github.com/peristera-io/peristera/lib/authz"
 	"github.com/peristera-io/peristera/lib/oidcrp"
 	"github.com/peristera-io/peristera/lib/pii"
@@ -125,6 +126,11 @@ func main() {
 	auth := api.NewUserinfoAuth(issuer, instance, 0)
 	h := api.New(svc, auth, 0)
 
+	// WOPI host (ADR-0018): the office engine opens/saves files here, authed by
+	// per-session access tokens re-checked against OpenFGA on every call.
+	sessions := wopi.NewSessions(db.WopiSessions(), az, 0)
+	wopiHost := api.NewWopi(svc, sessions, 0)
+
 	// Browser UI: the OIDC relying-party (cookie session) beside the bearer
 	// API — same service, two front doors. Both resolve to a pii.Subject.
 	publicURL := strings.TrimSuffix(env("PUBLIC_URL", "http://localhost:5580"), "/")
@@ -147,7 +153,8 @@ func main() {
 	mux.HandleFunc("GET /style.css", serveCSS)
 	mux.HandleFunc("GET /htmx.js", serveJS)
 	mux.HandleFunc("GET /kamara.js", serveUploader)
-	mux.Handle("/v1/", h.Routes()) // bearer API (authed inside; no cookie, no CSRF surface)
+	mux.Handle("/v1/", h.Routes())          // bearer API (authed inside; no cookie, no CSRF surface)
+	mux.Handle("/wopi/", wopiHost.Routes()) // WOPI host for the office engine (session-token authed inside)
 	mux.HandleFunc("GET /auth/login", rp.Login)
 	mux.HandleFunc("GET /auth/callback", rp.Callback)
 	mux.HandleFunc("GET /auth/logout", rp.Logout)

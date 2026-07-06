@@ -556,7 +556,7 @@ decrypted document content is processed alongside another's.
   serves through its ingress; `np-kamara` admits office (editor→WOPI-host
   edge); live topology probe — **office→kamara OPEN, office→openfga BLOCKED**.
   Unit tests for the opt-in invariants.
-- **Known gap (create-only, to file/defer):** disabling an app in `spec.apps`
+- **Known gap (create-only, #47):** disabling an app in `spec.apps`
   does not deprovision it, and a `np-kamara` created before the office catalog
   entry keeps a stale caller set until recreated. Both are the M2 create-only
   limitation (drift/teardown is the 2027 alpha). Workaround: delete the stale
@@ -564,3 +564,25 @@ decrypted document content is processed alongside another's.
 - **Next: s2 — Kamara WOPI host** (CheckFileInfo/GetFile/PutFile, OpenFGA-gated
   per-session access token) + the version-write path (save-back = new version)
   + #28 (Content-Disposition/fileType on GetFile).
+- **s2 — Kamara WOPI host + version-write + #28.** Kamara now hosts the WOPI
+  endpoints the office engine drives: `GET /wopi/files/{id}` (CheckFileInfo),
+  `GET .../contents` (GetFile), `POST .../contents` (PutFile) —
+  `internal/api/wopi.go`, a machine surface mounted at `/wopi/`. Auth is a
+  per-session opaque access token (`internal/wopi`): scoped to (file, user,
+  permission, TTL), stored only as a SHA-256, presented as a Bearer, and
+  **re-checked against OpenFGA on every call** (Collabora has no proof-key, so
+  the token is the whole boundary — a revoked share stops working at once, not
+  at TTL; the token is bound to one file). Save-back writes a **new version**
+  (`file.Service.WriteVersion`: ingest → `InsertVersion(ordinal+1)` →
+  `SetObjectSize`; owner unchanged, editing user audited; `X-WOPI-ItemVersion`
+  echoed) and `ListVersions` backs the drawer. **#28** folded in:
+  `objects.content_type` (migration 00004), inferred on upload, served on
+  GetFile and both downloads with a correct type + RFC 6266
+  `Content-Disposition`. Tests: wopi session boundary (expiry, revoked-access,
+  cross-file, unknown token), WOPI HTTP host (httptest), and a real
+  `WriteVersion` round-trip (upload→edit→reopen shows the edit, two versions).
+  In-cluster smoke: migration at v4, `wopi_sessions` + `content_type` present,
+  `/wopi/` 401s without/with a bad token, kamara healthy.
+- **Next: s3 — editor UI + acceptance.** The `/edit/{id}` page (cookie-authed)
+  mints a session token and embeds Collabora; browser demo of open→edit→save→
+  reopen-shows-change; the real Collabora↔Kamara round-trip in-cluster.
