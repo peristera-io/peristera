@@ -40,14 +40,34 @@ type CatalogApp struct {
 	// mounts it at KAMARA_DEK_FILE — the seed of the per-tenant key
 	// hierarchy for at-rest chunk encryption (Kamara SPEC §6, ADR-0009 §6).
 	NeedsDEK bool
+	// Calls names the sibling catalog apps this app may make
+	// server-to-server calls to. It is the single source of truth for the
+	// service-topology graph (ADR-0016): the reconciler generates the
+	// per-tenant NetworkPolicy (and, later, the Zitadel audience grants)
+	// from it. Platform-uniform — the same graph in every tenant.
+	Calls []string
 }
 
 var catalog = []CatalogApp{
 	{Name: "stub", Image: "peristera-stub:dev", Port: 5556},
 	{Name: "ergonomos", Image: "peristera-ergonomos:dev", Port: 5570,
-		NeedsDatabase: true, NeedsOpenFGA: true},
+		NeedsDatabase: true, NeedsOpenFGA: true, Calls: []string{"kamara"}},
 	{Name: "kamara", Image: "peristera-kamara:dev", Port: 5580,
 		NeedsDatabase: true, NeedsOpenFGA: true, NeedsBlob: true, NeedsDEK: true},
+}
+
+// callersOf returns the catalog apps that declare target in their Calls —
+// the apps allowed to make server-to-server calls to it (ADR-0016).
+func callersOf(target string) []string {
+	var out []string
+	for _, a := range catalog {
+		for _, c := range a.Calls {
+			if c == target {
+				out = append(out, a.Name)
+			}
+		}
+	}
+	return out
 }
 
 // Blob and DEK mount points inside the app pod; the app reads these paths
@@ -221,7 +241,9 @@ func (r *TenantReconciler) ensureApps(ctx context.Context, tenant *v1alpha1.Tena
 			}
 		}
 	}
-	return nil
+
+	// Enforce the service-topology allowlist once the apps exist (ADR-0016).
+	return r.ensureNetworkPolicies(ctx, tenant, ns)
 }
 
 func (r *TenantReconciler) createIfAbsent(ctx context.Context, tenant *v1alpha1.Tenant, obj client.Object) error {

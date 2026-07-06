@@ -11,15 +11,43 @@ cd "$(dirname "$0")/.."
 CLUSTER=${CLUSTER:-peristera-dev}
 KEY_DIR=${KEY_DIR:-.dev-secrets}
 NS=peristera-system
+CILIUM_VERSION=${CILIUM_VERSION:-1.19.4}
 
 echo "==> cluster"
 if ! k3d cluster get "$CLUSTER" >/dev/null 2>&1; then
+  # Cilium is the CNI (ADR-0016) so it can enforce NetworkPolicy — k3s's
+  # bundled flannel does not. Disable flannel and k3s's own network-policy
+  # controller so Cilium owns both. No --wait: without a CNI the node stays
+  # NotReady until Cilium is installed two steps down (so --wait would hang
+  # and roll the cluster back).
   k3d cluster create "$CLUSTER" \
-    --port "9080:80@loadbalancer" --port "9443:443@loadbalancer" --wait
+    --port "9080:80@loadbalancer" --port "9443:443@loadbalancer" \
+    --k3s-arg "--flannel-backend=none@server:*" \
+    --k3s-arg "--disable-network-policy@server:*" \
+    --k3s-arg "--disable=metrics-server@server:*"
+  # metrics-server is disabled: the platform doesn't use it, and under
+  # Cilium on k3d it cannot scrape the kubelet (pod->node:10250), so it
+  # never becomes Ready — which keeps the metrics.k8s.io APIService down and
+  # stalls *every* namespace deletion (k8s's namespace GC blocks on aggregated
+  # -API discovery). That broke tenant off-boarding. Self-hosters who want
+  # `kubectl top` should fix the kubelet-scrape path first (issue tracked).
 fi
 # k3d writes the API server as 0.0.0.0, which macOS won't dial.
 port=$(kubectl config view -o jsonpath="{.clusters[?(@.name==\"k3d-$CLUSTER\")].cluster.server}" | sed 's/.*://')
 kubectl config set "clusters.k3d-$CLUSTER.server" "https://127.0.0.1:${port}" >/dev/null
+
+echo "==> cilium CNI"
+helm repo add cilium https://helm.cilium.io/ >/dev/null 2>&1 || true
+helm repo update cilium >/dev/null
+# kube-proxy coexistence: k3s ships an embedded kube-proxy, so Cilium must
+# NOT replace it (kubeProxyReplacement=false) or the agent can't reach the
+# API server. Installed via helm, not the cilium CLI: on k3d/macOS the CLI
+# bakes the host-side kubeconfig API address (127.0.0.1:<hostport>) into the
+# pods, which is unreachable from inside the cluster.
+helm upgrade --install cilium cilium/cilium --version "$CILIUM_VERSION" -n kube-system \
+  --set kubeProxyReplacement=false --set operator.replicas=1 --wait --timeout 5m
+kubectl wait --for=condition=Ready node --all --timeout=300s >/dev/null
+
 kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 
 echo "==> cloudnative-pg"

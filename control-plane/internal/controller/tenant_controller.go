@@ -284,6 +284,16 @@ func (r *TenantReconciler) ensureDatabase(ctx context.Context, tenant *v1alpha1.
 			// Dev sizing; opinionated production defaults are an M6 concern.
 			"instances": int64(1),
 			"storage":   map[string]any{"size": "1Gi"},
+			// Bounded, fast shutdown so tenant off-boarding (namespace
+			// delete) isn't held for CNPG's 30-minute default stopDelay:
+			// during namespace teardown the instance manager loses its API
+			// credentials and won't exit cleanly, riding out the whole grace
+			// period. stopDelay caps the pod's terminationGracePeriod;
+			// smartShutdownTimeout drains connections briefly first. Off-
+			// boarding must be prompt (GDPR posture); revisit for production
+			// HA (M6).
+			"smartShutdownTimeout": int64(10),
+			"stopDelay":            int64(30),
 		},
 	}}
 	db.SetGroupVersionKind(cnpgGVK)

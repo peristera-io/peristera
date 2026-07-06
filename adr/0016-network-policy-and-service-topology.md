@@ -1,0 +1,119 @@
+# ADR-0016: Cilium CNI + network-enforced service topology
+
+- **Status:** accepted
+- **Date:** 2026-07-06
+- **Provenance:** Q&A Round 10 (R54, R55); `docs/m5-plan.md` (M5 session 1);
+  folds issue #18. Part of the M5 service-to-service auth milestone.
+
+## Context
+
+M5 introduces **server-initiated app-to-app calls** (Ergonomos → Kamara,
+and later OnlyOffice → Kamara). "Which service may call which" is a
+platform-wide authorization question. R54 rejected two homes for it:
+
+- **Per-service allowlists in app code** — sprawl: N services each with
+  their own rules, no single place to read or revoke the graph.
+- **OpenFGA** — service topology is **platform-uniform** (Ergonomos → Kamara
+  holds in every tenant, identically), but OpenFGA stores are **per-tenant**
+  and model **users → resources**. Putting the service graph there
+  replicates identical tuples into every tenant store, sits on the hot path,
+  and — because an OpenFGA `Check` is enforced *by the app* — gives weak
+  containment when an app is compromised.
+
+Meanwhile #18 recorded that cross-tenant isolation rested only on env
+injection + DNS convention: with k3s's default flannel there is **no
+network-level enforcement**, so a workload in tenant A can dial
+`openfga.tenant-B.svc:8080` or another app directly.
+
+## Decision
+
+Service-topology authorization lives in **three orthogonal layers**; this
+ADR owns the network layer.
+
+1. **Network (this ADR) — "may A reach B at all?"** Enforced by the CNI,
+   below the app, so a rogue/compromised service cannot open a socket to a
+   peer it isn't cleared for. This is the topology allowlist and the
+   containment boundary.
+2. **Token (ADR for M5 s2/s3) — "is this really A, acting for user U?"**
+   Authentication only; no per-service rules in app code.
+3. **OpenFGA (unchanged) — "may user U touch this resource?"** Per-tenant,
+   about people.
+
+### Cilium is the CNI
+
+The dev cluster (and the self-host / SaaS reference) runs **Cilium**, not
+k3s's bundled flannel, because flannel does not enforce `NetworkPolicy`.
+k3s is created with `--flannel-backend=none` and `--disable-network-policy`
+so Cilium owns pod networking *and* policy. Cilium runs in **kube-proxy
+coexistence** mode (`kubeProxyReplacement=false`): k3s ships an embedded
+kube-proxy, and full replacement leaves the agent unable to reach the API
+server. Installed via **helm**, not the `cilium` CLI, which on k3d/macOS
+bakes the host-side kubeconfig API address into the pods. The exact,
+reproducible steps live in `hack/dev-cluster.sh` (the self-hoster's recipe).
+
+We use **plain Kubernetes `NetworkPolicy`**, not `CiliumNetworkPolicy` — the
+topology we need (namespace isolation + per-app allow-lists) is expressible
+in the portable API, so nothing ties us to Cilium at the manifest level;
+Cilium is only the enforcement engine. Cilium L7 / identity policies remain
+available if a future need (e.g. method-level scoping) justifies them.
+
+### The graph is declared once, in the catalog contract
+
+`CatalogApp` (ADR-0013) gains a **`Calls []string`** field naming the
+sibling apps an app may invoke. It is the **single source of truth** for the
+service graph. The control-plane reconciler generates the per-tenant
+`NetworkPolicy` objects (and, in M5 s2, the Zitadel audience grants) from
+it. To change the graph, edit one catalog entry and reconcile — every
+tenant updates. `Calls` is platform-uniform, so it is expressed once in code
+and stamped into each tenant namespace, never duplicated per tenant by hand.
+
+### Policy shape (per tenant namespace)
+
+- **Cross-tenant isolation:** default-deny ingress; pods accept traffic only
+  from the same namespace or the ingress controller (`kube-system`). A
+  workload in another tenant namespace cannot reach in. (Addresses #18's
+  network half.)
+- **Intra-namespace topology:** each app accepts app-to-app ingress only
+  from the callers that declare it in `Calls` (plus the ingress controller
+  for browser traffic). OpenFGA accepts traffic only from same-namespace
+  apps.
+- **Egress allow-list:** each app may egress only to DNS, its own database
+  and OpenFGA, the ingress path for its OIDC issuer, and its declared
+  `Calls` peers — so a rogue app cannot reach undeclared peers or exfiltrate
+  laterally. *(If staged: see the milestone worklog for what shipped in s1
+  vs. a follow-up.)*
+
+### Rogue-service kill-switch
+
+Two central actions, the strong one kernel-enforced: disable the app's
+Zitadel service account (M5 s2 — no more tokens), and/or reconcile its
+egress `NetworkPolicy` to deny-all (enforced by Cilium regardless of what
+the compromised app does).
+
+## Consequences
+
+- Cross-tenant network isolation (#18) is enforced, not assumed. **OpenFGA
+  endpoint authentication** (the other half of #18) is handled alongside
+  (preshared-key), so reaching an OpenFGA port no longer equals tuple
+  read/write.
+- The dev cluster now has a hard dependency on Cilium; **existing clusters
+  must be recreated** (flannel can't be swapped in place). `hack/dev-cluster.sh`
+  encodes the one-command path; CI needs the same CNI to exercise policy.
+- k3d's default CNI *did* work with zero config; Cilium adds real setup cost
+  (documented) — accepted because enforced isolation is a hard requirement
+  before a real second tenant (MSP alpha) and OnlyOffice's S2S call.
+- The service graph is auditable in one place (`Calls`) and reviewable in
+  code review, not scattered across app configs.
+
+## Alternatives considered
+
+- **flannel + a separate policy engine (kube-router/Calico policy-only)** —
+  more moving parts than adopting Cilium wholesale; Cilium also gives us the
+  L7 headroom. Rejected.
+- **OpenFGA service dimension / per-service token allowlists** — rejected in
+  R54 (see Context).
+- **Cilium kube-proxy replacement** — cleaner in theory, but fights k3s's
+  embedded kube-proxy and broke API reachability on k3d. Deferred; not worth
+  it for a dev cluster.
+- **`CiliumNetworkPolicy` everywhere** — ties manifests to Cilium with no
+  present benefit; use portable `NetworkPolicy` until L7 is actually needed.
