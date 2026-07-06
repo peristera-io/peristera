@@ -49,6 +49,16 @@ type Claims struct {
 type Session struct {
 	Claims  Claims
 	IDToken string
+	// AccessToken is the user's OIDC access token, retained so a service can
+	// exchange it (RFC 8693, actor=service subject=user) when it must call
+	// another Peristera service on the user's behalf (ADR-0017, the M5 S2S
+	// model). It lives only in the server-side in-memory session store,
+	// keyed by the session-cookie id — never sent to the browser. Empty if
+	// the IdP returned no access token. AccessTokenExpiry bounds its use;
+	// past it, the caller must re-authenticate (no refresh yet — a later
+	// refinement).
+	AccessToken       string
+	AccessTokenExpiry time.Time
 }
 
 // RelyingParty runs the flow for one issuer+client.
@@ -156,7 +166,12 @@ func (rp *RelyingParty) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sid := randID(32)
-	rp.sessions.Put(sid, Session{Claims: c, IDToken: rawID})
+	rp.sessions.Put(sid, Session{
+		Claims:            c,
+		IDToken:           rawID,
+		AccessToken:       tok.AccessToken,
+		AccessTokenExpiry: tok.Expiry,
+	})
 	rp.setCookie(w, sid, rp.cfg.SessionTTL)
 	http.Redirect(w, r, rp.cfg.SuccessURL, http.StatusFound)
 }
