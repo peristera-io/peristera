@@ -1,0 +1,15 @@
+/* Peristera design-language tokens (Q&A R9 seed).
+ *
+ * Isolated in this file on purpose: it is the seed of the shared design
+ * system. When that system is built, this file lifts out (unchanged) into a
+ * shared package — e.g. @peristera/ui/tokens.css — and every app imports it
+ * instead of redefining brand/radius/etc. Kamara is the pilot consumer.
+ *
+ * Keep this file tokens-only (no utilities, no component CSS) so the lift is
+ * clean. Tailwind v4 turns these @theme vars into utilities (--color-brand →
+ * bg-brand/text-brand/ring-brand, --radius-base → rounded-base). */
+@theme {
+  --color-brand: #0f766e;       /* teal-700 — the Peristera accent */
+  --color-brand-hover: #115e59; /* teal-800 — hover/active */
+  --radius-base: 0.5rem;
+}

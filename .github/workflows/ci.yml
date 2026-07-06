@@ -83,17 +83,19 @@ jobs:
           npm run build
           git -C "$GITHUB_WORKSPACE" diff --exit-code kamara/internal/web/style.css \
             || { echo "::error::kamara/internal/web/style.css is stale — run 'npm run build' in kamara/web"; exit 1; }
-      - name: Render the Kamara page
-        working-directory: kamara
-        run: go run ./cmd/a11y-render > /tmp/kamara-page.html
       - name: Install a11y checker
         working-directory: kamara/a11y
         run: |
           npm ci
           npx playwright install --with-deps chromium
-      - name: Run axe-core (WCAG 2.1 AA)
-        working-directory: kamara/a11y
-        run: node check.mjs /tmp/kamara-page.html
+      - name: Run axe-core (WCAG 2.1 AA) across UI states
+        working-directory: kamara
+        run: |
+          for state in browse empty root long; do
+            echo "== a11y: $state =="
+            go run ./cmd/a11y-render "$state" > "/tmp/kamara-$state.html"
+            node a11y/check.mjs "/tmp/kamara-$state.html"
+          done
 
   e2e:
     name: e2e (godog on k3d)

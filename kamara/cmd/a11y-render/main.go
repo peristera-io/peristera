@@ -1,9 +1,15 @@
-// Command a11y-render writes the Kamara file-browser page HTML (with sample
-// folders and files) to stdout, so CI can run an accessibility checker (axe)
-// against the real template without a cluster or a login (README §4).
+// Command a11y-render writes a Kamara UI state's HTML (with sample content
+// and the CSS inlined so axe evaluates real colour contrast) to stdout, so
+// CI can run an accessibility checker against the real templates without a
+// cluster or a login (README §4).
+//
+// The state is chosen by the first argument (default "browse"), so CI can
+// axe several distinct layouts — the populated browse view + open drawer, the
+// empty folder, the root (no breadcrumb), and long/wrapping names (#39).
 package main
 
 import (
+	"fmt"
 	"os"
 	"time"
 
@@ -13,23 +19,50 @@ import (
 )
 
 func main() {
+	state := "browse"
+	if len(os.Args) > 1 {
+		state = os.Args[1]
+	}
+	v, err := view(state)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	v.Inline = true // inline the CSS so axe evaluates real colour contrast
+	if err := web.Page(os.Stdout, v); err != nil {
+		panic(err)
+	}
+}
+
+func view(state string) (web.View, error) {
 	owner := pii.Subject{Instance: "demo.example", UserID: "sample"}
 	now := time.Unix(0, 0).UTC()
 	here := "019sample-folder"
+	root := file.Folder{ID: here, Owner: owner, Name: "Projects"}
 	sub := file.Folder{ID: "019sub", Owner: owner, Name: "Designs", ParentID: &here, Created: now, Updated: now}
-	v := web.View{
-		Crumbs:  []file.Folder{{ID: here, Owner: owner, Name: "Projects", Created: now, Updated: now}},
-		Folders: []file.Folder{sub},
-		Files: []file.Object{
-			{ID: "019f1", Owner: owner, Name: "report.pdf", Size: 512000, FolderID: &here, Created: now, Updated: now},
-			{ID: "019f2", Owner: owner, Name: "notes.txt", Size: 900, FolderID: &here, Created: now, Updated: now},
-		},
-		AllFolders: []file.Folder{{ID: here, Owner: owner, Name: "Projects"}, sub}, // move-picker options
-		Inline:     true,                                                           // inline the CSS so axe evaluates real colour contrast
-	}
-	// Pre-open the details drawer so its markup is checked too.
-	v.Drawer = &v.Files[0]
-	if err := web.Page(os.Stdout, v); err != nil {
-		panic(err)
+	report := file.Object{ID: "019f1", Owner: owner, Name: "report.pdf", Size: 512000, FolderID: &here, Created: now, Updated: now}
+	notes := file.Object{ID: "019f2", Owner: owner, Name: "notes.txt", Size: 900, FolderID: &here, Created: now, Updated: now}
+	all := []file.Folder{root, sub}
+
+	switch state {
+	case "browse": // populated folder with the details drawer open
+		v := web.View{Crumbs: []file.Folder{root}, Folders: []file.Folder{sub},
+			Files: []file.Object{report, notes}, AllFolders: all}
+		v.Drawer = &report
+		return v, nil
+	case "empty": // an empty folder (the dashed placeholder + its contrast)
+		return web.View{Crumbs: []file.Folder{root}, AllFolders: all}, nil
+	case "root": // the root view — no breadcrumb entries
+		return web.View{Folders: []file.Folder{root}, AllFolders: all}, nil
+	case "long": // long / wrapping names
+		longName := "A-very-long-file-name-that-should-wrap-gracefully-without-breaking-the-layout-or-contrast.pdf"
+		longFolder := file.Folder{ID: "019long", Owner: owner, Name: "A deeply nested project folder with an unusually long descriptive title"}
+		return web.View{
+			Folders:    []file.Folder{longFolder},
+			Files:      []file.Object{{ID: "019l", Owner: owner, Name: longName, Size: 1, Created: now, Updated: now}},
+			AllFolders: []file.Folder{longFolder},
+		}, nil
+	default:
+		return web.View{}, fmt.Errorf("unknown state %q (browse|empty|root|long)", state)
 	}
 }
