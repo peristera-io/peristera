@@ -300,6 +300,60 @@ func TestSpikeTokenExchange(t *testing.T) {
 		}
 	}
 	t.Logf("EXCHANGE (OIDC tex app, project-aud subject, PLAIN): got_token=%v :: %s", tok7 != "", body7)
+
+	// (8) The production question: same OIDC app but PRIVATE_KEY_JWT auth
+	// (no shared secret at rest) instead of BASIC. Create it with the
+	// token-exchange grant, generate an app key, authenticate the exchange
+	// with a client assertion.
+	var pkApp struct {
+		AppID    string `json:"appId"`
+		ClientID string `json:"clientId"`
+	}
+	if err := c.do(ctx, http.MethodPost,
+		fmt.Sprintf("%s/management/v1/projects/%s/apps/oidc", base, projID), orgID, map[string]any{
+			"name":            fmt.Sprintf("svc-spike-pk-%d", time.Now().Unix()),
+			"redirectUris":    []string{"http://localhost/cb"},
+			"responseTypes":   []string{"OIDC_RESPONSE_TYPE_CODE"},
+			"grantTypes":      []string{"OIDC_GRANT_TYPE_AUTHORIZATION_CODE", "OIDC_GRANT_TYPE_TOKEN_EXCHANGE"},
+			"appType":         "OIDC_APP_TYPE_WEB",
+			"authMethodType":  "OIDC_AUTH_METHOD_TYPE_PRIVATE_KEY_JWT",
+			"accessTokenType": "OIDC_TOKEN_TYPE_JWT",
+		}, &pkApp); err != nil {
+		t.Fatalf("create pk oidc app: %v", err)
+	}
+	var pkKey struct {
+		KeyDetails string `json:"keyDetails"`
+	}
+	if err := c.do(ctx, http.MethodPost,
+		fmt.Sprintf("%s/management/v1/projects/%s/apps/%s/keys", base, projID, pkApp.AppID), orgID,
+		map[string]any{"type": "KEY_TYPE_JSON", "expirationDate": "2028-01-01T00:00:00Z"}, &pkKey); err != nil {
+		t.Fatalf("create pk app key: %v", err)
+	}
+	rawPK, _ := base64.StdEncoding.DecodeString(pkKey.KeyDetails)
+	var pk struct {
+		KeyID    string `json:"keyId"`
+		Key      string `json:"key"`
+		ClientID string `json:"clientId"`
+	}
+	json.Unmarshal(rawPK, &pk)
+	t.Logf("PK OIDC app clientId=%s keyId=%s", pk.ClientID, pk.KeyID)
+	pkPriv := parseRSAPEM(t, pk.Key)
+	var tok8, body8 string
+	for i := 0; i < 6; i++ {
+		time.Sleep(2 * time.Second)
+		tok8, body8 = postToken(t, base, url.Values{
+			"grant_type":            {"urn:ietf:params:oauth:grant-type:token-exchange"},
+			"subject_token":         {subjTok},
+			"subject_token_type":    {"urn:ietf:params:oauth:token-type:access_token"},
+			"scope":                 {"openid " + projAud},
+			"client_assertion_type": {"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"},
+			"client_assertion":      {signAssertion(t, pkPriv, pk.KeyID, pk.ClientID, base)},
+		})
+		if tok8 != "" || !strings.Contains(body8, "no active client") {
+			break
+		}
+	}
+	t.Logf("EXCHANGE (OIDC app PRIVATE_KEY_JWT, project-aud subject): got_token=%v :: %s", tok8 != "", body8)
 	var tok6, body6 string
 	for i := 0; i < 6; i++ {
 		time.Sleep(2 * time.Second)
