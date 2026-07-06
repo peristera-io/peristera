@@ -38,6 +38,8 @@ func TestPageRendersDocument(t *testing.T) {
 		`hx-get="/browse?folder=sub"`,   // htmx folder navigation
 		`href="/style.css"`,             // linked stylesheet (not inlined)
 		`src="/htmx.js"`,                // vendored htmx (not a CDN)
+		`src="/kamara.js"`,              // uploader component
+		"<kamara-uploader",              // progressive-enhancement wrapper around the upload form
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("page missing %q", want)
@@ -64,6 +66,7 @@ func TestOperationsMarkup(t *testing.T) {
 		`hx-confirm=`,                          // delete confirmation
 		`name="dest"`,                          // move-destination picker
 		`aria-label="Delete report.pdf"`,       // accessible delete button name
+		`hx-get="/files/f1/details"`,           // details drawer trigger
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("operations markup missing %q", want)

@@ -1,7 +1,9 @@
 @import "tailwindcss";
 
-/* Scan the Go templates for utility classes (Tailwind v4 content source). */
+/* Scan the Go templates and the uploader component for utility classes
+   (Tailwind v4 content sources). */
 @source "../internal/web/*.go";
+@source "../internal/web/kamara-uploader.js";
 
 /* Peristera design language — seed tokens (Q&A R9). Kept minimal and named
    so they can be lifted into a shared preset later. Kamara is the pilot;

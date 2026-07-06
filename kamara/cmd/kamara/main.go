@@ -145,6 +145,7 @@ func main() {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) })
 	mux.HandleFunc("GET /style.css", serveCSS)
 	mux.HandleFunc("GET /htmx.js", serveJS)
+	mux.HandleFunc("GET /kamara.js", serveUploader)
 	mux.Handle("/v1/", h.Routes()) // bearer API (authed inside)
 	mux.HandleFunc("GET /auth/login", rp.Login)
 	mux.HandleFunc("GET /auth/callback", rp.Callback)
@@ -217,6 +218,18 @@ func serveCSS(w http.ResponseWriter, _ *http.Request) {
 // serveJS serves the vendored, embedded htmx runtime (no CDN).
 func serveJS(w http.ResponseWriter, _ *http.Request) {
 	js, err := web.Script()
+	if err != nil {
+		http.Error(w, "script unavailable", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	_, _ = w.Write(js)
+}
+
+// serveUploader serves Kamara's uploader component JS.
+func serveUploader(w http.ResponseWriter, _ *http.Request) {
+	js, err := web.Uploader()
 	if err != nil {
 		http.Error(w, "script unavailable", http.StatusInternalServerError)
 		return

@@ -18,7 +18,7 @@ import (
 	"github.com/peristera-io/peristera/kamara/internal/file"
 )
 
-//go:embed style.css htmx.min.js
+//go:embed style.css htmx.min.js kamara-uploader.js
 var assets embed.FS
 
 // Stylesheet returns the compiled Tailwind CSS (served at /style.css).
@@ -27,6 +27,10 @@ func Stylesheet() ([]byte, error) { return assets.ReadFile("style.css") }
 // Script returns the vendored htmx runtime (served at /htmx.js) — embedded
 // rather than pulled from a CDN, so the origin ships no third-party JS.
 func Script() ([]byte, error) { return assets.ReadFile("htmx.min.js") }
+
+// Uploader returns the drag-and-drop uploader component (served at
+// /kamara.js) — Kamara's own progressive-enhancement JS.
+func Uploader() ([]byte, error) { return assets.ReadFile("kamara-uploader.js") }
 
 // msg is the string catalog — no hardcoded strings in templates (README §4;
 // EN only for now, FR/DE/LB are targets).
@@ -117,6 +121,7 @@ var pageTmpl = template.Must(template.New("page").Funcs(funcs).Parse(`<!doctype 
 <title>{{msg "title"}}</title>
 {{if .Inline}}<style>{{stylesheet}}</style>{{else}}<link rel="stylesheet" href="/style.css">{{end}}
 <script src="/htmx.js" defer></script>
+<script src="/kamara.js" defer></script>
 </head>
 <body class="min-h-screen bg-stone-50 text-stone-900">
 <header class="border-b border-stone-200 bg-white">
@@ -147,13 +152,15 @@ var pageTmpl = template.Must(template.New("page").Funcs(funcs).Parse(`<!doctype 
   </label>
   <button type="submit" class="rounded-base bg-brand px-3 py-1.5 text-sm font-medium text-white hover:opacity-90">{{msg "create"}}</button>
  </form>
- <form hx-post="/files?at={{.Here}}" hx-encoding="multipart/form-data" hx-target="#browser" hx-swap="innerHTML"
-       hx-on::after-request="if(event.detail.successful)this.reset()" class="flex items-end gap-2">
-  <label class="text-sm text-stone-700">{{msg "upload"}}
-   <input type="file" name="file" required class="mt-1 block text-sm">
-  </label>
-  <button type="submit" class="rounded-base bg-brand px-3 py-1.5 text-sm font-medium text-white hover:opacity-90">{{msg "upload"}}</button>
- </form>
+ <kamara-uploader class="block rounded-base border-2 border-dashed border-stone-300 p-2">
+  <form hx-post="/files?at={{.Here}}" hx-encoding="multipart/form-data" hx-target="#browser" hx-swap="innerHTML"
+        hx-on::after-request="if(event.detail.successful)this.reset()" class="flex items-end gap-2">
+   <label class="text-sm text-stone-700">{{msg "upload"}}
+    <input type="file" name="file" required class="mt-1 block text-sm">
+   </label>
+   <button type="submit" class="rounded-base bg-brand px-3 py-1.5 text-sm font-medium text-white hover:opacity-90">{{msg "upload"}}</button>
+  </form>
+ </kamara-uploader>
 </div>
 {{if and (not .Folders) (not .Files)}}
 <p class="rounded-base border border-dashed border-stone-300 p-8 text-center text-stone-500">{{msg "empty"}}</p>
