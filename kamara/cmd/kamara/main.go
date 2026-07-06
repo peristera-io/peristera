@@ -95,7 +95,8 @@ func main() {
 		log.Fatalf("migrations: %v", err)
 	}
 
-	az, err := authz.Connect(ctx, mustEnv("OPENFGA_API_URL"), "kamara", []byte(fgaModel))
+	az, err := authz.Connect(ctx, mustEnv("OPENFGA_API_URL"), "kamara", []byte(fgaModel),
+		authz.WithToken(os.Getenv("OPENFGA_API_TOKEN")))
 	if err != nil {
 		log.Fatalf("openfga: %v", err)
 	}

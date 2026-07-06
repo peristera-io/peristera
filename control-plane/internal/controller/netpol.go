@@ -58,8 +58,10 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *v1
 		})
 	}
 
-	// OpenFGA: reachable only from same-namespace app pods, on its API
-	// ports. Closes the other half of #18 alongside preshared-key auth.
+	// OpenFGA: reachable only from the same-namespace apps that actually use
+	// it (NeedsOpenFGA — not every managed pod; stub has no business
+	// reaching it), on its API ports. Closes the other half of #18 alongside
+	// preshared-key auth.
 	if anyAppNeedsOpenFGA() {
 		policies = append(policies, &networkingv1.NetworkPolicy{
 			ObjectMeta: policyMeta("np-openfga", ns),
@@ -67,7 +69,7 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *v1
 				PodSelector: *nameSelector("openfga"),
 				PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress, networkingv1.PolicyTypeEgress},
 				Ingress: []networkingv1.NetworkPolicyIngressRule{{
-					From:  []networkingv1.NetworkPolicyPeer{{PodSelector: managedSelector()}},
+					From:  []networkingv1.NetworkPolicyPeer{{PodSelector: openFGAConsumerSelector()}},
 					Ports: []networkingv1.NetworkPolicyPort{tcpPort(8080), tcpPort(8081)},
 				}},
 				// Egress: its database (same namespace) + DNS.
@@ -128,8 +130,20 @@ func nameSelector(app string) *metav1.LabelSelector {
 	return &metav1.LabelSelector{MatchLabels: map[string]string{"app.kubernetes.io/name": app}}
 }
 
-func managedSelector() *metav1.LabelSelector {
-	return &metav1.LabelSelector{MatchLabels: map[string]string{"app.kubernetes.io/managed-by": "peristera-control-plane"}}
+// openFGAConsumerSelector matches the same-namespace app pods that declare
+// NeedsOpenFGA — the only apps allowed to reach the tenant's OpenFGA.
+func openFGAConsumerSelector() *metav1.LabelSelector {
+	var names []string
+	for _, a := range catalog {
+		if a.NeedsOpenFGA {
+			names = append(names, a.Name)
+		}
+	}
+	return &metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{
+		Key:      "app.kubernetes.io/name",
+		Operator: metav1.LabelSelectorOpIn,
+		Values:   names,
+	}}}
 }
 
 func kubeSystemSelector() *metav1.LabelSelector {

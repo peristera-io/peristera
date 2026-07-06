@@ -25,8 +25,19 @@ type Client struct {
 	base    string
 	storeID string
 	modelID string
+	token   string
 	http    *http.Client
 }
+
+// Option configures a Client at Connect time.
+type Option func(*Client)
+
+// WithToken sets the bearer token sent on every OpenFGA request — the
+// per-tenant preshared key when OpenFGA runs with authn (ADR-0016; the
+// control plane injects it as OPENFGA_API_TOKEN). An empty token sends no
+// Authorization header, so this is a no-op against an unauthenticated
+// OpenFGA (tests, older deployments).
+func WithToken(token string) Option { return func(c *Client) { c.token = token } }
 
 // Object names an OpenFGA object as "<app-namespaced-type>:<id>", e.g.
 // "ergonomos/task:0198c…". Build one with Obj.
@@ -35,8 +46,11 @@ func Obj(typ, id string) string { return typ + ":" + id }
 // Connect ensures a store named storeName and the given authorization
 // model exist (idempotent), returning a ready Client. modelJSON is the
 // OpenFGA 1.1 model (type_definitions); an app passes its own type module.
-func Connect(ctx context.Context, apiURL, storeName string, modelJSON json.RawMessage) (*Client, error) {
+func Connect(ctx context.Context, apiURL, storeName string, modelJSON json.RawMessage, opts ...Option) (*Client, error) {
 	c := &Client{base: apiURL, http: &http.Client{Timeout: 15 * time.Second}}
+	for _, o := range opts {
+		o(c)
+	}
 
 	storeID, err := c.findStore(ctx, storeName)
 	if err != nil {
@@ -71,6 +85,9 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return err

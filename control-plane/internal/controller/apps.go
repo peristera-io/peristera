@@ -146,6 +146,15 @@ func (r *TenantReconciler) ensureApps(ctx context.Context, tenant *v1alpha1.Tena
 				Name:  "OPENFGA_API_URL",
 				Value: fmt.Sprintf("http://openfga.%s.svc.cluster.local:8080", ns),
 			})
+			// The per-tenant OpenFGA preshared key (ADR-0016); lib/authz
+			// sends it as a bearer token.
+			env = append(env, corev1.EnvVar{
+				Name: "OPENFGA_API_TOKEN",
+				ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: openFGAKeySecret},
+					Key:                  openFGAKeyField,
+				}},
+			})
 		}
 
 		// Stateful extras (Kamara): a per-tenant blob PVC and a per-tenant

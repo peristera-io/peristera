@@ -118,6 +118,9 @@ func (r *TenantReconciler) ensureOpenFGA(ctx context.Context, tenant *v1alpha1.T
 	if err := r.ensureAppDatabase(ctx, tenant, ns, "openfga"); err != nil {
 		return err
 	}
+	if err := r.ensureOpenFGAKey(ctx, tenant, ns); err != nil {
+		return err
+	}
 	labels := map[string]string{
 		"app.kubernetes.io/name":       "openfga",
 		"app.kubernetes.io/managed-by": "peristera-control-plane",
@@ -130,6 +133,20 @@ func (r *TenantReconciler) ensureOpenFGA(ctx context.Context, tenant *v1alpha1.T
 		}},
 	}
 	engine := corev1.EnvVar{Name: "OPENFGA_DATASTORE_ENGINE", Value: "postgres"}
+	// Preshared-key authn (ADR-0016, folds #18): OpenFGA rejects API calls
+	// without the tenant key. The NetworkPolicy already restricts *who* can
+	// reach the port (same-ns apps); this stops a reachable-but-unauthorized
+	// caller from reading/writing tuples. Health probes stay unauthenticated
+	// in OpenFGA, so the readiness probe below still works. Server-only —
+	// `openfga migrate` talks to the DB, not the API.
+	authnMethod := corev1.EnvVar{Name: "OPENFGA_AUTHN_METHOD", Value: "preshared"}
+	authnKeys := corev1.EnvVar{
+		Name: "OPENFGA_AUTHN_PRESHARED_KEYS",
+		ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+			LocalObjectReference: corev1.LocalObjectReference{Name: openFGAKeySecret},
+			Key:                  openFGAKeyField,
+		}},
+	}
 
 	deploy := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "openfga", Namespace: ns, Labels: labels},
@@ -148,7 +165,7 @@ func (r *TenantReconciler) ensureOpenFGA(ctx context.Context, tenant *v1alpha1.T
 						Name:    "openfga",
 						Image:   openFGAImage,
 						Command: []string{"/openfga", "run"},
-						Env:     []corev1.EnvVar{engine, dsnEnv},
+						Env:     []corev1.EnvVar{engine, dsnEnv, authnMethod, authnKeys},
 						Ports: []corev1.ContainerPort{
 							{Name: "http", ContainerPort: 8080},
 							{Name: "grpc", ContainerPort: 8081},
@@ -203,6 +220,34 @@ func (r *TenantReconciler) ensureBlob(ctx context.Context, tenant *v1alpha1.Tena
 		},
 	}
 	return r.setOwnerAndCreate(ctx, tenant, pvc)
+}
+
+// openFGAKeySecret / openFGAKeyField name the per-tenant OpenFGA
+// preshared-key Secret. OpenFGA reads it as OPENFGA_AUTHN_PRESHARED_KEYS;
+// apps that talk to OpenFGA get the same value as OPENFGA_API_TOKEN.
+const (
+	openFGAKeySecret = "openfga-authn-key"
+	openFGAKeyField  = "token"
+)
+
+// ensureOpenFGAKey generates the per-tenant OpenFGA preshared key as a
+// Secret (ADR-0016). Generated once, never rotated here (rotation is a later
+// hardening); the tenant owns it so off-boarding garbage-collects it.
+func (r *TenantReconciler) ensureOpenFGAKey(ctx context.Context, tenant *v1alpha1.Tenant, ns string) error {
+	if err := r.Get(ctx, client.ObjectKey{Namespace: ns, Name: openFGAKeySecret}, &corev1.Secret{}); err == nil {
+		return nil
+	} else if !apierrors.IsNotFound(err) {
+		return err
+	}
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return fmt.Errorf("generating OpenFGA key: %w", err)
+	}
+	sec := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: openFGAKeySecret, Namespace: ns},
+		StringData: map[string]string{openFGAKeyField: base64.RawURLEncoding.EncodeToString(key)},
+	}
+	return r.setOwnerAndCreate(ctx, tenant, sec)
 }
 
 // ensureDEK generates a per-tenant data-encryption key as a Secret (Kamara,
