@@ -1,0 +1,12 @@
+{
+  "name": "kamara-demo",
+  "private": true,
+  "description": "End-to-end browser demo for Kamara (Playwright): login → browse → create folder → upload → details drawer → download.",
+  "type": "module",
+  "scripts": {
+    "demo": "node demo.mjs"
+  },
+  "dependencies": {
+    "playwright": "^1.61.1"
+  }
+}
