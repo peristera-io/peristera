@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -61,6 +62,7 @@ func (s *Server) Start(ctx context.Context) error {
 		ClientID:    clientID,
 		RedirectURL: s.Cfg.PublicURL + "/auth/callback",
 		CookieName:  "cp_session",
+		Secure:      strings.HasPrefix(s.Cfg.PublicURL, "https://"),
 	})
 	if err != nil {
 		return fmt.Errorf("oidc relying party: %w", err)
@@ -76,7 +78,9 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /auth/logout", s.rp.Logout)
 	mux.Handle("/api/v1/", http.StripPrefix("/api/v1",
 		s.requireAuth(gen.Handler(&api{s}), true)))
-	mux.Handle("/", s.requireAuth(s.uiMux(), false))
+	// CSRF guard (#4) on the cookie-authed HTMX UI. (The bearer /api/v1 also
+	// accepts the session cookie today — tightening that is part of #1.)
+	mux.Handle("/", s.requireAuth(oidcrp.SameOriginGuard(s.Cfg.PublicURL, s.uiMux()), false))
 
 	srv := &http.Server{Addr: s.Cfg.ListenAddr, Handler: mux}
 	go func() {

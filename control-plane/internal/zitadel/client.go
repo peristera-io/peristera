@@ -35,6 +35,10 @@ type Client struct {
 	// host and the fixed JWT audience.
 	BaseURL string
 	UserID  string
+	// DevMode provisions OIDC apps with Zitadel's devMode (relaxed redirect
+	// /HTTPS validation) — for the http dev cluster only. Off in production
+	// (#5). Defaults to false; NewFromKeyFile turns it on for an http issuer.
+	DevMode bool
 
 	key  *rsa.PrivateKey
 	http *http.Client
@@ -63,7 +67,10 @@ func NewFromKeyFile(baseURL, userID, keyPath string) (*Client, error) {
 	}
 	return &Client{
 		BaseURL: baseURL, UserID: userID, key: key,
-		http: &http.Client{Timeout: 20 * time.Second},
+		// devMode follows the deployment scheme: on for the http dev cluster,
+		// off for an https (production) issuer (#5).
+		DevMode: !strings.HasPrefix(baseURL, "https://"),
+		http:    &http.Client{Timeout: 20 * time.Second},
 	}, nil
 }
 
@@ -534,7 +541,7 @@ func (c *Client) EnsureWebApp(ctx context.Context, base, orgID, name string, red
 					"appType":                  "OIDC_APP_TYPE_WEB",
 					"authMethodType":           "OIDC_AUTH_METHOD_TYPE_NONE",
 					"accessTokenType":          "OIDC_TOKEN_TYPE_BEARER",
-					"devMode":                  true,
+					"devMode":                  c.DevMode,
 					"idTokenUserinfoAssertion": true,
 				}, nil)
 			if err != nil {

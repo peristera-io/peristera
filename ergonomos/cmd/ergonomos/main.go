@@ -118,7 +118,8 @@ func main() {
 	mux.HandleFunc("GET /auth/login", rp.Login)
 	mux.HandleFunc("GET /auth/callback", rp.Callback)
 	mux.HandleFunc("GET /auth/logout", rp.Logout)
-	mux.Handle("/", rp.Middleware(app.routes(), rp.RedirectToLogin("/auth/login")))
+	// CSRF guard (#4) on the cookie-authed UI (not the — absent — bearer API).
+	mux.Handle("/", rp.Middleware(oidcrp.SameOriginGuard(publicURL, app.routes()), rp.RedirectToLogin("/auth/login")))
 
 	addr := env("LISTEN_ADDR", ":5570")
 	log.Printf("ergonomos on %s (issuer %s)", addr, issuer)

@@ -130,11 +130,77 @@ func (c *Client) createStore(ctx context.Context, name string) (string, error) {
 }
 
 func (c *Client) writeModel(ctx context.Context, model json.RawMessage) (string, error) {
+	// OpenFGA's WriteAuthorizationModel is append-only and mints a new,
+	// immutable model id on *every* call — even for byte-identical input and
+	// with no dedup — so writing the same model on every boot grows the table
+	// unbounded (#19). Reuse the latest model when it already matches.
+	if id, ok := c.latestMatchingModel(ctx, model); ok {
+		return id, nil
+	}
 	var out struct {
 		AuthorizationModelID string `json:"authorization_model_id"`
 	}
 	err := c.do(ctx, http.MethodPost, "/stores/"+c.storeID+"/authorization-models", model, &out)
 	return out.AuthorizationModelID, err
+}
+
+// latestMatchingModel returns the id of the store's latest authorization model
+// if its content matches model (ignoring the server-assigned id), so an
+// unchanged model on reboot doesn't mint a new one.
+func (c *Client) latestMatchingModel(ctx context.Context, model json.RawMessage) (string, bool) {
+	var out struct {
+		Models []json.RawMessage `json:"authorization_models"`
+	}
+	if err := c.do(ctx, http.MethodGet,
+		"/stores/"+c.storeID+"/authorization-models?page_size=1", nil, &out); err != nil || len(out.Models) == 0 {
+		return "", false
+	}
+	latest := out.Models[0]
+	if modelContent(model) != modelContent(latest) {
+		return "", false
+	}
+	var m struct {
+		ID string `json:"id"`
+	}
+	if json.Unmarshal(latest, &m) != nil {
+		return "", false
+	}
+	return m.ID, m.ID != ""
+}
+
+// modelContent canonicalizes a model to its meaningful content (schema
+// version + type definitions), dropping the server id and any added metadata,
+// so a written model compares equal to the input that produced it.
+func modelContent(raw json.RawMessage) string {
+	var m struct {
+		SchemaVersion   string          `json:"schema_version"`
+		TypeDefinitions json.RawMessage `json:"type_definitions"`
+	}
+	if json.Unmarshal(raw, &m) != nil {
+		return string(raw)
+	}
+	var td any
+	_ = json.Unmarshal(m.TypeDefinitions, &td)
+	stripMetadata(td)
+	// json.Marshal sorts map keys, giving a stable canonical form.
+	b, _ := json.Marshal(map[string]any{"schema_version": m.SchemaVersion, "type_definitions": td})
+	return string(b)
+}
+
+// stripMetadata removes OpenFGA-added "metadata" keys recursively, so the
+// stored model's server-side annotations don't defeat the comparison.
+func stripMetadata(v any) {
+	switch t := v.(type) {
+	case map[string]any:
+		delete(t, "metadata")
+		for _, child := range t {
+			stripMetadata(child)
+		}
+	case []any:
+		for _, child := range t {
+			stripMetadata(child)
+		}
+	}
 }
 
 // Write records that user has relation on object (e.g. owner on a task).

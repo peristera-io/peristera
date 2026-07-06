@@ -147,11 +147,12 @@ func main() {
 	mux.HandleFunc("GET /style.css", serveCSS)
 	mux.HandleFunc("GET /htmx.js", serveJS)
 	mux.HandleFunc("GET /kamara.js", serveUploader)
-	mux.Handle("/v1/", h.Routes()) // bearer API (authed inside)
+	mux.Handle("/v1/", h.Routes()) // bearer API (authed inside; no cookie, no CSRF surface)
 	mux.HandleFunc("GET /auth/login", rp.Login)
 	mux.HandleFunc("GET /auth/callback", rp.Callback)
 	mux.HandleFunc("GET /auth/logout", rp.Logout)
-	mux.Handle("/", rp.Middleware(app.routes(), rp.RedirectToLogin("/auth/login")))
+	// CSRF guard (#4) on the cookie-authed browser UI only.
+	mux.Handle("/", rp.Middleware(oidcrp.SameOriginGuard(publicURL, app.routes()), rp.RedirectToLogin("/auth/login")))
 
 	addr := env("LISTEN_ADDR", ":5580")
 	// A real http.Server with a header-read timeout (Slowloris defense) and

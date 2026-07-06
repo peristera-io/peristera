@@ -206,6 +206,39 @@ func (rp *RelyingParty) Session(r *http.Request) (Session, bool) {
 	return rp.sessions.Get(c.Value)
 }
 
+// SameOriginGuard is a CSRF defense for cookie-authed browser UIs (#4): it
+// lets safe methods through and requires state-changing ones (POST/PUT/PATCH/
+// DELETE) to be same-origin. It trusts the browser-set Sec-Fetch-Site header
+// (which page JavaScript cannot forge) — allowing only same-origin/none and
+// rejecting cross-site AND same-site (a sibling subdomain is not us) — and
+// falls back to an Origin check against selfOrigin (scheme://host[:port]) for
+// clients that don't send Sec-Fetch-Site. Mount it only on the cookie-authed
+// UI, never on a bearer API (which carries no ambient credential and so has
+// no CSRF surface).
+func SameOriginGuard(selfOrigin string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+			next.ServeHTTP(w, r)
+			return
+		}
+		switch r.Header.Get("Sec-Fetch-Site") {
+		case "same-origin", "none":
+			next.ServeHTTP(w, r)
+			return
+		case "same-site", "cross-site":
+			http.Error(w, "cross-origin request rejected", http.StatusForbidden)
+			return
+		}
+		// No Sec-Fetch-Site (older/non-browser): fall back to Origin.
+		if o := r.Header.Get("Origin"); o != "" && o != selfOrigin {
+			http.Error(w, "cross-origin request rejected", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // Middleware guards next; when there is no valid session it calls
 // onUnauthorized (which redirects a browser to Login, or writes a 401 for
 // an API — the caller decides).

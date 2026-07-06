@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/peristera-io/peristera/kamara/internal/engine"
 	"github.com/peristera-io/peristera/kamara/internal/file"
 	"github.com/peristera-io/peristera/lib/audit"
@@ -298,6 +300,13 @@ func (r *ObjectRepo) SetFolderName(ctx context.Context, id, name string) error {
 
 func (r *ObjectRepo) DeleteFolder(ctx context.Context, id string) error {
 	_, err := r.db.ExecContext(ctx, `DELETE FROM folders WHERE id=$1`, id)
+	// A child added between the service's empty-check and here trips the
+	// parent_id / folder_id ON DELETE RESTRICT (SQLSTATE 23503) — surface
+	// that race as "not empty" (409), not an opaque 500 (#36).
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+		return file.ErrNotEmpty
+	}
 	return err
 }
 

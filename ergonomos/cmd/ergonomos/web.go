@@ -65,14 +65,8 @@ func (a *webApp) attach(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "attach not configured", http.StatusNotImplemented)
 		return
 	}
-	// CSRF defense: this mutating, session-authed POST has cross-tenant
-	// consequences (a file owned by the victim), so reject cross-site
-	// requests. Sec-Fetch-Site is sent by modern browsers and cannot be
-	// forged from JS. (The broader CSRF-token/Secure work is #4.)
-	if s := r.Header.Get("Sec-Fetch-Site"); s == "cross-site" {
-		http.Error(w, "cross-site request rejected", http.StatusForbidden)
-		return
-	}
+	// CSRF is handled by the shared oidcrp.SameOriginGuard (#4) mounted on
+	// the UI in main.
 	sess, ok := a.rp.Session(r)
 	if !ok {
 		http.Error(w, "no session", http.StatusUnauthorized)
