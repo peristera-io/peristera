@@ -30,6 +30,14 @@ import (
 func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *v1alpha1.Tenant, ns string) error {
 	var policies []client.Object
 	for _, app := range catalog {
+		// Optional apps only get a policy when the tenant has enabled them
+		// (ADR-0018); otherwise their pod does not exist. The standard shape
+		// (ingress from Traefik + declared callers on the app port; egress to
+		// same namespace + DNS + Traefik) fits the office engine too: it serves
+		// the browser via Traefik and reaches Kamara's WOPI host in-namespace.
+		if app.Optional && !tenantEnables(tenant, app.Name) {
+			continue
+		}
 		// Ingress: the ingress controller (browser) + declared callers,
 		// all on the app's port. This pins browser traffic to the Traefik
 		// pod identity; it works because in kube-proxy-coexistence mode

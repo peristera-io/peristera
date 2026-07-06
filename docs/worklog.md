@@ -525,3 +525,42 @@ the #19 restart check):
 - Closed #4, #5, #19, #36, #37. Residual noted: control-plane `/api/v1`
   accepts the session cookie (CSRF there is tied to #1).
 - **Next: plan M6 — OnlyOffice.**
+
+## 2026-07-06 — M6 s0 + s1 (browser office editing: Collabora, opt-in)
+
+Direction switched from OnlyOffice to **Collabora Online (CODE)** after a
+comparison (ADR-0018): lighter (no bundled Postgres/RabbitMQ), MPL-2.0, WOPI
+maps ~1:1 onto Kamara's OpenFGA-gated file ops, stronger per-doc isolation.
+Deployed as an **opt-in, per-tenant** engine — never shared, so no tenant's
+decrypted document content is processed alongside another's.
+
+- **s0 — spike + ADR.** Verified CODE `26.04.2.1` on k3d (`hack/spike/`):
+  ~512 MB image, ~460–480 MiB idle; **connections unlimited by default** (the
+  20-conn/10-doc cap is opt-in "home mode" only — beats OnlyOffice CE's hard
+  20); WOPI allow-list permits cluster-private ranges; coolwsd enforces a **WS
+  Origin** check (matters for the iframe embed). Drove a headless cool
+  WebSocket load: coolwsd called the stub WOPI host's **CheckFileInfo +
+  GetFile** under Cilium and LibreOffice **opened the doc** (`load success`).
+  Token transport is `Authorization: Bearer`; **Collabora publishes no
+  proof-key**, so the per-session access_token is the whole security boundary
+  (R69 proof-key leg moot). PutFile save-back deferred to s3's browser demo (a
+  raw-WS view-init artefact, not architectural). ADR-0018 + amendments to
+  ADR-0004 (engine = Collabora) and ADR-0013 (optional-per-tenant dimension).
+  Commit `6a28f64`.
+- **s1 — catalog opt-in + provisioning.** `Tenant.spec.apps` opt-in set;
+  `CatalogApp` gains `Optional`/`External`; the office engine (Collabora) is a
+  dedicated provisioning path (`ensureOffice`: jail caps, WOPI env pinned to
+  the tenant's in-cluster Kamara + frame-ancestors, own ingress) — no OIDC/DB/
+  OpenFGA/S2S. Verified in-cluster on tenant `kam`: office absent until opted
+  in, then Deployment/Service/Ingress + `np-office` appear and Collabora
+  serves through its ingress; `np-kamara` admits office (editor→WOPI-host
+  edge); live topology probe — **office→kamara OPEN, office→openfga BLOCKED**.
+  Unit tests for the opt-in invariants.
+- **Known gap (create-only, to file/defer):** disabling an app in `spec.apps`
+  does not deprovision it, and a `np-kamara` created before the office catalog
+  entry keeps a stale caller set until recreated. Both are the M2 create-only
+  limitation (drift/teardown is the 2027 alpha). Workaround: delete the stale
+  `np-kamara`; manual cleanup on disable.
+- **Next: s2 — Kamara WOPI host** (CheckFileInfo/GetFile/PutFile, OpenFGA-gated
+  per-session access token) + the version-write path (save-back = new version)
+  + #28 (Content-Disposition/fileType on GetFile).

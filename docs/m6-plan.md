@@ -1,7 +1,8 @@
 # M6 plan — browser office editing (Collabora, opt-in per tenant)
 
-- **Status:** **s0 done** (2026-07-06) — Collabora CODE spike verified on the
-  dev cluster + ADR-0018 written; Q&A Round 11 (R65–R70) answered (defaults
+- **Status:** **s0 + s1 done** (2026-07-06) — Collabora CODE spike + ADR-0018
+  (s0); opt-in catalog dimension + per-tenant provisioning + NetworkPolicy,
+  verified in-cluster (s1). Q&A Round 11 (R65–R70) answered (defaults
   accepted). Runs after M5 (done). Renumber note: this is M6 (M5 = S2S, M7 =
   public demo).
 - **Design home:** a new ADR for the document-editing integration
@@ -51,7 +52,7 @@ the `#28` Content-Disposition fold-in; CODE connection-cap verification.
 | Session | Work |
 |---|---|
 | 0 | ✅ **Spike + ADR (done).** Collabora CODE `26.04.2.1` deploys on k3d (~512 MB image, ~460–480 MiB idle); **connections unlimited by default** (20/10 cap only in opt-in "home mode"); WOPI allow-list permits cluster-private ranges; coolwsd enforces a **WS Origin** check; **open path proven end-to-end** (coolwsd called our stub's CheckFileInfo + GetFile under Cilium, LibreOffice loaded the doc); token transport is **`Authorization: Bearer`**; **Collabora publishes no proof-key** → access_token is the whole security boundary (R69 proof-key leg moot). PutFile save-back deferred to s3's browser demo (raw-WS view-init artefact, not architectural). ADR-0018 written; ADR-0004/0013 amended. Scaffolding in `hack/spike/`. |
-| 1 | **Catalog opt-in dimension.** The mechanism a tenant uses to enable the office app (ADR-0013 amendment); the control plane provisions Collabora into the tenant namespace only when enabled; NetworkPolicy for editor↔Kamara (same-namespace) + the browser. |
+| 1 | ✅ **Catalog opt-in dimension (done).** `Tenant.spec.apps` opt-in set; `CatalogApp` gains `Optional`/`External`; `ensureOffice` provisions Collabora into the tenant namespace only when enabled (jail caps + WOPI env pinned to in-cluster Kamara + frame-ancestors + own ingress; no OIDC/DB/OpenFGA/S2S). NetworkPolicy: `np-office` (browser via Traefik on 9980), `np-kamara` admits office (editor→WOPI edge). Verified in-cluster: absent until opted in; office→kamara OPEN, office→openfga BLOCKED. Unit tests for the invariants. Create-only gap noted (disable = no teardown; stale `np-kamara` on pre-office tenants). |
 | 2 | **Kamara WOPI host + version-write path.** `CheckFileInfo`/`GetFile`/`PutFile` in Kamara, gated by OpenFGA + a per-session access token; the new-version write path (save-back = a new version; light up the stubbed Versions drawer); `#28` Content-Disposition/fileType. |
 | 3 | **Editor UI + acceptance.** The `/edit/{id}` page embedding Collabora with a signed config; open → edit → save → reopen shows the change (a new version in Kamara). Live-verify in-cluster + a browser demo. |
 | 4 | **Buffer + writing.** ADR/SPEC/README/worklog; demo. |
