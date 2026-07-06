@@ -32,3 +32,6 @@ ADR, not in chat history.
 - [ADR-0013](0013-catalog-contract.md) — App catalog contract (code, not data — for now)
 - [ADR-0014](0014-migrations-goose.md) — Schema migrations with goose, expand/contract
 - [ADR-0015](0015-transactional-storage.md) — Transactional storage (unit of work)
+- [ADR-0016](0016-network-policy-and-service-topology.md) — Network policy and service topology
+- [ADR-0017](0017-service-to-service-auth.md) — Service-to-service auth (on-behalf-of via token exchange)
+- [ADR-0018](0018-document-editing-collabora-wopi.md) — Browser document editing (Collabora + WOPI, opt-in per tenant)

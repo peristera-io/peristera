@@ -1,0 +1,55 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: collabora-spike
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: collabora
+  namespace: collabora-spike
+  labels: { app: collabora }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: collabora } }
+  template:
+    metadata:
+      labels: { app: collabora }
+    spec:
+      containers:
+        - name: code
+          image: collabora/code:latest
+          ports:
+            - { containerPort: 9980, name: coolwsd }
+          env:
+            # WOPI host allow-list (regex, dots escaped). Our stub host + kamara.
+            - name: aliasgroup1
+              value: "http://stub.collabora-spike.svc.cluster.local:8080"
+            - name: domain
+              value: "stub\\.collabora-spike\\.svc\\.cluster\\.local"
+            # Run plain HTTP inside the cluster (TLS terminates at ingress).
+            - name: extra_params
+              value: "--o:ssl.enable=false --o:ssl.termination=true --o:net.frame_ancestors=* --o:storage.wopi.alias_groups.group[0].host[0]=http://stub.collabora-spike.svc.cluster.local:8080"
+            - name: DONT_GEN_SSL_CERT
+              value: "1"
+            - name: username
+              value: "admin"
+            - name: password
+              value: "admin"
+          resources:
+            requests: { cpu: "250m", memory: "512Mi" }
+            limits: { cpu: "2", memory: "2Gi" }
+          securityContext:
+            # coolwsd needs to set up chroot jails for the kit processes.
+            capabilities:
+              add: ["MKNOD", "SYS_CHROOT", "FOWNER", "CHOWN", "SYS_ADMIN"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: collabora
+  namespace: collabora-spike
+spec:
+  selector: { app: collabora }
+  ports:
+    - { port: 9980, targetPort: 9980, name: coolwsd }
