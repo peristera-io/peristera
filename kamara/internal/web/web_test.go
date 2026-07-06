@@ -15,9 +15,10 @@ func sampleView() View {
 	now := time.Unix(0, 0).UTC()
 	here := "fid"
 	return View{
-		Crumbs:  []file.Folder{{ID: here, Owner: owner, Name: "Projects"}},
-		Folders: []file.Folder{{ID: "sub", Owner: owner, Name: "Designs", ParentID: &here}},
-		Files:   []file.Object{{ID: "f1", Owner: owner, Name: "report.pdf", Size: 2048, FolderID: &here, Created: now, Updated: now}},
+		Crumbs:     []file.Folder{{ID: here, Owner: owner, Name: "Projects"}},
+		Folders:    []file.Folder{{ID: "sub", Owner: owner, Name: "Designs", ParentID: &here}},
+		Files:      []file.Object{{ID: "f1", Owner: owner, Name: "report.pdf", Size: 2048, FolderID: &here, Created: now, Updated: now}},
+		AllFolders: []file.Folder{{ID: here, Owner: owner, Name: "Projects"}, {ID: "sub", Owner: owner, Name: "Designs"}},
 	}
 }
 
@@ -40,6 +41,32 @@ func TestPageRendersDocument(t *testing.T) {
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("page missing %q", want)
+		}
+	}
+}
+
+func TestOperationsMarkup(t *testing.T) {
+	var b bytes.Buffer
+	if err := Listing(&b, sampleView()); err != nil {
+		t.Fatal(err)
+	}
+	html := b.String()
+	for _, want := range []string{
+		`hx-post="/folders?at=fid"`,          // create-folder form, into the current folder
+		`hx-post="/files?at=fid"`,            // upload form, into the current folder
+		`hx-encoding="multipart/form-data"`,  // file upload encoding
+		`hx-post="/folders/sub/rename?at=fid"`, // rename a folder
+		`hx-post="/folders/sub/move?at=fid"`,   // move a folder
+		`hx-post="/folders/sub/delete?at=fid"`, // delete a folder
+		`hx-post="/files/f1/rename?at=fid"`,    // rename a file
+		`hx-post="/files/f1/move?at=fid"`,      // move a file
+		`hx-post="/files/f1/delete?at=fid"`,    // delete a file
+		`hx-confirm=`,                          // delete confirmation
+		`name="dest"`,                          // move-destination picker
+		`aria-label="Delete report.pdf"`,       // accessible delete button name
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("operations markup missing %q", want)
 		}
 	}
 }

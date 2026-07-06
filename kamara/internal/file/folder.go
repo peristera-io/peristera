@@ -129,6 +129,12 @@ func (s *Service) Ancestors(ctx context.Context, caller pii.Subject, folderID st
 	return chain, nil
 }
 
+// AllFolders returns every folder the caller owns (for a move-destination
+// picker). Per-owner scope, like the listings (M4b).
+func (s *Service) AllFolders(ctx context.Context, caller pii.Subject) ([]Folder, error) {
+	return s.tx.Reader().Objects.FoldersByOwner(ctx, caller)
+}
+
 // RenameFile changes a file's display name.
 func (s *Service) RenameFile(ctx context.Context, caller pii.Subject, objectID, name string) error {
 	if name == "" {

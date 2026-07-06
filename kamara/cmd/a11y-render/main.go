@@ -16,14 +16,16 @@ func main() {
 	owner := pii.Subject{Instance: "demo.example", UserID: "sample"}
 	now := time.Unix(0, 0).UTC()
 	here := "019sample-folder"
+	sub := file.Folder{ID: "019sub", Owner: owner, Name: "Designs", ParentID: &here, Created: now, Updated: now}
 	v := web.View{
 		Crumbs:  []file.Folder{{ID: here, Owner: owner, Name: "Projects", Created: now, Updated: now}},
-		Folders: []file.Folder{{ID: "019sub", Owner: owner, Name: "Designs", ParentID: &here, Created: now, Updated: now}},
+		Folders: []file.Folder{sub},
 		Files: []file.Object{
 			{ID: "019f1", Owner: owner, Name: "report.pdf", Size: 512000, FolderID: &here, Created: now, Updated: now},
 			{ID: "019f2", Owner: owner, Name: "notes.txt", Size: 900, FolderID: &here, Created: now, Updated: now},
 		},
-		Inline: true, // inline the CSS so axe evaluates real colour contrast
+		AllFolders: []file.Folder{{ID: here, Owner: owner, Name: "Projects"}, sub}, // move-picker options
+		Inline:     true,                                                           // inline the CSS so axe evaluates real colour contrast
 	}
 	if err := web.Page(os.Stdout, v); err != nil {
 		panic(err)

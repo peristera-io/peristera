@@ -3,18 +3,17 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"log"
 	"net/http"
 	"strconv"
 
+	"github.com/peristera-io/peristera/kamara/internal/api"
 	"github.com/peristera-io/peristera/kamara/internal/file"
 	"github.com/peristera-io/peristera/kamara/internal/web"
 	"github.com/peristera-io/peristera/lib/oidcrp"
 	"github.com/peristera-io/peristera/lib/pii"
 )
-
-func isNotFound(err error) bool  { return errors.Is(err, file.ErrNotFound) }
-func isForbidden(err error) bool { return errors.Is(err, file.ErrForbidden) }
 
 // webApp is the browser file UI: OIDC cookie session (via the relying party)
 // resolves the logged-in user to a subject, and the file service does the
@@ -33,7 +32,167 @@ func (a *webApp) routes() http.Handler {
 	mux.HandleFunc("GET /{$}", a.page)                     // full page at the root
 	mux.HandleFunc("GET /browse", a.frag)                  // htmx fragment (folder navigation)
 	mux.HandleFunc("GET /files/{id}/download", a.download) // cookie-authed download
+	// Mutations — POST forms (HTML forms are GET/POST only). CSRF is closed
+	// by the SameSite=Lax session cookie: a cross-site POST omits the cookie,
+	// so the request is unauthenticated and rejected. Each re-renders the
+	// current folder (?at=) as the htmx swap target.
+	mux.HandleFunc("POST /folders", a.createFolder)
+	mux.HandleFunc("POST /folders/{id}/rename", a.renameFolder)
+	mux.HandleFunc("POST /folders/{id}/move", a.moveFolder)
+	mux.HandleFunc("POST /folders/{id}/delete", a.deleteFolder)
+	mux.HandleFunc("POST /files", a.upload)
+	mux.HandleFunc("POST /files/{id}/rename", a.renameFile)
+	mux.HandleFunc("POST /files/{id}/move", a.moveFile)
+	mux.HandleFunc("POST /files/{id}/delete", a.deleteFile)
 	return mux
+}
+
+// optStr maps an empty string to nil (root), else a pointer to it.
+func optStr(v string) *string {
+	if v == "" {
+		return nil
+	}
+	return &v
+}
+
+// authed resolves the session subject or writes a 401 (an htmx POST won't
+// swap on a non-2xx, so a lost session simply no-ops rather than corrupting
+// the page).
+func (a *webApp) authed(w http.ResponseWriter, r *http.Request) (pii.Subject, bool) {
+	caller, ok := a.caller(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	}
+	return caller, ok
+}
+
+// renderAt re-renders the current folder's listing fragment (the ?at= folder,
+// empty = root) after a mutation.
+func (a *webApp) renderAt(w http.ResponseWriter, r *http.Request, caller pii.Subject) {
+	v, err := a.view(r.Context(), caller, r.URL.Query().Get("at"))
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = web.Listing(w, v)
+}
+
+func (a *webApp) createFolder(w http.ResponseWriter, r *http.Request) {
+	caller, ok := a.authed(w, r)
+	if !ok {
+		return
+	}
+	if _, err := a.svc.CreateFolder(r.Context(), caller, optStr(r.URL.Query().Get("at")), r.FormValue("name")); err != nil {
+		a.fail(w, err)
+		return
+	}
+	a.renderAt(w, r, caller)
+}
+
+func (a *webApp) upload(w http.ResponseWriter, r *http.Request) {
+	caller, ok := a.authed(w, r)
+	if !ok {
+		return
+	}
+	folder := optStr(r.URL.Query().Get("at"))
+	mr, err := r.MultipartReader()
+	if err != nil {
+		http.Error(w, "expected a multipart upload", http.StatusBadRequest)
+		return
+	}
+	for {
+		part, err := mr.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			http.Error(w, "bad upload", http.StatusBadRequest)
+			return
+		}
+		if part.FormName() != "file" || part.FileName() == "" {
+			continue
+		}
+		body := http.MaxBytesReader(w, part, api.DefaultMaxUploadBytes)
+		if _, err := a.svc.Upload(r.Context(), caller, folder, part.FileName(), body); err != nil {
+			a.fail(w, err)
+			return
+		}
+		break
+	}
+	a.renderAt(w, r, caller)
+}
+
+func (a *webApp) renameFile(w http.ResponseWriter, r *http.Request) {
+	caller, ok := a.authed(w, r)
+	if !ok {
+		return
+	}
+	if err := a.svc.RenameFile(r.Context(), caller, r.PathValue("id"), r.FormValue("name")); err != nil {
+		a.fail(w, err)
+		return
+	}
+	a.renderAt(w, r, caller)
+}
+
+func (a *webApp) moveFile(w http.ResponseWriter, r *http.Request) {
+	caller, ok := a.authed(w, r)
+	if !ok {
+		return
+	}
+	if err := a.svc.MoveFile(r.Context(), caller, r.PathValue("id"), optStr(r.FormValue("dest"))); err != nil {
+		a.fail(w, err)
+		return
+	}
+	a.renderAt(w, r, caller)
+}
+
+func (a *webApp) deleteFile(w http.ResponseWriter, r *http.Request) {
+	caller, ok := a.authed(w, r)
+	if !ok {
+		return
+	}
+	if err := a.svc.Delete(r.Context(), caller, r.PathValue("id")); err != nil {
+		a.fail(w, err)
+		return
+	}
+	a.renderAt(w, r, caller)
+}
+
+func (a *webApp) renameFolder(w http.ResponseWriter, r *http.Request) {
+	caller, ok := a.authed(w, r)
+	if !ok {
+		return
+	}
+	if err := a.svc.RenameFolder(r.Context(), caller, r.PathValue("id"), r.FormValue("name")); err != nil {
+		a.fail(w, err)
+		return
+	}
+	a.renderAt(w, r, caller)
+}
+
+func (a *webApp) moveFolder(w http.ResponseWriter, r *http.Request) {
+	caller, ok := a.authed(w, r)
+	if !ok {
+		return
+	}
+	if err := a.svc.MoveFolder(r.Context(), caller, r.PathValue("id"), optStr(r.FormValue("dest"))); err != nil {
+		a.fail(w, err)
+		return
+	}
+	a.renderAt(w, r, caller)
+}
+
+func (a *webApp) deleteFolder(w http.ResponseWriter, r *http.Request) {
+	caller, ok := a.authed(w, r)
+	if !ok {
+		return
+	}
+	if err := a.svc.DeleteFolder(r.Context(), caller, r.PathValue("id")); err != nil {
+		a.fail(w, err)
+		return
+	}
+	a.renderAt(w, r, caller)
 }
 
 // download streams a file to the logged-in browser (cookie session), so the
@@ -86,7 +245,11 @@ func (a *webApp) view(ctx context.Context, caller pii.Subject, folder string) (w
 	if err != nil {
 		return web.View{}, err
 	}
-	return web.View{Crumbs: crumbs, Folders: l.Folders, Files: l.Files}, nil
+	all, err := a.svc.AllFolders(ctx, caller)
+	if err != nil {
+		return web.View{}, err
+	}
+	return web.View{Crumbs: crumbs, Folders: l.Folders, Files: l.Files, AllFolders: all}, nil
 }
 
 func (a *webApp) page(w http.ResponseWriter, r *http.Request) {
@@ -120,12 +283,18 @@ func (a *webApp) frag(w http.ResponseWriter, r *http.Request) {
 }
 
 // fail maps a domain error to a status for the browser (plain, not JSON).
+// htmx does not swap a non-2xx response, so a failed mutation leaves the
+// listing unchanged; richer inline error messaging is M4c polish.
 func (a *webApp) fail(w http.ResponseWriter, err error) {
 	switch {
-	case isNotFound(err):
+	case errors.Is(err, file.ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)
-	case isForbidden(err):
+	case errors.Is(err, file.ErrForbidden):
 		http.Error(w, "forbidden", http.StatusForbidden)
+	case errors.Is(err, file.ErrNotEmpty):
+		http.Error(w, "folder not empty", http.StatusConflict)
+	case errors.Is(err, file.ErrCycle):
+		http.Error(w, "move would create a cycle", http.StatusBadRequest)
 	default:
 		http.Error(w, "internal error", http.StatusInternalServerError)
 	}

@@ -37,6 +37,7 @@ var msg = map[string]string{
 	"new_folder": "New folder", "upload": "Upload", "download": "Download",
 	"rename": "Rename", "move": "Move", "delete": "Delete", "details": "Details",
 	"name": "Name", "size": "Size", "breadcrumb": "Breadcrumb",
+	"create": "Create", "move_to": "Move to", "confirm_delete": "Delete this item?",
 }
 
 var funcs = template.FuncMap{
@@ -53,6 +54,18 @@ var funcs = template.FuncMap{
 		b, _ := assets.ReadFile("style.css")
 		return template.CSS(b)
 	},
+	// row bundles the context the per-item rename/move/delete controls need:
+	// the route base ("/files" or "/folders"), the item, the current folder
+	// (to re-render after the mutation), and the move-destination options.
+	"row": func(base, id, name string, v View) rowCtx {
+		return rowCtx{Base: base, ID: id, Name: name, At: v.Here(), Folders: v.AllFolders}
+	},
+}
+
+// rowCtx is the template model for one item's action controls.
+type rowCtx struct {
+	Base, ID, Name, At string
+	Folders            []file.Folder
 }
 
 // humanBytes renders a size for display (IEC units).
@@ -76,6 +89,9 @@ type View struct {
 	Crumbs  []file.Folder
 	Folders []file.Folder
 	Files   []file.Object
+	// AllFolders is every folder the caller owns — the move-destination
+	// picker's options.
+	AllFolders []file.Folder
 	// Inline emits the stylesheet inline instead of a <link> — set by the
 	// headless a11y render so contrast is evaluated.
 	Inline bool
@@ -116,28 +132,81 @@ var pageTmpl = template.Must(template.New("page").Funcs(funcs).Parse(`<!doctype 
  </ol>
 </nav>
 <h1 class="sr-only">{{msg "files"}}</h1>
+<div class="mb-4 flex flex-wrap items-end gap-4">
+ <form hx-post="/folders?at={{.Here}}" hx-target="#browser" hx-swap="innerHTML"
+       hx-on::after-request="if(event.detail.successful)this.reset()" class="flex items-end gap-2">
+  <label class="text-sm text-stone-700">{{msg "new_folder"}}
+   <input name="name" required class="mt-1 block rounded border border-stone-300 px-2 py-1 text-sm">
+  </label>
+  <button type="submit" class="rounded-base bg-brand px-3 py-1.5 text-sm font-medium text-white hover:opacity-90">{{msg "create"}}</button>
+ </form>
+ <form hx-post="/files?at={{.Here}}" hx-encoding="multipart/form-data" hx-target="#browser" hx-swap="innerHTML"
+       hx-on::after-request="if(event.detail.successful)this.reset()" class="flex items-end gap-2">
+  <label class="text-sm text-stone-700">{{msg "upload"}}
+   <input type="file" name="file" required class="mt-1 block text-sm">
+  </label>
+  <button type="submit" class="rounded-base bg-brand px-3 py-1.5 text-sm font-medium text-white hover:opacity-90">{{msg "upload"}}</button>
+ </form>
+</div>
 {{if and (not .Folders) (not .Files)}}
 <p class="rounded-base border border-dashed border-stone-300 p-8 text-center text-stone-500">{{msg "empty"}}</p>
 {{else}}
 <ul class="divide-y divide-stone-200 rounded-base border border-stone-200 bg-white">
  {{range .Folders}}
- <li class="flex items-center gap-3 px-4 py-3">
+ <li class="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3">
   <span aria-hidden="true" class="text-brand">📁</span>
   <a href="/?folder={{.ID}}" hx-get="/browse?folder={{.ID}}" hx-target="#browser" hx-push-url="/?folder={{.ID}}"
      class="grow font-medium text-stone-900 underline-offset-2 hover:underline">{{.Name}}</a>
   <span class="text-xs uppercase tracking-wide text-stone-600">{{msg "folder"}}</span>
+  {{template "rename" (row "/folders" .ID .Name $)}}
+  {{template "moveto" (row "/folders" .ID .Name $)}}
+  {{template "delete" (row "/folders" .ID .Name $)}}
  </li>
  {{end}}
  {{range .Files}}
- <li class="flex items-center gap-3 px-4 py-3">
+ <li class="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3">
   <span aria-hidden="true" class="text-stone-400">📄</span>
   <span class="grow font-medium text-stone-900">{{.Name}}</span>
   <span class="text-sm text-stone-500">{{bytes .Size}}</span>
   <a href="/files/{{.ID}}/download" class="text-sm text-brand underline">{{msg "download"}}</a>
+  {{template "rename" (row "/files" .ID .Name $)}}
+  {{template "moveto" (row "/files" .ID .Name $)}}
+  {{template "delete" (row "/files" .ID .Name $)}}
  </li>
  {{end}}
 </ul>
 {{end}}
+{{end}}
+
+{{define "rename"}}
+<details class="text-sm">
+ <summary class="cursor-pointer text-brand">{{msg "rename"}}</summary>
+ <form hx-post="{{.Base}}/{{.ID}}/rename?at={{.At}}" hx-target="#browser" hx-swap="innerHTML" class="mt-2 flex items-center gap-2">
+  <label class="sr-only">{{msg "name"}}</label>
+  <input name="name" value="{{.Name}}" required class="rounded border border-stone-300 px-2 py-1">
+  <button class="rounded-base bg-brand px-3 py-1.5 font-medium text-white hover:opacity-90">{{msg "rename"}}</button>
+ </form>
+</details>
+{{end}}
+
+{{define "moveto"}}
+<details class="text-sm">
+ <summary class="cursor-pointer text-brand">{{msg "move"}}</summary>
+ <form hx-post="{{.Base}}/{{.ID}}/move?at={{.At}}" hx-target="#browser" hx-swap="innerHTML" class="mt-2 flex items-center gap-2">
+  <label class="sr-only">{{msg "move_to"}}</label>
+  <select name="dest" class="rounded border border-stone-300 px-2 py-1 text-sm">
+   <option value="">{{msg "home"}}</option>
+   {{range .Folders}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
+  </select>
+  <button class="rounded-base bg-brand px-3 py-1.5 text-sm font-medium text-white hover:opacity-90">{{msg "move"}}</button>
+ </form>
+</details>
+{{end}}
+
+{{define "delete"}}
+<form hx-post="{{.Base}}/{{.ID}}/delete?at={{.At}}" hx-target="#browser" hx-swap="innerHTML" hx-confirm="{{msg "confirm_delete"}}">
+ <button class="text-sm text-red-700 underline" aria-label="{{msg "delete"}} {{.Name}}">{{msg "delete"}}</button>
+</form>
 {{end}}`))
 
 // Page renders the whole document for a folder listing.
