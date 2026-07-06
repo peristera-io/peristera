@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/peristera-io/peristera/ergonomos/internal/kamara"
 	"github.com/peristera-io/peristera/ergonomos/internal/task"
@@ -12,6 +13,9 @@ import (
 	"github.com/peristera-io/peristera/lib/oidcrp"
 	"github.com/peristera-io/peristera/lib/pii"
 )
+
+// maxAttachBytes caps an on-behalf-of upload streamed through Ergonomos.
+const maxAttachBytes = 100 << 20 // 100 MiB
 
 // statusFor maps a service error to an HTTP status: a missing task is 404,
 // everything else (authorization, store errors) is 403 — the stub's coarse
@@ -61,20 +65,32 @@ func (a *webApp) attach(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "attach not configured", http.StatusNotImplemented)
 		return
 	}
+	// CSRF defense: this mutating, session-authed POST has cross-tenant
+	// consequences (a file owned by the victim), so reject cross-site
+	// requests. Sec-Fetch-Site is sent by modern browsers and cannot be
+	// forged from JS. (The broader CSRF-token/Secure work is #4.)
+	if s := r.Header.Get("Sec-Fetch-Site"); s == "cross-site" {
+		http.Error(w, "cross-site request rejected", http.StatusForbidden)
+		return
+	}
 	sess, ok := a.rp.Session(r)
 	if !ok {
 		http.Error(w, "no session", http.StatusUnauthorized)
 		return
 	}
-	if sess.AccessToken == "" {
-		http.Error(w, "no access token to exchange", http.StatusForbidden)
+	if sess.AccessToken == "" || (!sess.AccessTokenExpiry.IsZero() && time.Now().After(sess.AccessTokenExpiry)) {
+		// No usable token to exchange — the browser must re-authenticate.
+		http.Error(w, "re-authentication required", http.StatusUnauthorized)
 		return
 	}
 	name := r.URL.Query().Get("name")
 	if name == "" {
 		name = "attachment"
 	}
-	id, err := a.kamara.Upload(r.Context(), sess.AccessToken, name, r.Body)
+	// Bound the body at the trust boundary (Kamara also caps, but don't
+	// stream an unbounded amplification through Ergonomos).
+	body := http.MaxBytesReader(w, r.Body, maxAttachBytes)
+	id, err := a.kamara.Upload(r.Context(), sess.AccessToken, name, body)
 	if err != nil {
 		// Detail (issuer, exchange/upload error) must not leak to the client.
 		log.Printf("ergonomos: attach: %v", err)

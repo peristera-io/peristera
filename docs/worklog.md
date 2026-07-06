@@ -477,3 +477,34 @@ Plan: `docs/m5-plan.md`; decisions `Q&A.md` Round 10; roadmap renumbered
   - **s2 complete.** Next: **S3** — callee-side local JWT validation
     (`lib/svcauth` server half) + the audit on-behalf-of actor (ADR-0011);
     then **S4** — the real Ergonomos→Kamara on-behalf-of upload (acceptance).
+- **Sessions 3–4 (callee validation + acceptance):**
+  - **Callee-side findings (live-spiked):** the exchanged token is Zitadel's
+    *opaque* format, so "local JWT validation" is impossible — but it
+    resolves to the **user** (`sub`) at Kamara's existing userinfo auth, so
+    the acceptance needs **no Kamara change**. Introspection (not local JWT)
+    is the right callee validation anyway: it works on the opaque token,
+    checks live revocation, and recovers the calling service.
+  - **S4 acceptance (R57, verified `TestS2SExchangeLive`):** `ergonomos/
+    internal/kamara` (a tiny on-behalf-of client — exchange the user's token,
+    then POST Kamara `/v1/files`), Ergonomos requests the project-audience
+    login scope + builds the `Exchanger` from its mounted key + a `POST
+    /attach` handler; the control plane injects `KAMARA_URL`. Proven live:
+    **on-behalf-of upload → the file is owned by the USER** (their own token
+    lists it); Ergonomos boots healthy with the wiring; full godog green.
+    Commit `9a3aa8b`.
+  - **S3 callee primitive:** `lib/svcauth.Validator` introspects a token as
+    the callee's own S2S client (private_key_jwt) → `{Active, Subject,
+    ActorClient}`; verified live. The remaining Kamara **audit-actor** wiring
+    (confidential client + introspection auth + azp→audit plumbing +
+    client-id→name map) is a real change to a security-critical path — filed
+    as **#46** rather than rushed. Commit `3d5c3af`.
+
+- **M5 substantially complete.** The intra-tenant zero-trust
+  service-to-service model works end to end: Cilium-enforced network topology
+  with cross-tenant isolation (#18), OpenFGA preshared-key auth, per-app
+  machine identity, RFC-8693 on-behalf-of token exchange, and the acceptance
+  (a real Ergonomos→Kamara upload owned by the user). Deferred (issues): #45
+  (S2S key hygiene/rotation), #46 (Kamara audit actor). Adversarial reviews
+  ran after s1, s2, and s3–4.
+  **Next: M6 — OnlyOffice (OnlyOffice ↔ Kamara is now an S2S consumer of this
+  model), then M7 — public demo.**

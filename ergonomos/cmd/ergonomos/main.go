@@ -82,6 +82,7 @@ func main() {
 		RedirectURL: publicURL + "/auth/callback",
 		CookieName:  "ergonomos_session",
 		Scopes:      scopes,
+		Secure:      strings.HasPrefix(publicURL, "https://"),
 	})
 	if err != nil {
 		log.Fatalf("oidc: %v", err)

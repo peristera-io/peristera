@@ -242,11 +242,17 @@ func (v *Validator) Introspect(ctx context.Context, token string) (TokenInfo, er
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return TokenInfo{}, fmt.Errorf("svcauth: introspect response: %w", err)
 	}
+	// An inactive (expired/revoked) token must not yield a usable subject —
+	// return it empty so a callee that keys on Subject denies even if it
+	// forgets to check Active.
+	if !out.Active {
+		return TokenInfo{Active: false}, nil
+	}
 	actorClient := out.Azp
 	if actorClient == "" {
 		actorClient = out.ClientID
 	}
-	return TokenInfo{Active: out.Active, Subject: out.Sub, ActorClient: actorClient, ActorName: out.Username}, nil
+	return TokenInfo{Active: true, Subject: out.Sub, ActorClient: actorClient, ActorName: out.Username}, nil
 }
 
 func b64json(v any) string {
