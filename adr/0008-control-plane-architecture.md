@@ -26,7 +26,9 @@ where its state lives, and how it authenticates operators.
    exact sequence in ADR-0006 §6), and the app pods from a **hardcoded
    catalog** (a Go slice; it becomes data when a second app exists). A
    finalizer tears all of it down on delete — off-boarding is a first-class
-   operation from the skeleton.
+   operation from the skeleton. (Scope note: "off-boarding" here is
+   whole-namespace teardown of live data; **crypto-shredding of backups** is
+   a later addition — the backup / off-boarding milestone, README §5, #9.)
 4. **Spec/immutability:** `spec.slug` is immutable (validation-enforced,
    ADR-0007) and forms the tenant domain = issuer. Display name and future
    knobs live in spec; issuer, clientId, phase, and conditions in status.

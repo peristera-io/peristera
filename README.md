@@ -59,10 +59,11 @@ adversarial reviews**, each triaged; an end-to-end Playwright demo (login →
 browse → upload → download) is the acceptance artifact. The **inter-service
 auth model was deliberately deferred** to its own design milestone rather
 than settled to make one test pass — the Ergonomos file-attach flow is that
-milestone's acceptance test (Q&A R41, `docs/s2s-auth-milestone.md`, #29).
+milestone's acceptance test (Q&A R41, `docs/m5-plan.md`, #29).
 ADRs: root 0015 (transactional storage); Kamara 0001 (chunk format), 0002
-(folder hierarchy). Next: **the service-to-service auth milestone** (#29),
-then the SaaS/Scaleway hardening (M6).
+(folder hierarchy). Next: **M5 — service-to-service auth / intra-tenant
+zero-trust** (#29, `docs/m5-plan.md`, Q&A R10), then OnlyOffice (M6) and the
+SaaS/Scaleway public demo (M7).
 
 *Update this block whenever reality changes — a stale status line is exactly
 the rot §8 warns against.*
@@ -129,7 +130,7 @@ make life easy for the MSP who has to run twenty instances.
    peacefully with Outlook/Teams. This is the beachhead — and because a file
    hub without document editing just recreates the email-attachment problem,
    the beachhead includes **document co-editing via an OnlyOffice
-   integration** from the first public demo (M5).
+   integration** (M6), showcased in the first public demo (M7).
 2. **Teams alternative** (messaging/meetings) once the beachhead holds.
 3. **Office/document editing as our own product** last — it is the hardest
    and least differentiated fight, and may never be worth fighting if the
@@ -317,7 +318,7 @@ shared convention (ADR before M3/M4 store their first byte, library in
   impose SBOM, security-update, and vulnerability-disclosure obligations on
   commercially distributed products (~2027; verify timeline when it bites) —
   so CI produces **SBOMs and signed releases before anything ships publicly
-  (M6)** and the repo carries a **`SECURITY.md` disclosure policy**. The **EU Data Act**'s cloud-switching
+  (M7)** and the repo carries a **`SECURITY.md` disclosure policy**. The **EU Data Act**'s cloud-switching
   rules are answered by whole-tenant export — frame it that way in marketing.
   Watch-list, zero work now: **eIDAS 2 / EUDI wallet** as a future IdP
   integration behind Zitadel; **EN 16931 e-invoicing** when control-plane
@@ -447,7 +448,10 @@ Built in public along the way.
   - personal-data metadata (incl. retention/legal holds), OpenFGA model,
     audit events, search feed → before **M3/M4** store their first byte
   - accessibility checks in CI → with **M3**, the first real UI
-  - SBOM generation, signed releases, `SECURITY.md` → with **M6**, before
+  - the **per-tenant key hierarchy / crypto-shredding** convention (README
+    §4) → with the **backup / off-boarding story (~MSP alpha, 2027)**, which
+    is where crypto-shredding and backup-erasure become real (issue #9)
+  - SBOM generation, signed releases, `SECURITY.md` → with **M7**, before
     anything is public
 - **M1 — IAM integration spike** *(first real work; Zitadel is decided,
   all-in)*: 2-week time-boxed **confirmatory** spike — Zitadel deployed on
@@ -460,19 +464,28 @@ Built in public along the way.
   Zitadel virtual instance on its own domain (provisioned as part of tenant
   creation), one app pod, and generated initial-admin credentials — log in
   on it, delete it cleanly. `Tenant` CRD + controller (architecture
-  revisited after M6); tenant CRs are the source of truth, no control-plane
+  revisited after the public demo); tenant CRs are the source of truth, no control-plane
   database until billing/quotas. Plan: `docs/m2-plan.md`.
 - **M3 — Ergonomos stub**: single-user task lists, minimal but pleasant.
   (Multi-user matters more than single-user polish — it comes right after the
   demo, before any bells and whistles.)
-- **M4 — Kamara stub**: chunked browser upload, storage API v0 that Ergonomos
-  can call. Design (living): `kamara/SPEC.md`; plan: `docs/m4-plan.md`;
-  format decisions in `Q&A.md` Round 7. E2EE-ready chunk format, but sync
+- **M4 — Kamara stub** *(done 2026-07-06)*: chunked browser upload, storage
+  API v0 that Ergonomos can call, folder hierarchy + browser UI. Design
+  (living): `kamara/SPEC.md`; plan: `docs/m4-plan.md` / `docs/m4b-plan.md`;
+  format decisions in `Q&A.md` Rounds 7–9. E2EE-ready chunk format, but sync
   and E2EE themselves are deferred.
-- **M5 — OnlyOffice integration**: open and co-edit a document stored in
+- **M5 — Service-to-service auth / intra-tenant zero-trust**: one app calls
+  another **on behalf of a user** under a real zero-trust posture — machine
+  identity per app, RFC 8693 on-behalf-of tokens, local JWT validation,
+  Cilium-enforced service-topology allowlist, actor-aware audit. Proven by a
+  real Ergonomos → Kamara call. The platform S2S contract every future
+  app-to-app interaction inherits — and a prerequisite for M6 (OnlyOffice ↔
+  Kamara is itself an S2S call). Plan: `docs/m5-plan.md`; decisions in
+  `Q&A.md` Round 10.
+- **M6 — OnlyOffice integration**: open and co-edit a document stored in
   Kamara, in the browser. Without this, the file hub recreates the
   email-attachment problem it exists to kill.
-- **M6 — Public demo**: deployed on Scaleway via the control plane itself
+- **M7 — Public demo**: deployed on Scaleway via the control plane itself
   (dogfooding), demo tenant, first build-in-public posts. Ships with the
   compliance CI (SBOM, signed releases, `SECURITY.md`).
 
@@ -509,7 +522,7 @@ Built in public along the way.
 ### Success and kill criteria
 
 Phase 0's exit numbers (active demo tenants, organizations self-hosting
-monthly) are deliberately set at M6 launch, not invented before there is
+monthly) are deliberately set at public-demo launch, not invented before there is
 anything to measure. One criterion is fixed now, and it has teeth: **if 12
 months after the public demo no external organization is self-hosting
 Peristera, the thesis gets rethought before anything more is built.**

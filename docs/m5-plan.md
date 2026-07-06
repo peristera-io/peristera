@@ -1,0 +1,121 @@
+# M5 plan — service-to-service auth / intra-tenant zero-trust
+
+- **Status:** parameters settled (`Q&A.md` Round 10, 2026-07-06). Supersedes
+  the stub `docs/s2s-auth-milestone.md`. Sequenced next (R49): OnlyOffice
+  shifts to M6, Public demo to M7 — because OnlyOffice ↔ Kamara is itself a
+  service-to-service call, so this milestone is its prerequisite.
+- **Design home:** a root ADR for the platform S2S model + supporting ADRs
+  (Cilium/NetworkPolicy, machine-identity provisioning); amendments to
+  ADR-0011 (audit actor) and ADR-0013 (catalog `Calls`). This plan is
+  milestone execution and dies when M5 ships; the ADRs persist.
+- **Lifecycle:** working document, superseded by the M5 ADRs and the worklog.
+
+## Goal
+
+One Peristera service can call another **on behalf of a logged-in user**,
+under a real zero-trust posture inside the tenant namespace: machine
+identity per app, on-behalf-of tokens, local token validation, a
+network-enforced service-topology allowlist, and actor-aware audit. Proven
+by a real cross-app call (Ergonomos → Kamara) — not on paper.
+
+## Decision space (recap) → chosen
+
+- **(A) forward the user token** — assumes co-located apps mutually trust;
+  the opposite of zero-trust. Rejected.
+- **(B) machine identity + on-behalf-of** (RFC 8693 token exchange). What
+  intra-tenant zero-trust requires. **Chosen** (R50).
+- **(C) references only** — no S2S trust; used for the M4b browser attach,
+  not a general answer for server-initiated work. Kept where it fits.
+
+## Decisions (Q&A Round 10, 2026-07-06)
+
+- **Trust model B, zero-trust.** Each app authenticates with its own machine
+  identity; no user-token forwarding. *(R50)*
+- **On-behalf-of = token exchange of the user's *real* access token**
+  (RFC 8693: actor=service, subject=user, aud=callee). `lib/oidcrp` must
+  **retain the user's access token** (encrypted in the session) so a
+  downstream service can exchange it. Impersonation-by-user-id rejected
+  (a service could act as any of its users). Client-credentials (actor=
+  service, no subject) is the degenerate case for user-less background work.
+  *(R51)*
+- **Machine credential = per-app Zitadel service user with a JWT private
+  key** (RS256 client assertion), provisioned by the control plane, key in a
+  per-app k8s Secret. No client-secret at rest. *(R52)*
+- **Callee validation = local JWT validation** (JWKS signature + `exp` +
+  `aud`=self + actor is a known service), replacing opaque userinfo
+  introspection on the bearer API — for both S2S and user tokens. Shared
+  `lib/svcauth` helper; JWKS cached, tokens not. **Closes #26.** *(R53)*
+- **Service-topology authorization lives at three orthogonal layers**
+  *(R54)*:
+  - **Network (Cilium)** — default-deny egress; an app may reach only its
+    declared peers. Kernel/CNI-enforced, so a rogue app cannot connect to a
+    service it isn't cleared for. The topology allowlist + containment.
+  - **Token** — authentication only; no per-service rules in app code.
+  - **OpenFGA** — unchanged, per-tenant, user→resource.
+  The graph is declared **once** as a new `Calls []string` field on
+  `CatalogApp` (ADR-0013); the control plane generates the Cilium policy and
+  the Zitadel audience grants from it. Kill-switch: disable the service
+  account and/or reconcile egress to deny-all.
+- **Cilium in the dev cluster + real enforced NetworkPolicy** (so
+  self-hosters get a correct reference) + OpenFGA **preshared-key auth**.
+  Folds #18. *(R55)*
+- **Audit gains an on-behalf-of service actor** (pseudonymized), distinct
+  from the subject; amend ADR-0011. *(R56)*
+- **Acceptance = a real server-initiated on-behalf-of call**: Ergonomos, on
+  a user action, exchanges a token and uploads to Kamara's API; the file
+  lands **owned by the user** and the *user* sees it in Kamara. Polished
+  attach UX is a fast-follow, not M5. *(R57)*
+
+## Non-goals
+
+Cross-tenant / federation trust (a separate, later concern). A service-mesh
+/ mTLS-sidecar mandate — decided in the ADR only if it is the simplest route
+to machine identity, not presumed. The polished Ergonomos attach UX
+(task↔file association, picker, a Kamara client SDK). Per-app DB roles (#17)
+and control-plane operator authZ (#1) — they *reuse* this milestone's
+`lib/svcauth` + machine-identity provisioning but land ~M6.
+
+## Session 0 — pre-work (docs, before M5 proper)
+
+Pure docs, no code (R58 + R49):
+
+- **#9:** home the per-tenant key-hierarchy / crypto-shredding convention in
+  the backup/off-boarding story (~MSP alpha); add it to README §5's deferral
+  list; soften ADR-0006/0008 "off-boarding = GDPR posture" wording to match
+  what exists. Close #9.
+- **Renumber** README §5: insert M5 = S2S, OnlyOffice → M6, demo → M7.
+
+## Sessions
+
+| Session | Work |
+|---|---|
+| 1 | **Cilium + network baseline.** Swap the k3d dev cluster's CNI to Cilium (documented, reproducible for self-hosters); default-deny + declared-peer NetworkPolicy per tenant namespace, generated by the control plane from a new `Calls []string` on `CatalogApp` (ADR-0013 amendment); OpenFGA **preshared-key auth** (key Secret, `lib/authz` sends it). Live-verify: allowed peer reachable, everything else refused; OpenFGA rejects unauthenticated calls. New ADR (Cilium/NetworkPolicy + the `Calls` contract). Folds #18. |
+| 2 | **Machine identity + token exchange.** Control plane provisions a per-app Zitadel **service user + JWT key** (extend `EnsureMachineUser`), key into a per-app Secret; enable RFC 8693 **token exchange** in the tenant instance; per-app **audience grants** derived from `Calls`. `lib/oidcrp` **retains the user access token** (encrypted in session). `lib/svcauth` client: exchange the user token → an actor+subject token scoped to the callee. Root **S2S ADR**. |
+| 3 | **Callee validation + audit actor.** `lib/svcauth` server middleware: **local JWT validation** (JWKS + `exp` + `aud`=self + actor∈known-services), replacing opaque introspection on Kamara's and control-plane's bearer paths (**closes #26**). Extend `lib/audit` Event + ADR-0011 with the pseudonymized **on-behalf-of service actor**; Kamara records the actor on writes made via S2S. Fix #19 (write-model-only-if-changed) as adjacent tech-debt. |
+| 4 | **Acceptance + live-verify.** Wire the **real cross-app call**: Ergonomos, on a user action, exchanges a token and uploads to Kamara's storage API; the file lands **owned by the acting user**; the user sees it in Kamara's own UI; audit shows actor=Ergonomos / subject=user. godog scenario for the S2S round-trip (incl. negative: a service not in `Calls` is refused at the network *and* rejected at the token layer). In-cluster demo. |
+| 5 | **Buffer + writing.** ADR finalization; SPEC/README/worklog updates; demo. |
+
+## Definition of done
+
+- [ ] Cilium enforced in the dev cluster; per-tenant default-deny + declared-peer
+      NetworkPolicy generated from `CatalogApp.Calls`; OpenFGA preshared-key
+      auth; unauthorized peer + unauthenticated OpenFGA both refused
+      (live-verified). #18 closed.
+- [ ] Per-app machine identity (Zitadel service user + JWT key) provisioned
+      by the control plane; RFC 8693 token exchange enabled; `lib/oidcrp`
+      retains the user access token; `lib/svcauth` mints actor+subject tokens.
+- [ ] Callee-side local JWT validation (`lib/svcauth`) on Kamara +
+      control-plane bearer paths, replacing opaque introspection. #26 closed.
+- [ ] Audit Event carries a pseudonymized on-behalf-of service actor;
+      ADR-0011 amended; root S2S ADR + Cilium/`Calls` ADR written.
+- [ ] Acceptance: Ergonomos → Kamara on-behalf-of upload; file owned by the
+      user; audit actor=service/subject=user; negative path refused at both
+      layers. godog green; live-verified in-cluster.
+- [ ] Session 0 docs landed: #9 homed + closed; README §5 renumbered.
+
+## Out of scope (deferred, not dropped)
+
+Polished Ergonomos attach UX + a reusable Kamara client SDK; per-app DB
+roles + DSN rotation (#17); control-plane operator authZ (#1, reuses
+`lib/svcauth`); cross-tenant / federation trust; a service mesh. Each is
+made additive by the `lib/svcauth` + machine-identity foundation here.

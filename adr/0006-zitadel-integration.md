@@ -71,9 +71,14 @@ published).
 - Shared blast radius and shared version across tenants — mitigate with HA
   replicas (stateless) and, for the extreme cases, the break-out flag.
 - Tenant identity data lives outside the per-tenant crypto-shredding
-  boundary: off-boarding = instance deletion + bounded backup-retention
-  window; this goes in the DPA. (Deletion note: a just-created instance
-  404s on the System API for a few seconds — projections; retry.)
+  boundary. **What exists today** is instance deletion + whole-namespace
+  teardown (ADR-0008); the crypto-shredding key hierarchy and
+  bounded-backup-retention story are **not yet built** — they attach to the
+  backup / off-boarding milestone (~MSP alpha, README §5, issue #9), where
+  the DPA language is finalized. Until then this consequence states the
+  *intended* posture, not a shipped guarantee. (Deletion note: a
+  just-created instance 404s on the System API for a few seconds —
+  projections; retry.)
 - The M2 control plane owns the provisioning sequence above; the spike's
   curl calls are its specification.
 

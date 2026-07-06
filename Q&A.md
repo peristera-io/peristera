@@ -656,3 +656,95 @@ widget is feasible later — the API already returns a handle and dedup makes
 re-uploads cheap. M4b/M4c build the uploader as a self-contained component
 so extraction is lift-and-shift; cross-app auth for a third-party embed
 rides on the S2S milestone #29.
+
+## Round 10 — M5 (service-to-service auth / intra-tenant zero-trust)
+
+The milestone deferred at R41. Grounded in a survey of the current auth
+surface: apps are PKCE public clients (no secrets), `lib/oidcrp` keeps only
+the ID token, token validation is opaque userinfo introspection (60s cache,
+issue #26), machine users exist only as a test helper, OpenFGA runs
+unauthenticated, and the audit actor is a single pseudonymized subject. So
+"machine identity + on-behalf-of" (option B) is net-new plumbing.
+
+**R49. Sequencing & numbering?** Rec: insert S2S as **M5** (OnlyOffice→M6,
+Public demo→M7) and do it next — OnlyOffice ↔ Kamara is itself a
+service-to-service call, so S2S is a prerequisite for a clean OnlyOffice
+integration, not a detour. >yes
+
+**R50. Trust model?** Rec: **B** — machine identity + on-behalf-of. A (token
+forwarding) assumes mutual trust (anti-zero-trust); C (references only) is
+already used where it fits, not a general answer. >B, zero trust
+
+**R51. On-behalf-of mechanism?** Rec: **RFC 8693 token exchange of the
+user's real access token** (actor=service, subject=user, aud=callee) —
+requires `lib/oidcrp` to **retain the user's access token** (encrypted in
+session), so B makes that change *necessary*, not obsolete. Reject
+impersonation-by-user-id (a service could act as any of its users). Plain
+client-credentials machine token (actor=service, no subject) is the
+degenerate case for user-less background work. >follow rec
+
+**R52. Machine credential?** Rec: per-app Zitadel **service user with a JWT
+private key** (RS256 client assertion), provisioned by the control plane
+(extend `EnsureMachineUser`), key in a per-app k8s Secret (DEK-style) — the
+shape the control plane already uses against Zitadel. Reject client-secret
+at rest. >yes
+
+**R53. Callee validation (also closes #26)?** Rec: replace opaque userinfo
+introspection on the bearer API with **local JWT validation** (JWKS sig +
+`exp` + `aud`=self + actor is a known service), for both S2S and user
+tokens — closes the revocation-latency window and drops a userinfo
+round-trip per request. A shared `lib/svcauth` helper that #1 later reuses;
+cache JWKS, not tokens. >yes
+
+**R54. Where does service-to-service *authorization* live?** Discussed.
+Rejected both per-service token allowlists (sprawl) and OpenFGA (service
+topology is **platform-uniform**, not per-tenant — OpenFGA is per-tenant and
+about people; it would replicate identical tuples into every store, sit on
+the hot path, and give weaker containment than kernel enforcement).
+Resolution — three orthogonal layers:
+
+- **Network (Cilium NetworkPolicy) — "may A reach B at all?"** Default-deny
+  egress; each app may reach only its declared peers. Kernel/CNI-enforced,
+  below the app, so a rogue/compromised service physically cannot connect to
+  a service it isn't cleared for. This is the topology allowlist and the
+  strong containment boundary (L7 method/path scoping available if wanted).
+- **Token (JWT) — "is this really A, acting for user U?"** Authentication
+  only, no per-service rules in app code.
+- **OpenFGA — "may user U touch this resource?"** Unchanged, per-tenant.
+
+Stored + centrally managed via a new **`Calls []string`** field on
+`CatalogApp` (ADR-0013): the control plane generates both the Cilium policy
+and the Zitadel audience grants from that one declaration — one edit,
+reconcile, every tenant updates. Rogue kill-switch = disable the Zitadel
+service account (no tokens) and/or reconcile egress to deny-all
+(kernel-enforced even if the app is compromised). >discussed, agreed
+
+**R55. OpenFGA authn + NetworkPolicy (#18)?** Rec revised per discussion:
+**adopt Cilium in the dev cluster and ship real, enforced NetworkPolicy**
+(so self-hosters/home-labbers get a correct reference), plus OpenFGA
+**preshared-key auth**. (Original rec had deferred enforcement to the real
+cluster; overridden.) >Cilium + proper network policy
+
+**R56. Audit actor-vs-subject (ADR-0011)?** Rec: extend the audit Event with
+an optional **on-behalf-of service actor** (pseudonymized like the subject)
+so "Ergonomos acting for Alice" ≠ "Alice directly". Append-only-safe to add
+now; amend ADR-0011. >yes
+
+**R57. Acceptance scope?** Rec (honest scope-control): acceptance = a **real
+server-initiated on-behalf-of call** — on a user action Ergonomos obtains an
+exchanged token, uploads to Kamara's API, the file lands **owned by the
+user**, and the *user* (not Ergonomos) sees it in Kamara; verified
+in-cluster. The polished attach UX (task↔file association, picker, Kamara
+client) is a fast-follow feature, not M5. >yes
+
+**R58. Issue #9 — crypto-shredding convention home (tangential cleanup)?**
+Rec: home the per-tenant key-hierarchy / crypto-shredding convention in the
+**backup/off-boarding story (~MSP alpha, 2027)**, add it to README §5's
+deferral list, and soften ADR-0006/0008's "off-boarding = GDPR posture"
+wording to match what exists. Pure docs. >yes, before M5
+
+**Design notes (not questions):** #17 (per-app DB roles) and #1 (operator
+authZ) stay M6-era but *reuse* M5's `lib/svcauth` + machine-identity
+provisioning, shrinking to "apply the convention + role check". Non-goals:
+no cross-tenant/federation trust; no mandated service-mesh/mTLS unless the
+ADR shows it is the simplest route to machine identity.
