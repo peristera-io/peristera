@@ -377,6 +377,25 @@ func (c *Client) CreatePAT(ctx context.Context, base, orgID, userID string) (str
 	return out.Token, err
 }
 
+// AddMachineKey creates a JSON (JWT-profile) key for a machine user and
+// returns the raw service-account key JSON — {"type","keyId","key" (PEM
+// private key),"userId"}. Zitadel returns the private key only once, at
+// creation, so the caller must persist it. This is the credential a service
+// uses to authenticate to the token endpoint (client assertion) for the
+// jwt-bearer and token-exchange grants (ADR-0017).
+func (c *Client) AddMachineKey(ctx context.Context, base, orgID, userID string) ([]byte, error) {
+	var out struct {
+		KeyDetails string `json:"keyDetails"` // base64 of the service-account JSON
+	}
+	err := c.do(ctx, http.MethodPost,
+		fmt.Sprintf("%s/management/v1/users/%s/keys", base, userID), orgID,
+		map[string]any{"type": "KEY_TYPE_JSON", "expirationDate": "2028-01-01T00:00:00Z"}, &out)
+	if err != nil {
+		return nil, err
+	}
+	return base64.StdEncoding.DecodeString(out.KeyDetails)
+}
+
 // UserinfoOK reports whether a bearer token is accepted by the issuer's
 // userinfo endpoint — the control plane's cheap token validation.
 func (c *Client) UserinfoOK(ctx context.Context, issuer, token string) bool {
