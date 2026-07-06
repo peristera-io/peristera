@@ -142,19 +142,111 @@ func (e *Exchanger) OnBehalfOf(ctx context.Context, userAccessToken string) (str
 // assertion mints a short-lived private_key_jwt client assertion authenticating
 // this app's S2S OIDC client to the token endpoint.
 func (e *Exchanger) assertion() string {
+	return clientAssertion(e.clientID, e.keyID, e.issuer, e.key)
+}
+
+// clientAssertion mints a private_key_jwt client assertion (iss=sub=clientID,
+// aud=issuer) — the auth both the exchange (Exchanger) and introspection
+// (Validator) use.
+func clientAssertion(clientID, keyID, issuer string, key *rsa.PrivateKey) string {
 	now := time.Now()
-	header := b64json(map[string]any{"alg": "RS256", "typ": "JWT", "kid": e.keyID})
+	header := b64json(map[string]any{"alg": "RS256", "typ": "JWT", "kid": keyID})
 	claims := b64json(map[string]any{
-		"iss": e.clientID,
-		"sub": e.clientID,
-		"aud": e.issuer,
+		"iss": clientID,
+		"sub": clientID,
+		"aud": issuer,
 		"iat": now.Unix(),
 		"exp": now.Add(5 * time.Minute).Unix(),
 	})
 	signingInput := header + "." + claims
 	sum := sha256.Sum256([]byte(signingInput))
-	sig, _ := rsa.SignPKCS1v15(rand.Reader, e.key, crypto.SHA256, sum[:])
+	sig, _ := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, sum[:])
 	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig)
+}
+
+// Validator is the callee half (ADR-0017): it validates an incoming token via
+// introspection, authenticating as the callee's own S2S client
+// (private_key_jwt). Introspection (not local JWT) because the exchanged
+// token is opaque and because it also lets the callee check live revocation
+// and recover the calling service for the audit actor.
+type Validator struct {
+	introspectURL string
+	clientID      string
+	keyID         string
+	key           *rsa.PrivateKey
+	issuer        string
+	http          *http.Client
+}
+
+// TokenInfo is what a callee learns about a presented token.
+type TokenInfo struct {
+	Active bool
+	// Subject is the acting user (the OIDC sub).
+	Subject string
+	// ActorClient is the azp — the OIDC client that obtained the token. For
+	// an on-behalf-of call it is the calling service's S2S client id.
+	ActorClient string
+	// ActorName is that client's human name if introspection exposes it
+	// (e.g. "ergonomos-s2s") — the audit actor.
+	ActorName string
+}
+
+// NewValidator builds a Validator from the callee's own app-key JSON.
+func NewValidator(issuer string, keyJSON []byte) (*Validator, error) {
+	var k appKey
+	if err := json.Unmarshal(keyJSON, &k); err != nil {
+		return nil, fmt.Errorf("svcauth: parsing app key: %w", err)
+	}
+	priv, err := parseRSAKey(k.Key)
+	if err != nil {
+		return nil, fmt.Errorf("svcauth: %w", err)
+	}
+	return &Validator{
+		introspectURL: strings.TrimRight(issuer, "/") + "/oauth/v2/introspect",
+		clientID:      k.ClientID,
+		keyID:         k.KeyID,
+		key:           priv,
+		issuer:        issuer,
+		http:          &http.Client{Timeout: 15 * time.Second},
+	}, nil
+}
+
+// Introspect validates token at the IdP and returns what it reveals.
+func (v *Validator) Introspect(ctx context.Context, token string) (TokenInfo, error) {
+	form := url.Values{
+		"token":                 {token},
+		"client_assertion_type": {"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"},
+		"client_assertion":      {clientAssertion(v.clientID, v.keyID, v.issuer, v.key)},
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, v.introspectURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return TokenInfo{}, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := v.http.Do(req)
+	if err != nil {
+		return TokenInfo{}, fmt.Errorf("svcauth: introspect: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return TokenInfo{}, fmt.Errorf("svcauth: introspect: %d: %s", resp.StatusCode, raw)
+	}
+	var out struct {
+		Active   bool   `json:"active"`
+		Sub      string `json:"sub"`
+		Azp      string `json:"azp"`
+		Username string `json:"username"`
+		ClientID string `json:"client_id"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return TokenInfo{}, fmt.Errorf("svcauth: introspect response: %w", err)
+	}
+	actorClient := out.Azp
+	if actorClient == "" {
+		actorClient = out.ClientID
+	}
+	return TokenInfo{Active: out.Active, Subject: out.Sub, ActorClient: actorClient, ActorName: out.Username}, nil
 }
 
 func b64json(v any) string {

@@ -102,9 +102,19 @@ func TestS2SExchangeLive(t *testing.T) {
 	}
 	t.Logf("ACCEPTANCE OK — on-behalf-of upload; Kamara owns the file to the user")
 
-	// Can the callee also recover the calling SERVICE (for the audit actor)?
-	// Introspection returns azp/act; userinfo does not.
-	introspectFields(t, ctx, base, exchanged, ex)
+	// Can the callee recover the calling SERVICE (for the audit actor) via
+	// svcauth.Validator introspection? (Uses ergonomos's key as the
+	// introspecting client — any confidential client works.)
+	val, err := svcauth.NewValidator(base, keyJSON)
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	info, err := val.Introspect(ctx, exchanged)
+	if err != nil {
+		t.Fatalf("Introspect: %v", err)
+	}
+	t.Logf("introspect: active=%v subject=%s actorClient=%s actorName=%q",
+		info.Active, info.Subject, info.ActorClient, info.ActorName)
 }
 
 func kamaraUpload(t *testing.T, ctx context.Context, kamaraURL, token, name, content string) string {
@@ -170,24 +180,6 @@ func userinfoSub(t *testing.T, ctx context.Context, base, token string) string {
 		t.Fatalf("userinfo: no sub (HTTP %d): %s", resp.StatusCode, firstN(string(raw), 200))
 	}
 	return out.Sub
-}
-
-// introspectFields logs what token introspection reveals (active, sub, aud,
-// azp, act) — informs the s3 callee-validation design.
-func introspectFields(t *testing.T, ctx context.Context, base, token string, ex *svcauth.Exchanger) {
-	t.Helper()
-	form := url.Values{"token": {token}}
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, base+"/oauth/v2/introspect", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Authorization", "Bearer "+token) // may be rejected; just probing
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Logf("introspect: %v", err)
-		return
-	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
-	t.Logf("introspect (HTTP %d): %s", resp.StatusCode, firstN(string(raw), 300))
 }
 
 // projectAudToken creates a machine user with a secret and returns an access
