@@ -396,6 +396,90 @@ func (c *Client) AddMachineKey(ctx context.Context, base, orgID, userID string) 
 	return base64.StdEncoding.DecodeString(out.KeyDetails)
 }
 
+// ProjectID returns the org's "peristera" app project id, creating it if
+// absent. Apps need it to scope token-exchange audiences (ADR-0017).
+func (c *Client) ProjectID(ctx context.Context, base, orgID string) (string, error) {
+	projectID, err := c.projectIDByName(ctx, base, orgID, "peristera")
+	if errors.Is(err, ErrNotFound) {
+		var out struct {
+			ID string `json:"id"`
+		}
+		err = c.do(ctx, http.MethodPost, base+"/management/v1/projects", orgID,
+			map[string]any{"name": "peristera"}, &out)
+		projectID = out.ID
+	}
+	return projectID, err
+}
+
+// EnsureS2SClient makes sure a confidential OIDC app for service-to-service
+// token exchange exists (ADR-0017) and returns its client id and app id (the
+// app id is needed to attach a key). The app has the token-exchange grant,
+// private_key_jwt auth (no shared secret), and JWT access tokens. Idempotent.
+func (c *Client) EnsureS2SClient(ctx context.Context, base, orgID, name string) (clientID, appID string, err error) {
+	projectID, err := c.ProjectID(ctx, base, orgID)
+	if err != nil {
+		return "", "", err
+	}
+	if app, err := c.oidcAppByName(ctx, base, orgID, projectID, name); err == nil {
+		return app.OIDCConfig.ClientID, app.ID, nil
+	} else if !errors.Is(err, ErrNotFound) {
+		return "", "", err
+	}
+	var out struct {
+		AppID    string `json:"appId"`
+		ClientID string `json:"clientId"`
+	}
+	err = c.do(ctx, http.MethodPost,
+		fmt.Sprintf("%s/management/v1/projects/%s/apps/oidc", base, projectID), orgID,
+		map[string]any{
+			"name": name,
+			// A redirect + response type is required for OIDC apps; this
+			// client never runs the auth-code flow (it only exchanges), but
+			// the fields must be present.
+			"redirectUris":    []string{"http://localhost/unused"},
+			"responseTypes":   []string{"OIDC_RESPONSE_TYPE_CODE"},
+			"grantTypes":      []string{"OIDC_GRANT_TYPE_AUTHORIZATION_CODE", "OIDC_GRANT_TYPE_TOKEN_EXCHANGE"},
+			"appType":         "OIDC_APP_TYPE_WEB",
+			"authMethodType":  "OIDC_AUTH_METHOD_TYPE_PRIVATE_KEY_JWT",
+			"accessTokenType": "OIDC_TOKEN_TYPE_JWT",
+			"devMode":         true,
+		}, &out)
+	return out.ClientID, out.AppID, err
+}
+
+// AddAppKey generates a JSON (private_key_jwt) key for an OIDC app and returns
+// the raw key JSON — {"keyId","key" (PEM),"clientId"}. Returned only once, at
+// creation; the caller must persist it. lib/svcauth signs client assertions
+// with it (ADR-0017).
+func (c *Client) AddAppKey(ctx context.Context, base, orgID, appID string) ([]byte, error) {
+	projectID, err := c.ProjectID(ctx, base, orgID)
+	if err != nil {
+		return nil, err
+	}
+	var out struct {
+		KeyDetails string `json:"keyDetails"`
+	}
+	err = c.do(ctx, http.MethodPost,
+		fmt.Sprintf("%s/management/v1/projects/%s/apps/%s/keys", base, projectID, appID), orgID,
+		map[string]any{"type": "KEY_TYPE_JSON", "expirationDate": "2028-01-01T00:00:00Z"}, &out)
+	if err != nil {
+		return nil, err
+	}
+	return base64.StdEncoding.DecodeString(out.KeyDetails)
+}
+
+// EnableImpersonation turns on the instance security setting that permits
+// token-exchange delegation (actor_token). Idempotent — a repeat PUT that
+// changes nothing returns Zitadel's "No changes", which we treat as success.
+func (c *Client) EnableImpersonation(ctx context.Context, base string) error {
+	err := c.do(ctx, http.MethodPut, base+"/admin/v1/policies/security", "",
+		map[string]any{"enableImpersonation": true}, nil)
+	if err != nil && strings.Contains(err.Error(), "No changes") {
+		return nil
+	}
+	return err
+}
+
 // UserinfoOK reports whether a bearer token is accepted by the issuer's
 // userinfo endpoint — the control plane's cheap token validation.
 func (c *Client) UserinfoOK(ctx context.Context, issuer, token string) bool {
