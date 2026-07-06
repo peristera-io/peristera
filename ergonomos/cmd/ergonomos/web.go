@@ -1,9 +1,12 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 
+	"github.com/peristera-io/peristera/ergonomos/internal/kamara"
 	"github.com/peristera-io/peristera/ergonomos/internal/task"
 	"github.com/peristera-io/peristera/ergonomos/internal/web"
 	"github.com/peristera-io/peristera/lib/oidcrp"
@@ -28,6 +31,7 @@ type webApp struct {
 	rp       *oidcrp.RelyingParty
 	instance string // tenant issuer host — the subject's home instance
 	issuer   string
+	kamara   *kamara.Client // on-behalf-of file attach (ADR-0017); nil if not a caller
 }
 
 // caller resolves the logged-in user to a data subject (ADR-0009 §2).
@@ -45,7 +49,41 @@ func (a *webApp) routes() http.Handler {
 	mux.HandleFunc("POST /tasks", a.create)
 	mux.HandleFunc("POST /tasks/{id}/done", a.setDone)
 	mux.HandleFunc("POST /tasks/{id}/delete", a.delete)
+	mux.HandleFunc("POST /attach", a.attach)
 	return mux
+}
+
+// attach uploads the request body to Kamara on behalf of the logged-in user
+// (ADR-0017): Ergonomos exchanges the user's token and calls Kamara's storage
+// API, so the file lands owned by the user. The acceptance for the S2S model.
+func (a *webApp) attach(w http.ResponseWriter, r *http.Request) {
+	if a.kamara == nil {
+		http.Error(w, "attach not configured", http.StatusNotImplemented)
+		return
+	}
+	sess, ok := a.rp.Session(r)
+	if !ok {
+		http.Error(w, "no session", http.StatusUnauthorized)
+		return
+	}
+	if sess.AccessToken == "" {
+		http.Error(w, "no access token to exchange", http.StatusForbidden)
+		return
+	}
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		name = "attachment"
+	}
+	id, err := a.kamara.Upload(r.Context(), sess.AccessToken, name, r.Body)
+	if err != nil {
+		// Detail (issuer, exchange/upload error) must not leak to the client.
+		log.Printf("ergonomos: attach: %v", err)
+		http.Error(w, "attach failed", http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(map[string]string{"fileId": id})
 }
 
 // render lists the caller's tasks (permission-filtered) and writes either

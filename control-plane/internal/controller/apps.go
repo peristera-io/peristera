@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -216,6 +217,14 @@ func (r *TenantReconciler) ensureApps(ctx context.Context, tenant *v1alpha1.Tena
 				corev1.EnvVar{Name: "OIDC_PROJECT_ID", Value: projectID},
 				corev1.EnvVar{Name: "SVCAUTH_KEY_FILE", Value: s2sKeyMountPath + "/" + s2sKeyFileName},
 			)
+			// The in-cluster URL of each callee this app may call
+			// (e.g. KAMARA_URL) — reachable per the ADR-0016 NetworkPolicy.
+			for _, callee := range app.Calls {
+				env = append(env, corev1.EnvVar{
+					Name:  strings.ToUpper(callee) + "_URL",
+					Value: fmt.Sprintf("http://%s.%s.svc.cluster.local", callee, ns),
+				})
+			}
 			volumes = append(volumes, corev1.Volume{
 				Name: "s2s-key",
 				VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{

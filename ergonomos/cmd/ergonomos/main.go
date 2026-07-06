@@ -12,11 +12,13 @@ import (
 	"os"
 	"strings"
 
+	"github.com/peristera-io/peristera/ergonomos/internal/kamara"
 	"github.com/peristera-io/peristera/ergonomos/internal/store"
 	"github.com/peristera-io/peristera/ergonomos/internal/task"
 	"github.com/peristera-io/peristera/lib/authz"
 	"github.com/peristera-io/peristera/lib/oidcrp"
 	"github.com/peristera-io/peristera/lib/pii"
+	"github.com/peristera-io/peristera/lib/svcauth"
 )
 
 // fgaModel is Ergonomos's contribution to the tenant authorization model
@@ -66,14 +68,38 @@ func main() {
 
 	issuer := mustEnv("OIDC_ISSUER")
 	publicURL := strings.TrimSuffix(env("PUBLIC_URL", "http://localhost:5570"), "/")
+	// As an S2S caller (ADR-0017), request the project-audience scope so the
+	// user's login token is exchangeable for a call to Kamara on their
+	// behalf. OIDC_PROJECT_ID is injected only for apps that declare Calls.
+	scopes := []string{"openid", "profile", "email"}
+	projectID := os.Getenv("OIDC_PROJECT_ID")
+	if projectID != "" {
+		scopes = append(scopes, svcauth.ProjectAudienceScope(projectID))
+	}
 	rp, err := oidcrp.New(ctx, oidcrp.Config{
 		Issuer:      issuer,
 		ClientID:    mustEnv("OIDC_CLIENT_ID"),
 		RedirectURL: publicURL + "/auth/callback",
 		CookieName:  "ergonomos_session",
+		Scopes:      scopes,
 	})
 	if err != nil {
 		log.Fatalf("oidc: %v", err)
+	}
+
+	// The on-behalf-of Kamara client (ADR-0017), wired only when provisioned
+	// as an S2S caller (the S2S key + project id + callee URL are present).
+	var kam *kamara.Client
+	if keyPath := os.Getenv("SVCAUTH_KEY_FILE"); keyPath != "" && projectID != "" {
+		keyJSON, err := os.ReadFile(keyPath)
+		if err != nil {
+			log.Fatalf("svcauth key: %v", err)
+		}
+		ex, err := svcauth.NewExchanger(issuer, projectID, keyJSON)
+		if err != nil {
+			log.Fatalf("svcauth: %v", err)
+		}
+		kam = kamara.New(mustEnv("KAMARA_URL"), ex)
 	}
 
 	// db satisfies task.TxRunner: mutations run row+audit+search in one
@@ -84,7 +110,7 @@ func main() {
 	// The data subject is the logged-in user: instance = the issuer's host
 	// (the tenant's permanent domain, ADR-0009 §2), user = the OIDC sub.
 	instance := issuerHost(issuer)
-	app := &webApp{svc: svc, rp: rp, instance: instance, issuer: issuer}
+	app := &webApp{svc: svc, rp: rp, instance: instance, issuer: issuer, kamara: kam}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) })

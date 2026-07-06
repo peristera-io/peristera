@@ -91,9 +91,65 @@ func TestS2SExchangeLive(t *testing.T) {
 	}
 	t.Logf("OK — exchanged token resolves to the user via userinfo")
 
+	// ACCEPTANCE (R57): upload to the tenant's live Kamara on behalf of the
+	// user (exactly what ergonomos's kamara.Client does), then confirm the
+	// USER owns the file — i.e. sees it with their own token.
+	kamaraURL := strings.Replace(base, "://", "://kamara.", 1)
+	fileID := kamaraUpload(t, ctx, kamaraURL, exchanged, "acceptance.txt", "on-behalf-of hello")
+	t.Logf("uploaded to Kamara on behalf of the user: file %s", fileID)
+	if !kamaraUserOwns(t, ctx, kamaraURL, subjTok, fileID) {
+		t.Fatalf("file %s not visible to the user's own token — not owned by them", fileID)
+	}
+	t.Logf("ACCEPTANCE OK — on-behalf-of upload; Kamara owns the file to the user")
+
 	// Can the callee also recover the calling SERVICE (for the audit actor)?
 	// Introspection returns azp/act; userinfo does not.
 	introspectFields(t, ctx, base, exchanged, ex)
+}
+
+func kamaraUpload(t *testing.T, ctx context.Context, kamaraURL, token, name, content string) string {
+	t.Helper()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost,
+		kamaraURL+"/v1/files?name="+url.QueryEscape(name), strings.NewReader(content))
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("kamara upload: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("kamara upload: %d: %s", resp.StatusCode, firstN(string(raw), 300))
+	}
+	var out struct {
+		ID string `json:"id"`
+	}
+	json.Unmarshal(raw, &out)
+	return out.ID
+}
+
+func kamaraUserOwns(t *testing.T, ctx context.Context, kamaraURL, userToken, fileID string) bool {
+	t.Helper()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, kamaraURL+"/v1/files", nil)
+	req.Header.Set("Authorization", "Bearer "+userToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("kamara list: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	var out struct {
+		Files []struct {
+			ID string `json:"id"`
+		} `json:"files"`
+	}
+	json.Unmarshal(raw, &out)
+	for _, f := range out.Files {
+		if f.ID == fileID {
+			return true
+		}
+	}
+	return false
 }
 
 func userinfoSub(t *testing.T, ctx context.Context, base, token string) string {
