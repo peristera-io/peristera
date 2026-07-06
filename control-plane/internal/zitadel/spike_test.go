@@ -45,6 +45,19 @@ func TestSpikeTokenExchange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("orgID: %v", err)
 	}
+
+	// Enable token exchange + impersonation at the INSTANCE level. Client
+	// auth is valid (client_credentials works) but the exchange grant is
+	// rejected until these are on. Log outcomes; don't fail the test.
+	var featRaw json.RawMessage
+	errFeat := c.do(ctx, http.MethodPut, base+"/v2/features/instance", "",
+		map[string]any{"oidcTokenExchange": true}, &featRaw)
+	t.Logf("feature oidcTokenExchange: err=%v resp=%s", errFeat, featRaw)
+	errSec := c.do(ctx, http.MethodPut, base+"/admin/v1/policies/security", "",
+		map[string]any{"enableImpersonation": true}, nil)
+	t.Logf("security enableImpersonation: err=%v", errSec)
+	time.Sleep(4 * time.Second)
+
 	uid, err := c.EnsureMachineUser(ctx, base, orgID, "svc-spike")
 	if err != nil {
 		t.Fatalf("machine user: %v", err)
@@ -134,23 +147,40 @@ func TestSpikeTokenExchange(t *testing.T) {
 		map[string]any{"name": appName + "-basic", "authMethodType": "API_AUTH_METHOD_TYPE_BASIC"}, &appBasic); err != nil {
 		t.Fatalf("create basic api app: %v", err)
 	}
-	t.Logf("BASIC api app clientId=%s hasSecret=%v", appBasic.ClientID, appBasic.ClientSecret != "")
-	basicHdr := "Basic " + base64.StdEncoding.EncodeToString([]byte(appBasic.ClientID+":"+appBasic.ClientSecret))
+	// The OIDC client_id is "<id>@<project>", not the bare numeric id the
+	// create response returns — that is what caused "no active client".
+	clientID := appBasic.ClientID
+	if !strings.Contains(clientID, "@") {
+		clientID += "@peristera"
+	}
+	t.Logf("BASIC api app clientId=%s hasSecret=%v", clientID, appBasic.ClientSecret != "")
+	basicHdr := "Basic " + base64.StdEncoding.EncodeToString([]byte(clientID+":"+appBasic.ClientSecret))
 	var tokB, bodyB string
 	for i := 0; i < 6; i++ {
 		time.Sleep(2 * time.Second)
+		// PLAIN exchange (no actor_token) to isolate client resolution from
+		// the impersonation gate.
 		tokB, bodyB = postTokenHeader(t, base, basicHdr, url.Values{
 			"grant_type":         {"urn:ietf:params:oauth:grant-type:token-exchange"},
 			"subject_token":      {machineTok},
 			"subject_token_type": {"urn:ietf:params:oauth:token-type:access_token"},
-			"actor_token":        {machineTok},
-			"actor_token_type":   {"urn:ietf:params:oauth:token-type:access_token"},
 		})
 		if tokB != "" || !strings.Contains(bodyB, "no active client") {
 			break
 		}
 	}
-	t.Logf("EXCHANGE (BASIC-header client, delegation): got_token=%v :: %s", tokB != "", bodyB)
+	t.Logf("EXCHANGE (BASIC @project client, PLAIN no-actor): got_token=%v :: %s", tokB != "", bodyB)
+
+	// And with actor_token (delegation) — expected to need the instance
+	// impersonation setting + an impersonator role on the actor.
+	_, bodyD := postTokenHeader(t, base, basicHdr, url.Values{
+		"grant_type":         {"urn:ietf:params:oauth:grant-type:token-exchange"},
+		"subject_token":      {machineTok},
+		"subject_token_type": {"urn:ietf:params:oauth:token-type:access_token"},
+		"actor_token":        {machineTok},
+		"actor_token_type":   {"urn:ietf:params:oauth:token-type:access_token"},
+	})
+	t.Logf("EXCHANGE (BASIC @project client, DELEGATION actor): %s", bodyD)
 
 	if err := c.do(ctx, http.MethodPost,
 		fmt.Sprintf("%s/management/v1/projects/%s/apps/api", base, projID), orgID,
@@ -195,6 +225,101 @@ func TestSpikeTokenExchange(t *testing.T) {
 		}
 	}
 	t.Logf("EXCHANGE (API-app client, delegation): got_token=%v :: %s", tok5 != "", body5)
+
+	// (6) The v2-hint path: give the *machine user* a client secret. The
+	// secret endpoint returns the AUTHORITATIVE clientId — no guessing the
+	// "<id>@project" format. Then authenticate the exchange as that client.
+	var msec struct {
+		ClientID     string `json:"clientId"`
+		ClientSecret string `json:"clientSecret"`
+	}
+	if err := c.do(ctx, http.MethodPut,
+		fmt.Sprintf("%s/management/v1/users/%s/secret", base, uid), orgID, map[string]any{}, &msec); err != nil {
+		t.Fatalf("machine secret: %v", err)
+	}
+	t.Logf("machine-user secret: clientId=%s hasSecret=%v", msec.ClientID, msec.ClientSecret != "")
+	muHdr := "Basic " + base64.StdEncoding.EncodeToString([]byte(msec.ClientID+":"+msec.ClientSecret))
+
+	// Isolation: does this client work AT ALL via client_credentials? If yes,
+	// the client is valid and token-exchange rejects for a grant/config
+	// reason; if no, the client auth itself (id/secret transport) is broken.
+	ccTok, ccBody := postTokenHeader(t, base, muHdr, url.Values{
+		"grant_type": {"client_credentials"},
+		"scope":      {"openid"},
+	})
+	t.Logf("CLIENT_CREDENTIALS (machine-user secret): got_token=%v :: %s", ccTok != "", ccBody)
+
+	// (7) THE hypothesis: an OIDC app whose grant types INCLUDE token-exchange,
+	// with a client secret. "no active client" is Zitadel's error for a client
+	// that exists but lacks the token-exchange grant.
+	var oapp struct {
+		AppID        string `json:"appId"`
+		ClientID     string `json:"clientId"`
+		ClientSecret string `json:"clientSecret"`
+	}
+	if err := c.do(ctx, http.MethodPost,
+		fmt.Sprintf("%s/management/v1/projects/%s/apps/oidc", base, projID), orgID, map[string]any{
+			"name":           fmt.Sprintf("svc-spike-tex-%d", time.Now().Unix()),
+			"redirectUris":   []string{"http://localhost/cb"},
+			"responseTypes":  []string{"OIDC_RESPONSE_TYPE_CODE"},
+			"grantTypes":     []string{"OIDC_GRANT_TYPE_AUTHORIZATION_CODE", "OIDC_GRANT_TYPE_TOKEN_EXCHANGE"},
+			"appType":        "OIDC_APP_TYPE_WEB",
+			"authMethodType": "OIDC_AUTH_METHOD_TYPE_BASIC",
+			"accessTokenType": "OIDC_TOKEN_TYPE_JWT",
+		}, &oapp); err != nil {
+		t.Fatalf("create oidc tex app: %v", err)
+	}
+	t.Logf("OIDC tex app clientId=%s hasSecret=%v", oapp.ClientID, oapp.ClientSecret != "")
+	texHdr := "Basic " + base64.StdEncoding.EncodeToString([]byte(oapp.ClientID+":"+oapp.ClientSecret))
+	time.Sleep(3 * time.Second) // let the app project
+
+	// Mint a FRESH subject token whose audience includes the project (so the
+	// exchanging client is a valid audience) — the "subject_token invalid"
+	// fix.
+	projAud := fmt.Sprintf("urn:zitadel:iam:org:project:id:%s:aud", projID)
+	subjTok, subjBody := postTokenHeader(t, base, muHdr, url.Values{
+		"grant_type": {"client_credentials"},
+		"scope":      {"openid " + projAud},
+	})
+	t.Logf("subject token (project-aud): got=%v :: %s", subjTok != "", firstN(subjBody, 120))
+	if subjTok == "" {
+		subjTok = machineTok
+	}
+
+	var tok7, body7 string
+	for i := 0; i < 6; i++ {
+		time.Sleep(2 * time.Second)
+		tok7, body7 = postTokenHeader(t, base, texHdr, url.Values{
+			"grant_type":         {"urn:ietf:params:oauth:grant-type:token-exchange"},
+			"subject_token":      {subjTok},
+			"subject_token_type": {"urn:ietf:params:oauth:token-type:access_token"},
+			"scope":              {"openid " + projAud},
+		})
+		if tok7 != "" || !strings.Contains(body7, "no active client") {
+			break
+		}
+	}
+	t.Logf("EXCHANGE (OIDC tex app, project-aud subject, PLAIN): got_token=%v :: %s", tok7 != "", body7)
+	var tok6, body6 string
+	for i := 0; i < 6; i++ {
+		time.Sleep(2 * time.Second)
+		tok6, body6 = postTokenHeader(t, base, muHdr, url.Values{
+			"grant_type":         {"urn:ietf:params:oauth:grant-type:token-exchange"},
+			"subject_token":      {machineTok},
+			"subject_token_type": {"urn:ietf:params:oauth:token-type:access_token"},
+		})
+		if tok6 != "" || !strings.Contains(body6, "no active client") {
+			break
+		}
+	}
+	t.Logf("EXCHANGE (machine-user secret client, PLAIN): got_token=%v :: %s", tok6 != "", body6)
+}
+
+func firstN(s string, n int) string {
+	if len(s) > n {
+		return s[:n]
+	}
+	return s
 }
 
 func env(k, d string) string {
