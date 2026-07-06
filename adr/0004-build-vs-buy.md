@@ -24,7 +24,7 @@ exceptions today:
 |---|---|---|
 | **Zitadel** | bootstrap, **all-in** | Auth bugs are security incidents; Entra ID/LDAP import machinery took others a decade. No abstraction-layer hedge — if Zitadel fails us, fallbacks (Ory, Keycloak) are worse fits. Accepted as a named risk. |
 | **OpenFGA** | **permanent** | Genuinely good, fits every constraint; ReBAC is exactly our domain. One instance per tenant namespace. |
-| **OnlyOffice** | bootstrap | Document co-editing must exist at the first public demo (M5); an editor suite is a decade of work. Integrated behind a document-service interface, not absorbed. |
+| **OnlyOffice** | bootstrap | Document co-editing must exist by the first public demo (M7; integrated at M6); an editor suite is a decade of work. Integrated behind a document-service interface, not absorbed. |
 
 Everything else — federation protocol, sync engine, control plane,
 collaboration engine — is built in-house. The federation protocol is

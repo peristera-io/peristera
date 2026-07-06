@@ -77,7 +77,8 @@ crypto is at-rest (not E2EE, Q&A R6), but the format must make E2EE
    chunk content hashes — a rename/move never changes an object's URL.
 10. **Streaming `BlobStore`** interface (`io.Reader`/ranged reads),
     filesystem impl first (per-tenant PersistentVolume), S3-compatible
-    behind the same interface at M6 (R39; root ADR backlog #5).
+    behind the same interface with the SaaS/Scaleway story (R39; root ADR
+    backlog #5).
 
 ## Consequences
 

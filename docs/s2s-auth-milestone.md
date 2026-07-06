@@ -1,10 +1,16 @@
 # Milestone stub — service-to-service auth / intra-tenant zero-trust
 
-- **Status:** proposed (Q&A R41, 2026-07-05). Not scheduled; a design
-  milestone to run **before M6** (SaaS/Scaleway hardening builds on it).
-- **Lifecycle:** this is a placeholder that captures *why* the milestone
-  exists and its open questions; it is superseded by the milestone's own
-  plan + ADR(s) once scheduled.
+> **Superseded (2026-07-06).** This stub is scheduled as **M5** and its
+> parameters are settled in `Q&A.md` Round 10. The live plan is
+> **`docs/m5-plan.md`**. This file is retained only for the original
+> framing; read the plan and Round 10 for current decisions.
+
+- **Status:** superseded by `docs/m5-plan.md` (was: proposed, Q&A R41,
+  2026-07-05). Scheduled as M5 (Q&A R49); runs before OnlyOffice (M6) and
+  the public demo (M7).
+- **Lifecycle:** this is a placeholder that captured *why* the milestone
+  exists and its open questions; now superseded by the milestone's plan
+  (`docs/m5-plan.md`) and Round 10.
 
 ## Why this exists
 

@@ -83,8 +83,8 @@ and the four conventions.
   *(decided — the interface shape)*
 - Concrete backend: **filesystem impl for M4a** (a per-tenant
   PersistentVolume); an S3-compatible impl (Scaleway/MinIO) behind the
-  same interface arrives with the SaaS/Scaleway story (M6). *(decided —
-  R7 Q39; ADR backlog #5)*
+  same interface arrives with the SaaS/Scaleway story (the public demo).
+  *(decided — R7 Q39; ADR backlog #5)*
 
 ## 5. Data model (Postgres)
 
@@ -214,7 +214,7 @@ the chunker algorithm + format-future-proofing ideas (R34); split M4a/M4b
 (R35); single-tier chunking (R36); plaintext content-addressing with the
 algorithm named in the format config (R37); cross-version reuse +
 ref-counting in M4a (R38); filesystem `BlobStore` first, S3 behind the
-interface at M6 (R39); per-tenant DEK (k8s Secret) envelope-encrypting
+interface with the SaaS/Scaleway story (R39); per-tenant DEK (k8s Secret) envelope-encrypting
 chunks at-rest (R40).
 
 Corrected at the M4a session-1 review (2026-07-04): the associated-data

@@ -55,8 +55,9 @@ Peristera app follows; it is a `lib/pii` package, not Ergonomos-shaped.
 6. **Crypto-shredding / per-tenant key hierarchy (GH issue #9 home).**
    Whole-tenant erasure from immutable backups reduces to deleting the
    *tenant's* key (README §4). This ADR *specifies* the per-tenant key
-   hierarchy as that mechanism; it is **implemented with the backup story
-   (target M6)**, not in M3. **Scope is deliberately whole-tenant only** —
+   hierarchy as that mechanism; it is **implemented with the backup /
+   off-boarding story** (its own later milestone, README §5; see #9), not in
+   M3. **Scope is deliberately whole-tenant only** —
    it does not erase a single subject, and it is *not* the mechanism
    audit-log pseudonymization uses (that needs a per-subject secret, a
    distinct thing; see §7 and ADR-0011 §4). Recording it here gives the

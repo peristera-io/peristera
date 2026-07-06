@@ -16,8 +16,8 @@ where its state lives, and how it authenticates operators.
    a controller-runtime reconcile loop** — not imperative client-go in
    HTTP handlers. Reconciliation is this product's core competency:
    upgrades, staging clones, and quotas are all "converge reality to spec"
-   problems. **Review rider (R23): revisit after M6** whether the
-   controller pulls its weight.
+   problems. **Review rider (R23): revisit after the public demo** whether
+   the controller pulls its weight.
 2. **Tenant CRs are the source of truth.** No control-plane database until
    billing/quotas need one (2027). The UI reads CRs and their status; what
    the cluster reports *is* the tenant list.

@@ -70,5 +70,5 @@ go run sigs.k8s.io/controller-tools/cmd/controller-gen@latest crd paths=./apis/.
 
 - ADR-0006 — the tenant-IAM provisioning sequence the controller implements
 - ADR-0007 — object identity: `spec.slug` immutable, tenant domain = issuer
-- ADR-0008 — this component's architecture and its post-M6 review rider
+- ADR-0008 — this component's architecture and its post-public-demo review rider
 - `iam/README.md` — the proven System-API calls (the controller's spec)

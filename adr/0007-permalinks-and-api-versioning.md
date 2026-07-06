@@ -30,7 +30,7 @@ all three need stable object identity before the first endpoint exists.
 5. **APIs are path-versioned per app: `/api/v1/…`** from the first
    endpoint. Within a version, changes are additive-only; breaking changes
    open `/api/v2` with a deprecation window. Until the first external
-   consumer (public demo, M6), v1 may still break — each break logged in
+   consumer (the public demo), v1 may still break — each break logged in
    the worklog. Webhook payloads carry an explicit `schemaVersion`.
 6. **Every API resource embeds its object ID and canonical permalink**, so
    clients never construct URLs from names.
