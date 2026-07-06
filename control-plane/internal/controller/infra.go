@@ -250,6 +250,34 @@ func (r *TenantReconciler) ensureOpenFGAKey(ctx context.Context, tenant *v1alpha
 	return r.setOwnerAndCreate(ctx, tenant, sec)
 }
 
+// ensureS2SIdentity provisions an app's service-to-service caller identity
+// (ADR-0017): a confidential OIDC "S2S client" in the tenant's project (the
+// token-exchange grant + private_key_jwt) and a JSON app key, stored as a
+// Secret that lib/svcauth reads to sign client assertions. Create-only: the
+// key is generated once (Zitadel returns the private key only at creation),
+// so we skip if the Secret already exists.
+func (r *TenantReconciler) ensureS2SIdentity(ctx context.Context, tenant *v1alpha1.Tenant, ns, orgID, app string) error {
+	name := app + "-s2s-key"
+	if err := r.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, &corev1.Secret{}); err == nil {
+		return nil
+	} else if !apierrors.IsNotFound(err) {
+		return err
+	}
+	_, appID, err := r.IAM.EnsureS2SClient(ctx, tenant.Status.Issuer, orgID, app+"-s2s")
+	if err != nil {
+		return fmt.Errorf("ensuring S2S client for %s: %w", app, err)
+	}
+	keyJSON, err := r.IAM.AddAppKey(ctx, tenant.Status.Issuer, orgID, appID)
+	if err != nil {
+		return fmt.Errorf("adding S2S key for %s: %w", app, err)
+	}
+	sec := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+		Data:       map[string][]byte{s2sKeyFileName: keyJSON},
+	}
+	return r.setOwnerAndCreate(ctx, tenant, sec)
+}
+
 // ensureDEK generates a per-tenant data-encryption key as a Secret (Kamara,
 // ADR-0009 §6). The key is stored base64-encoded so the mounted file is
 // text — no binary/trailing-newline ambiguity when the app reads it. This

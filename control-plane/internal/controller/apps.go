@@ -76,6 +76,9 @@ const (
 	blobMountPath = "/mnt/kamara-blob"
 	dekMountPath  = "/mnt/kamara-dek"
 	dekFileName   = "dek"
+	// S2S client-key mount (ADR-0017): the app-key JSON for lib/svcauth.
+	s2sKeyMountPath = "/mnt/s2s"
+	s2sKeyFileName  = "key.json"
 )
 
 // anyAppNeedsOpenFGA reports whether the catalog requires the per-tenant
@@ -107,6 +110,17 @@ func (r *TenantReconciler) ensureApps(ctx context.Context, tenant *v1alpha1.Tena
 	orgID, err := r.IAM.FirstOrgID(ctx, tenant.Status.Issuer)
 	if err != nil {
 		return err
+	}
+
+	// Service-to-service auth (ADR-0017): the tenant's app project id scopes
+	// exchange audiences, and the instance must permit token-exchange
+	// delegation. Both are needed by any app that calls another.
+	projectID, err := r.IAM.ProjectID(ctx, tenant.Status.Issuer, orgID)
+	if err != nil {
+		return err
+	}
+	if err := r.IAM.EnableImpersonation(ctx, tenant.Status.Issuer); err != nil {
+		return fmt.Errorf("enabling token-exchange delegation: %w", err)
 	}
 
 	for _, app := range catalog {
@@ -188,6 +202,28 @@ func (r *TenantReconciler) ensureApps(ctx context.Context, tenant *v1alpha1.Tena
 				}},
 			})
 			mounts = append(mounts, corev1.VolumeMount{Name: "dek", MountPath: dekMountPath, ReadOnly: true})
+		}
+
+		// S2S caller identity (ADR-0017): an app that calls another gets its
+		// own confidential OIDC "S2S client" + key (mounted for lib/svcauth),
+		// plus the project id so lib/oidcrp can request the project-audience
+		// scope on the user's token and svcauth can exchange it.
+		if len(app.Calls) > 0 {
+			if err := r.ensureS2SIdentity(ctx, tenant, ns, orgID, app.Name); err != nil {
+				return err
+			}
+			env = append(env,
+				corev1.EnvVar{Name: "OIDC_PROJECT_ID", Value: projectID},
+				corev1.EnvVar{Name: "SVCAUTH_KEY_FILE", Value: s2sKeyMountPath + "/" + s2sKeyFileName},
+			)
+			volumes = append(volumes, corev1.Volume{
+				Name: "s2s-key",
+				VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+					SecretName: app.Name + "-s2s-key",
+					Items:      []corev1.KeyToPath{{Key: s2sKeyFileName, Path: s2sKeyFileName}},
+				}},
+			})
+			mounts = append(mounts, corev1.VolumeMount{Name: "s2s-key", MountPath: s2sKeyMountPath, ReadOnly: true})
 		}
 
 		deploy := &appsv1.Deployment{

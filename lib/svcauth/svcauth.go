@@ -28,6 +28,14 @@ import (
 	"time"
 )
 
+// ProjectAudienceScope is the Zitadel scope that puts the tenant's app
+// project into a token's audience. lib/oidcrp must request it at login so the
+// user's access token is exchangeable here; OnBehalfOf requests it on the
+// exchanged token too. Kept in one place so login and exchange stay in sync.
+func ProjectAudienceScope(projectID string) string {
+	return "urn:zitadel:iam:org:project:id:" + projectID + ":aud"
+}
+
 // appKey is the JSON Zitadel issues for an application key (KEY_TYPE_JSON):
 // the private-key credential of the per-app S2S OIDC client.
 type appKey struct {
@@ -69,7 +77,7 @@ func NewExchanger(issuer, projectID string, keyJSON []byte) (*Exchanger, error) 
 		clientID:  k.ClientID,
 		keyID:     k.KeyID,
 		key:       priv,
-		projScope: fmt.Sprintf("urn:zitadel:iam:org:project:id:%s:aud", projectID),
+		projScope: ProjectAudienceScope(projectID),
 		http:      &http.Client{Timeout: 15 * time.Second},
 	}, nil
 }
