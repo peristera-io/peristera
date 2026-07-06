@@ -508,3 +508,20 @@ Plan: `docs/m5-plan.md`; decisions `Q&A.md` Round 10; roadmap renumbered
   ran after s1, s2, and s3–4.
   **Next: M6 — OnlyOffice (OnlyOffice ↔ Kamara is now an S2S consumer of this
   model), then M7 — public demo.**
+
+## 2026-07-06 — pre-M6 cleanup pass
+
+Between M5 and M6, a batch of small security/correctness fixes from the issue
+triage (commit `1d26031`, verified: full godog + oidcrp guard unit test +
+the #19 restart check):
+
+- **#4 CSRF:** `oidcrp.SameOriginGuard` on the cookie-authed HTMX UIs
+  (ergonomos, kamara, control-plane) — Sec-Fetch-Site + Origin, same-origin
+  only; never on the bearer APIs. **#37** Secure cookie behind HTTPS
+  (control-plane; the others already were). **#5** devMode only for an http
+  (dev) issuer. **#19** OpenFGA model-write dedup (reuse the latest matching
+  model — verified the count stays stable across a restart). **#36** Kamara
+  folder-delete race → 409 not 500.
+- Closed #4, #5, #19, #36, #37. Residual noted: control-plane `/api/v1`
+  accepts the session cookie (CSRF there is tied to #1).
+- **Next: plan M6 — OnlyOffice.**
