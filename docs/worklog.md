@@ -355,3 +355,54 @@ issue / note).
   issue list when planning new work — fold matching follow-ups into the
   milestone that next touches that area.**
 - **M2 declared complete.**
+
+## 2026-07-06 — M4 complete: Kamara, the per-tenant file store
+
+Built over three phases, each session fresh-context-reviewed (six adversarial
+reviews total; findings triaged inline or filed as #22–#41).
+
+- **M4a — engine + API + deployment.** Content-defined chunking (FastCDC),
+  BLAKE3 content-addressing, XChaCha20-Poly1305 at rest under a per-tenant
+  DEK, ref-counted chunk GC; streaming filesystem `BlobStore`; a bearer
+  **storage API v0** (OpenAPI-first) authenticated via the tenant issuer's
+  userinfo endpoint (the `sub` owns the file). Deployed as a catalog app —
+  the first stateful-beyond-Postgres app: a per-tenant blob **PVC** and a
+  per-tenant **DEK Secret**, provisioned by the control plane (surfaced +
+  fixed a PVC RBAC gap). New: root ADR-0015 (transactional storage,
+  `lib/dbtx` + `lib/pgconv`, closing #15), Kamara ADR-0001 (chunk format).
+  Acceptance: a live godog round-trip (upload→list→download→delete +
+  cross-subject isolation) through the deployed API with a tenant PAT.
+
+- **M4b — folder hierarchy + browser UI.** Folders as first-class objects
+  with OpenFGA `can_access` inheritance (Kamara ADR-0002, model accretion
+  #19); create/upload-into/rename/move (cycle-checked)/delete, empty-first
+  folder delete; export/erase cover folders. A browser file UI: OIDC cookie
+  login beside the bearer API, an HTMX file browser (breadcrumb navigation),
+  and full file operations — all cookie-authed (CSRF via SameSite=Lax), the
+  browser surface never linking to the machine API. **Tailwind is the
+  design-language pilot** (isolated `@theme` tokens, built via the standalone
+  CLI → `go:embed`; htmx vendored + embedded, no CDN). a11y gate (axe,
+  WCAG 2.1 AA) across four UI states.
+
+- **M4c — polish + demo.** A drag-drop uploader **component** with a progress
+  bar (progressive enhancement, extractable toward the planned SDK) and a
+  file-details **drawer** (metadata + a stubbed Versions section — the schema
+  already supports history). An end-to-end **Playwright demo** (real login →
+  browse → create folder → upload → drawer → download) is the acceptance
+  artifact (`kamara/demo/`).
+
+- **The load-bearing decision (Q&A R41).** Wiring "Ergonomos calls Kamara's
+  API" would have forced the platform-wide **service-to-service auth** model.
+  Rather than settle it to pass one test, it was deferred to its own design
+  milestone (`docs/s2s-auth-milestone.md`, #29) — where the Ergonomos
+  file-attach flow becomes the acceptance test that validates the chosen
+  model. M4a's acceptance became a same-app API round-trip; the cross-app
+  attach moves to that milestone. The tuple-seam reconciler (#33) is the
+  flagged gate before folder *sharing* ships.
+
+- **Deferred (issues #22–#41, folded per agreement #7):** the S2S/zero-trust
+  milestone (#29, folds #18/#19), the OpenFGA tuple-seam reconciler (#33),
+  per-tenant storage quota (#27), blob-orphan GC sweep (#23), CSP (#38),
+  streaming-server DoS hardening (#40), multi-file upload (#41), and more.
+
+- **M4 declared complete.**

@@ -1,24 +1,26 @@
 Market & positioning**
+
 1. Who exactly is the target SME? My guess: 10–100 employees, too small for a real IT department, currently on Microsoft 365. Which geography first — Luxembourg/Benelux, then DACH?
 
 I want to market online - first in the self hosting comunity to get feedback, then go wider.
 
-2. What's the *wedge* — the first Microsoft workload you realistically replace? Full M365 displacement is a 5+ year fight; SharePoint/OneDrive replacement (Ergonomos + Vault) while coexisting with Outlook/Teams seems the plausible entry. Agree?
+1. What's the *wedge* — the first Microsoft workload you realistically replace? Full M365 displacement is a 5+ year fight; SharePoint/OneDrive replacement (Ergonomos + Vault) while coexisting with Outlook/Teams seems the plausible entry. Agree?
 
 Agree. I think that we need to build a teams alternative after that, and then focus on office.
 
-3. Roadmap item 0 (admin dashboard: clients, billing, quotas) suggests you're building for **integrators/MSPs as the primary channel**, not selling to SMEs directly. Is that the strategy — integrators host and support, you provide software + maybe SaaS?
+1. Roadmap item 0 (admin dashboard: clients, billing, quotas) suggests you're building for **integrators/MSPs as the primary channel**, not selling to SMEs directly. Is that the strategy — integrators host and support, you provide software + maybe SaaS?
 
 I want to make both. MSPs should have a keys in hand solution. But I also want to host this myself as a SaaS to get feedback, etc.
 
-4. How do you position against Nextcloud, openDesk (ZenDiS), Seafile, OnlyOffice? Is the differentiator the Notion-like UX + opinionated defaults + genuine multi-tenancy for integrators?
+1. How do you position against Nextcloud, openDesk (ZenDiS), Seafile, OnlyOffice? Is the differentiator the Notion-like UX + opinionated defaults + genuine multi-tenancy for integrators?
 
 a few angles:
-  - opinionated defaults, no option deluge
-  - no data silos - work with different companies, etc. directly via federation.
-  - make it easy for MSPs to sell it.
 
-5. Business model: where does money come from in year 1–3? Options: hosted SaaS, paid support/certification for integrators, dual-license enterprise features. The CLA hints at open-core/dual-license — confirm or deny.
+- opinionated defaults, no option deluge
+- no data silos - work with different companies, etc. directly via federation.
+- make it easy for MSPs to sell it.
+
+1. Business model: where does money come from in year 1–3? Options: hosted SaaS, paid support/certification for integrators, dual-license enterprise features. The CLA hints at open-core/dual-license — confirm or deny.
 
 year 1 is building and showcasing, building support for the cause. I want to apply for public grants. year 2-3 I want to sell as SaaS and start approaching targeting MSPs directly, especially with certifications, etc.
 
@@ -27,19 +29,19 @@ year 1 is building and showcasing, building support for the cause. I want to app
 
 identity, documentation, files, etc. Ergonomos for example will be able to act as a todo list / project planner. This will create calendar entries. I want to see my private entries and my corporate entries in the same calendar, without needing to do something complicated. This will be the heart of the project - and I think this will allow me to get EU grants.
 
-7. Peristera IAM: build on an existing engine (Keycloak, Zitadel, Ory) or from scratch? From scratch is a multi-year detour; I'd default to wrapping an existing one.
+1. Peristera IAM: build on an existing engine (Keycloak, Zitadel, Ory) or from scratch? From scratch is a multi-year detour; I'd default to wrapping an existing one.
 
 This is a good idea - but it makes me wonder if I should pivot then. Why do you think it is a multiyear project? If we decide into not building this ourselves, I think we should think about how we host this. Because if we have a thirdparty application in the stack, it becomes alot harder to control the experience. BUT, all clients will want to host their own applications at some point. Can we maybe do this differently? Make a realy slick UI to spin up pods in kubernetes with a click. That would be useful anyway, and allow from the start to something where I want to pivot later: Replace azure. Do you see where I am going with this?
 
-8. Why is the admin/billing dashboard *before* IAM in the roadmap? Everything needs auth — I'd have expected IAM (or at least a stub) first. Is item 0 already underway?
+1. Why is the admin/billing dashboard *before* IAM in the roadmap? Everything needs auth — I'd have expected IAM (or at least a stub) first. Is item 0 already underway?
 
 I guess this should be build together. Auth as a stub, then admin dashboard as a stub. I want to have something useful as quickly as possible. Actually, I think all the tools should be build together: why? They all inform each other and I want to have basic but minimal functionality. This way, I can be opinionated, but pivot, if my opinions suck, without loosing too much time.
 
-9. What are your actual time expectations — what should exist in 6 months, and what does "first paying customer/design partner" look like?
+1. What are your actual time expectations — what should exist in 6 months, and what does "first paying customer/design partner" look like?
 
-6 Mpnths: login via Peristera IAM, task management via ergonomos, file upload via vault on the browser. 
+6 Mpnths: login via Peristera IAM, task management via ergonomos, file upload via vault on the browser.
 
-10. Vault: own sync engine, or build on something proven (e.g. Seafile core, rclone-style, or Nextcloud's)? Desktop + mobile clients in scope for the 2–3 year horizon?
+1. Vault: own sync engine, or build on something proven (e.g. Seafile core, rclone-style, or Nextcloud's)? Desktop + mobile clients in scope for the 2–3 year horizon?
 
 own sync engine. I have been building a encrypted sync engine but have come to the conclusion that encrypting everything is a hassle in corporate world. But we can decide on that later.
 
@@ -50,15 +52,15 @@ backends: Go
 frontend: everything that lives on the web only: HTMX, maybe with some svelte or similar if the interaction model needs it. If the application lives also on device: flutter.
 database: psql
 
-13.  If undecided, tell me your constraints (e.g. "must be boring, hireable-for in Luxembourg, good LLM training coverage") and I'll write it as decision criteria instead.
+1. If undecided, tell me your constraints (e.g. "must be boring, hireable-for in Luxembourg, good LLM training coverage") and I'll write it as decision criteria instead.
 
 Do you agree with my stack? Is this well represented in the LLM training data?
 
-12. Deployment target for self-hosters: single Docker Compose on one VM? Kubernetes for integrators? This shapes architecture heavily.
+1. Deployment target for self-hosters: single Docker Compose on one VM? Kubernetes for integrators? This shapes architecture heavily.
 
 I think we should go with Kubernetes only and provide docker images without much documentation except how to run them. This will be a heavy framework, with a lot of moving parts. If we want to provide a safe experience, we need a "controlled" environment. Do you agree?
 
-13. Multi-tenancy: one instance per customer, or shared instance with tenant isolation? Item 0 (quotas, billing) implies shared.
+1. Multi-tenancy: one instance per customer, or shared instance with tenant isolation? Item 0 (quotas, billing) implies shared.
 
 The admin dashboard should be like a control pane. New customer? Let's spin up a new namespace, and launch the pods. This way, we can cleanly seperate databases, etc.
 
@@ -67,7 +69,7 @@ The admin dashboard should be like a control pane. New customer? Let's spin up a
 
 I a solo, bootstrapped but seeking funding. Nights & weekends.
 
-15. Naming: should the legal files be generalized from "ergonomos" to "Peristera", and is "Peristera Ergonomos / Peristera Vault / Peristera IAM" the final naming scheme?
+1. Naming: should the legal files be generalized from "ergonomos" to "Peristera", and is "Peristera Ergonomos / Peristera Vault / Peristera IAM" the final naming scheme?
 
 The files should be templates and adapted for each subfolder.
 
@@ -108,6 +110,7 @@ operator), not arbitrary workloads. "Replace Azure" belongs in the README as
 the long-horizon north star, not a year-1 promise.
 
 **Q11 — stack verdict and LLM training coverage.** Agree, with caveats:
+
 - **Go** — ideal. Best-possible LLM coverage; the whole k8s ecosystem is Go;
   single-binary deploys.
 - **Postgres** — yes. On k8s use the CloudNativePG operator; one Postgres per
@@ -176,7 +179,7 @@ calendar via CalDAV/ICS (interops with everything immediately); document/task
 sharing via a small signed HTTP protocol between Peristera instances, designed
 in an early ADR with ActivityPub considered and probably rejected. OK?
 
-> I want to have peristera-peristera federation only. Everything else is too involved. We can build adapters for 3rd party applications that make it possible to ingest caldav for example. This way, I don't need to ditch my personal google calendar, but get the benefits from federation. 
+> I want to have peristera-peristera federation only. Everything else is too involved. We can build adapters for 3rd party applications that make it possible to ingest caldav for example. This way, I don't need to ditch my personal google calendar, but get the benefits from federation.
 
 **R5. Ergonomos at 6 months:** single-user task lists (HTMX, cheap), or already
 collaborative/real-time (pulls the whole Svelte+CRDT stack forward)? I'd argue
@@ -229,6 +232,7 @@ doesn't. Answers here become new README sections.
 
 **R11. Risk register.** I'll draft a "Risks" section with these, each with a
 mitigation — correct, extend, or reweight:
+
 - solo bus factor (mitigation: everything written down — this repo *is* the handover)
 - Zitadel all-in with limited fallback (mitigation: our IAM API surface keeps the seam visible, even without a full abstraction layer)
 - federation cold start (mitigations now in README: personal↔employer federation, MSP-as-network-seed)
@@ -259,7 +263,7 @@ GitHub org name (is `peristera` free?), issues on GitHub — plus which
 channel: Matrix room (on-brand for federation), Discourse, Mastodon/Fediverse
 account, plain email? Pick the smallest set you'll actually tend.
 
->peristera-io is the github org name. email is peristera@peristera.io. 
+>peristera-io is the github org name. email is <peristera@peristera.io>.
 
 **R15. BDD toolchain.** CONTRIBUTING mandates Gherkin `.feature` files; for
 Go the standard is **godog** (the official Cucumber implementation). OK to
@@ -415,7 +419,7 @@ Recommendation: **split** — M3a ships the ADRs + `lib/` conventions (a
 self-contained, even grant-shaped "GDPR-by-design spine" work package),
 M3b ships the task stub that proves they compose. Keeps each milestone
 demoable and honestly sized. Or do you want it as one milestone, accepting
-the overrun? 
+the overrun?
 
 > ok
 
@@ -426,7 +430,7 @@ is YAGNI. Recommendation: **ADR all four now; implement personal-data
 metadata + audit events + a trivial OpenFGA `owner` relation (the stub
 touches these), plus the search *write-side* hook — but defer the search
 query UI and any multi-user OpenFGA modeling to when a second user/app
-needs it.** Agree, or implement more/less aggressively? 
+needs it.** Agree, or implement more/less aggressively?
 
 > ok
 
@@ -437,7 +441,7 @@ the tenant cluster, (b) a **schema** per app in one shared database, (c) a
 separate CNPG cluster per app. Recommendation: **(a) database-per-app** —
 clean erasure/backup boundary per app, still one Postgres operator per
 tenant, avoids a cluster per app. The control plane provisions it as part
-of deploying the app. OK? 
+of deploying the app. OK?
 
 > ok
 
@@ -448,7 +452,7 @@ actually curates catalogs is speculative. Recommendation: **keep the slice**
 (YAGNI), but grow the catalog *contract* so an entry can declare "needs a
 database" and "needs an OpenFGA store". Defer catalog-as-data to when
 per-MSP catalog curation is real. This walks back R26 slightly — OK, or
-make it data now? 
+make it data now?
 
 > ok, but let's keep track of the decision and make sure that we don't loose it from context.
 
@@ -458,14 +462,14 @@ Need a tool (boring, Go, k8s-friendly). Candidates: **goose**,
 **golang-migrate**, **atlas** (declarative, can enforce expand/contract).
 Recommendation: **goose** (simple, embeds in the Go binary, runs as an init
 step) unless you want atlas's declarative diffing. Preference? This becomes
-a short stack ADR. 
+a short stack ADR.
 
 > goose
 
 **R33. Accessibility CI tooling?** Deferred to M3 (§5). Recommendation:
 **axe-core via `@axe-core/cli` or pa11y-ci** against the running Ergonomos
 UI in the e2e job (we already spin up the app in CI). EN 301 549 / EAA as
-the bar, start with WCAG 2.1 AA automated checks. OK, or a specific tool? 
+the bar, start with WCAG 2.1 AA automated checks. OK, or a specific tool?
 
 > ok
 
@@ -515,7 +519,7 @@ reserved either way. OK?
 
 **R38. Cross-version reuse + ref-counting in M4a, or defer?** On edit,
 reuse unchanged chunks and ref-count + GC orphans. It needs the `ref_count`
-+ `origin_*` columns from day one regardless (reserved). Recommendation:
+and `origin_*` columns from day one regardless (reserved). Recommendation:
 **build reuse + ref-counting in M4a** — it's the whole point of
 content-defined chunking, it's format-shaping, and the prototype proved
 it's tractable. Agree, or ship dumb full-copy versions first and add reuse
@@ -596,6 +600,7 @@ zero-trust). Skip B for now too, but note B (machine identity + RFC-8693
 token exchange) is what real zero-trust-inside-the-namespace requires.
 
 Resolution:
+
 - **M4a acceptance revised** to a *live authenticated round-trip through
   the deployed storage API* (upload→list→download→delete) — proves the API
   and deployment end-to-end without any cross-app call.
@@ -606,7 +611,6 @@ Resolution:
 - **A dedicated milestone will design platform service-to-service auth /
   intra-tenant zero-trust** (machine identity, token-exchange/actor tokens,
   NetworkPolicy #18, per-service OpenFGA authn #19), sequenced before M6.
-
 
 ## Round 9 — M4b/M4c (Kamara file UI + folder hierarchy)
 

@@ -15,7 +15,7 @@ places that don't share a roof. That is the product thesis in one image.
 > made in dialogue are archived in `Q&A.md`; durable decisions get an ADR in
 > `adr/`.
 
-## Current status — updated 2026-07-04
+## Current status — updated 2026-07-06
 
 **M0–M2 complete.** M0: the monorepo at `github.com/peristera-io/peristera`
 (`LICENSE` AGPL-3.0, repo-wide CLA + per-project templates, bootstrap ADRs
@@ -30,8 +30,8 @@ scenarios) drives the dev loop and the e2e CI job (`hack/dev-cluster.sh`
 brings up the full environment). A five-agent review closed M2 out; the
 non-blocking findings are tracked as GitHub issues.
 
-Only `iam/` and `control-plane/` exist on disk; the other project folders
-(`lib/`, `ergonomos/`, `kamara/`) appear with their first code, per §8.
+`iam/`, `control-plane/`, `lib/`, `ergonomos/`, and `kamara/` now exist on
+disk; further project folders appear with their first code, per §8.
 
 **M3 complete (2026-07-04): Ergonomos, the first app that stores user
 data, wired through the GDPR-by-design spine.** ADRs 0009–0014
@@ -43,8 +43,26 @@ OpenFGA; every task mutation flows through personal-data metadata (export/
 erase), authorization (OpenFGA owner tuples, permission-filtered lists),
 audit (pseudonymized actor), and the search feed — verified live in the
 tenant database. Accessibility gate (axe-core, WCAG 2.1 AA) in CI. Each
-session fresh-context-reviewed. Next: **M4 — Kamara stub** (file storage:
-chunked browser upload + a storage API Ergonomos can call).
+session fresh-context-reviewed.
+
+**M4 complete (2026-07-06): Kamara, the per-tenant file store.** Files are
+content-defined, deduplicated, at-rest-encrypted chunks — FastCDC chunking,
+BLAKE3 content-addressing, XChaCha20-Poly1305 under a per-tenant DEK,
+ref-counted GC — behind a bearer **storage API** and a browser **file UI**.
+A folder hierarchy with OpenFGA `can_access` inheritance; create / upload /
+rename / move / delete via cookie-authed HTMX; a drag-drop uploader
+component with a progress bar and a file-details drawer. Deployed as a
+catalog app (first stateful-beyond-Postgres app: per-tenant blob PVC +
+per-tenant DEK Secret), wired through all four conventions. Tailwind is the
+design-language pilot; the a11y gate runs across four UI states. **Six
+adversarial reviews**, each triaged; an end-to-end Playwright demo (login →
+browse → upload → download) is the acceptance artifact. The **inter-service
+auth model was deliberately deferred** to its own design milestone rather
+than settled to make one test pass — the Ergonomos file-attach flow is that
+milestone's acceptance test (Q&A R41, `docs/s2s-auth-milestone.md`, #29).
+ADRs: root 0015 (transactional storage); Kamara 0001 (chunk format), 0002
+(folder hierarchy). Next: **the service-to-service auth milestone** (#29),
+then the SaaS/Scaleway hardening (M6).
 
 *Update this block whenever reality changes — a stale status line is exactly
 the rot §8 warns against.*

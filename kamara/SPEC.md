@@ -7,10 +7,12 @@
 > `docs/m4-plan.md`; decision rationale lives in `adr/`; this doc states
 > the design and links to the ADRs for the *why*.
 >
-> **Status: M4a format decisions settled (`Q&A.md` Round 7, 2026-07-04);
-> implementation not started.** The decisions below are now framing; the
-> column/wire specifics firm up as M4a is built and this doc is updated to
-> match.
+> **Status: M4 complete (2026-07-06).** M4a (engine + storage API +
+> deployment), M4b (folder hierarchy + browser UI), M4c (uploader component,
+> details drawer, design tokens, a11y, demo) all shipped and reviewed. The
+> next storage work is the service-to-service auth milestone (#29) and the
+> deferred follow-ups (#22–#41). This doc stays living — it states what
+> Kamara *is* and what remains open (§9).
 
 ## 1. What Kamara is
 

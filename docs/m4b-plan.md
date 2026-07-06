@@ -72,18 +72,18 @@ cross-user sharing.
 
 ### Definition of done (M4b)
 
-- [ ] Hierarchy model (folders + `folder_id`) migrated (expand); folder/file
+- [x] Hierarchy model (folders + `folder_id`) migrated (expand); folder/file
       domain + repos; OpenFGA folder type + `parent` inheritance (#19); the
       hierarchy ADR; `kamara/SPEC.md` updated.
-- [ ] API for the full op set (folder CRUD, list children, upload-into,
+- [x] API for the full op set (folder CRUD, list children, upload-into,
       move, rename, download), OpenFGA-authorized, conventions-wired; godog
       API scenarios green (incl. cross-subject isolation on folders).
-- [ ] Browser OIDC auth on Kamara; bearer API and cookie UI share subject
+- [x] Browser OIDC auth on Kamara; bearer API and cookie UI share subject
       resolution.
-- [ ] Tailwind build pipeline + named theme; base layout + file-browser UI
+- [x] Tailwind build pipeline + named theme; base layout + file-browser UI
       (browse / create-folder / upload / download / delete / rename / move),
       string catalog, no hardcoded strings.
-- [ ] Live-verified in-cluster end to end.
+- [x] Live-verified in-cluster end to end.
 
 ## M4c — sessions
 
@@ -95,11 +95,11 @@ cross-user sharing.
 
 ### Definition of done (M4c)
 
-- [ ] Uploader is a self-contained component (extractable to an SDK later);
+- [x] Uploader is a self-contained component (extractable to an SDK later);
       drag-drop + progress bar.
-- [ ] File-details pullout drawer (metadata + stubbed Versions section).
-- [ ] Design tokens structured for a shared preset; a11y CI gate green.
-- [ ] Demo: end-to-end browser flow. SPEC/README/worklog updated.
+- [x] File-details pullout drawer (metadata + stubbed Versions section).
+- [x] Design tokens structured for a shared preset; a11y CI gate green.
+- [x] Demo: end-to-end browser flow. SPEC/README/worklog updated.
 
 ## Out of scope (deferred, not dropped)
 
