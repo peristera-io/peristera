@@ -444,5 +444,13 @@ Plan: `docs/m5-plan.md`; decisions `Q&A.md` Round 10; roadmap renumbered
     public-surface bounce via L7/FQDN or internal issuer routing) and **#44**
     (netpol hardening: tighten np-openfga, drift-reconcile the kill-switch,
     label-identity). Commits `d560ed3`, `4551335`.
-  - **Deferred to the next step:** OpenFGA **preshared-key auth** (the other
-    half of #18) — folds with #44's np-openfga tightening.
+  - **OpenFGA preshared-key auth (completes s1 DoD, commit `1579d6d`):**
+    per-tenant `openfga-authn-key` Secret; OpenFGA runs with
+    `OPENFGA_AUTHN_METHOD=preshared`; apps get it as `OPENFGA_API_TOKEN` and
+    `lib/authz` sends it as a bearer (`WithToken`); np-openfga tightened to
+    the NeedsOpenFGA apps only (#44 item 1). Verified: OpenFGA 401 without
+    the key / 200 with it, `stub` network-blocked from OpenFGA, full godog
+    green. Closes the other half of **#18**.
+  - **s1 complete.** Next: **S2 — machine identity + RFC-8693 token
+    exchange** (`lib/oidcrp` retains the user access token; per-app Zitadel
+    service user + JWT key; `lib/svcauth`).
