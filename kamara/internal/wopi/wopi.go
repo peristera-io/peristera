@@ -25,7 +25,10 @@ import (
 // authorized token. The HTTP layer maps it to 401.
 var ErrInvalid = errors.New("wopi: invalid or expired session")
 
-// DefaultTTL bounds an editing session; a longer edit re-opens (mints anew).
+// DefaultTTL bounds an editing session (a longer edit re-opens, minting
+// anew). It is defense-in-depth, not the primary control: the per-call
+// OpenFGA re-check is what actually gates access, so the TTL only bounds how
+// long a *leaked* token could be replayed if that check ever regressed.
 const DefaultTTL = 10 * time.Hour
 
 // Session is a minted editing session (what a valid token resolves to).
@@ -108,8 +111,11 @@ func (s *Sessions) Validate(ctx context.Context, token string) (Session, error) 
 	return sess, nil
 }
 
-// Revoke drops every session for a file (called when the file is deleted so a
-// live editor's token stops working).
+// Revoke drops every session for a file — an explicit, proactive
+// invalidation. Note it is not required for correctness on delete: once a
+// file's owner tuple is gone, Validate's per-call can_access re-check already
+// fails, so the token stops resolving; Revoke additionally clears the stale
+// rows before the TTL sweep. (Wiring it into file deletion is a fast-follow.)
 func (s *Sessions) Revoke(ctx context.Context, objectID string) error {
 	return s.store.DeleteByObject(ctx, objectID)
 }

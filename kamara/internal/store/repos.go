@@ -118,6 +118,12 @@ func (r *ObjectRepo) InsertVersion(ctx context.Context, objectID, versionID stri
 	if _, err := r.db.ExecContext(ctx,
 		`INSERT INTO versions (id, object_id, ordinal, size, created_at) VALUES ($1,$2,$3,$4,now())`,
 		versionID, objectID, ordinal, size); err != nil {
+		// A concurrent save took this ordinal (unique on object_id, ordinal);
+		// surface it as a domain conflict so the service can retry.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return file.ErrVersionConflict
+		}
 		return err
 	}
 	for i, ref := range refs {

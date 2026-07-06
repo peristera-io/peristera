@@ -25,6 +25,9 @@ type memRepo struct {
 	manifests map[string][]engine.ChunkRef // objectID → latest version refs
 	versions  map[string][]Version         // objectID → versions (append order)
 	refCount  map[string]int               // chunk hash → ref count
+	// injectConflicts makes the next N InsertVersion calls return
+	// ErrVersionConflict (simulating a concurrent writer taking the ordinal).
+	injectConflicts int
 }
 
 func newMemRepo() *memRepo {
@@ -67,6 +70,10 @@ func (m *memRepo) DeleteObject(_ context.Context, id string) error {
 	return nil
 }
 func (m *memRepo) InsertVersion(_ context.Context, objectID, versionID string, ordinal int, size int64, refs []engine.ChunkRef) error {
+	if m.injectConflicts > 0 {
+		m.injectConflicts--
+		return ErrVersionConflict
+	}
 	m.manifests[objectID] = refs // latest wins (ordinal is monotonic)
 	m.versions[objectID] = append(m.versions[objectID], Version{ID: versionID, Ordinal: ordinal, Size: size})
 	for _, r := range refs {
@@ -393,6 +400,27 @@ func TestWriteVersionAppendsRevision(t *testing.T) {
 	// Audit recorded the editor's write.
 	if n := len(sink.events); n == 0 || sink.events[n-1].Action != "kamara.file.version_written" {
 		t.Errorf("audit tail = %+v, want kamara.file.version_written", sink.events)
+	}
+}
+
+// A concurrent save that loses the ordinal race retries rather than failing
+// the user's save (ErrVersionConflict is internal, never surfaced).
+func TestWriteVersionRetriesOnConflict(t *testing.T) {
+	ctx := context.Background()
+	svc, _, repo, _, _, _, _ := newService(t)
+	alice := pii.Subject{Instance: "demo.example", UserID: "alice"}
+	o, _ := svc.Upload(ctx, alice, nil, "memo.odt", bytes.NewReader([]byte("v0")))
+
+	repo.injectConflicts = 2 // first two attempts lose the race
+	ver, err := svc.WriteVersion(ctx, alice, o.ID, bytes.NewReader([]byte("edited")))
+	if err != nil {
+		t.Fatalf("WriteVersion should retry through conflicts: %v", err)
+	}
+	if ver != "1" {
+		t.Errorf("version = %q, want \"1\"", ver)
+	}
+	if repo.injectConflicts != 0 {
+		t.Errorf("expected both injected conflicts consumed, %d left", repo.injectConflicts)
 	}
 }
 

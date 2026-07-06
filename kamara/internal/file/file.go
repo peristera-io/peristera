@@ -51,6 +51,11 @@ var ErrNotFound = errors.New("file: not found")
 // The HTTP layer maps it to 403 (distinct from a 500 on a real failure).
 var ErrForbidden = errors.New("file: not authorized")
 
+// ErrVersionConflict is returned by InsertVersion when the object's next
+// ordinal was taken by a concurrent writer (the versions (object_id, ordinal)
+// unique constraint). WriteVersion retries on it; it never reaches the client.
+var ErrVersionConflict = errors.New("file: version ordinal conflict")
+
 // Object is a stored file (identity = UUIDv7, URLs carry it — ADR-0007).
 // FolderID is its location: nil means the owner's root (Kamara ADR-0002).
 type Object struct {
@@ -263,26 +268,38 @@ func (s *Service) WriteVersion(ctx context.Context, caller pii.Subject, objectID
 	if err != nil {
 		return "", err
 	}
-	verID := id.V7()
+	// The next ordinal is read then written; two concurrent saves (e.g.
+	// Collabora autosave racing save-on-close) can pick the same one and the
+	// loser hits the versions unique constraint. Retry rather than lose the
+	// save — each retry recomputes the ordinal, so the winner just gets N+2.
+	const maxAttempts = 5
 	var ordinal int
-	if err := s.tx.InTx(ctx, func(st Stores) error {
-		maxOrd, ok, err := st.Objects.MaxOrdinal(ctx, objectID)
-		if err != nil {
-			return err
+	for attempt := 0; ; attempt++ {
+		verID := id.V7()
+		err := s.tx.InTx(ctx, func(st Stores) error {
+			maxOrd, ok, err := st.Objects.MaxOrdinal(ctx, objectID)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return ErrNotFound
+			}
+			ordinal = maxOrd + 1
+			if err := st.Objects.InsertVersion(ctx, objectID, verID, ordinal, total, refs); err != nil {
+				return err
+			}
+			if err := st.Objects.SetObjectSize(ctx, objectID, total); err != nil {
+				return err
+			}
+			return st.Audit.Emit(ctx, caller, "kamara.file.version_written",
+				audit.Object{Type: Type, ID: objectID, Permalink: "/files/" + objectID}, nil)
+		})
+		if err == nil {
+			break
 		}
-		if !ok {
-			return ErrNotFound
+		if errors.Is(err, ErrVersionConflict) && attempt < maxAttempts-1 {
+			continue
 		}
-		ordinal = maxOrd + 1
-		if err := st.Objects.InsertVersion(ctx, objectID, verID, ordinal, total, refs); err != nil {
-			return err
-		}
-		if err := st.Objects.SetObjectSize(ctx, objectID, total); err != nil {
-			return err
-		}
-		return st.Audit.Emit(ctx, caller, "kamara.file.version_written",
-			audit.Object{Type: Type, ID: objectID, Permalink: "/files/" + objectID}, nil)
-	}); err != nil {
 		return "", err
 	}
 	return strconv.Itoa(ordinal), nil
