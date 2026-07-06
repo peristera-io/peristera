@@ -96,29 +96,37 @@ func (a *webApp) upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	folder := optStr(r.URL.Query().Get("at"))
+	// Cap the WHOLE request body (every part + headers), not just the file
+	// part, so a malicious multipart can't stream unbounded non-file data.
+	r.Body = http.MaxBytesReader(w, r.Body, api.DefaultMaxUploadBytes)
 	mr, err := r.MultipartReader()
 	if err != nil {
 		http.Error(w, "expected a multipart upload", http.StatusBadRequest)
 		return
 	}
+	uploaded := false
 	for {
 		part, err := mr.NextPart()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			http.Error(w, "bad upload", http.StatusBadRequest)
+			a.fail(w, err) // includes MaxBytesError → 413
 			return
 		}
 		if part.FormName() != "file" || part.FileName() == "" {
 			continue
 		}
-		body := http.MaxBytesReader(w, part, api.DefaultMaxUploadBytes)
-		if _, err := a.svc.Upload(r.Context(), caller, folder, part.FileName(), body); err != nil {
+		if _, err := a.svc.Upload(r.Context(), caller, folder, part.FileName(), part); err != nil {
 			a.fail(w, err)
 			return
 		}
+		uploaded = true
 		break
+	}
+	if !uploaded {
+		http.Error(w, "no file provided", http.StatusBadRequest)
+		return
 	}
 	a.renderAt(w, r, caller)
 }
@@ -286,6 +294,11 @@ func (a *webApp) frag(w http.ResponseWriter, r *http.Request) {
 // htmx does not swap a non-2xx response, so a failed mutation leaves the
 // listing unchanged; richer inline error messaging is M4c polish.
 func (a *webApp) fail(w http.ResponseWriter, err error) {
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		http.Error(w, "file exceeds maximum upload size", http.StatusRequestEntityTooLarge)
+		return
+	}
 	switch {
 	case errors.Is(err, file.ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)

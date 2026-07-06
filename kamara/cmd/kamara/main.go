@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/peristera-io/peristera/kamara/internal/api"
 	"github.com/peristera-io/peristera/kamara/internal/blob"
@@ -151,8 +152,19 @@ func main() {
 	mux.Handle("/", rp.Middleware(app.routes(), rp.RedirectToLogin("/auth/login")))
 
 	addr := env("LISTEN_ADDR", ":5580")
+	// A real http.Server with a header-read timeout (Slowloris defense) and
+	// idle timeout. ReadTimeout/WriteTimeout are deliberately unset: this is
+	// a streaming file server where large, slow-but-legitimate up/downloads
+	// must not be cut off — the body size is bounded by MaxBytesReader on the
+	// upload paths instead.
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 	log.Printf("kamara on %s (issuer %s)", addr, issuer)
-	log.Fatal(http.ListenAndServe(addr, mux))
+	log.Fatal(srv.ListenAndServe())
 }
 
 // loadDEK reads the per-tenant data-encryption key: a mounted secret file
