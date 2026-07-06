@@ -31,7 +31,13 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *v1
 	var policies []client.Object
 	for _, app := range catalog {
 		// Ingress: the ingress controller (browser) + declared callers,
-		// all on the app's port.
+		// all on the app's port. This pins browser traffic to the Traefik
+		// pod identity; it works because in kube-proxy-coexistence mode
+		// Cilium sees ingressed traffic as sourced from the Traefik pod, not
+		// the node (verified by the e2e "app answers on its own domain"
+		// step). If a future CNI/kube-proxy change collapses that to the
+		// host identity, this match breaks and browser access is denied —
+		// so treat the source-identity assumption as load-bearing.
 		from := []networkingv1.NetworkPolicyPeer{
 			{NamespaceSelector: kubeSystemSelector(), PodSelector: nameSelector("traefik")},
 		}
@@ -82,9 +88,15 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *v1
 }
 
 // appEgress is the allow-list every catalog app shares: same namespace (its
-// DB, OpenFGA, and declared Calls peers — the app-to-app leg is still gated
-// on the callee's ingress), DNS, and the ingress controller for the OIDC
-// issuer/JWKS/userinfo path (the issuer host resolves to Traefik).
+// DB on 5432, OpenFGA, and declared Calls peers — the app-to-app leg is
+// still gated on the callee's ingress), DNS, and the ingress controller for
+// the OIDC issuer/JWKS/userinfo path (the issuer host resolves to Traefik).
+//
+// Note: there is deliberately NO egress rule for the Kubernetes API server
+// (a host IP, not a pod, so the same-namespace rule never matches it) — the
+// current catalog apps are not k8s clients. A future app or sidecar that
+// talks to the API server must add its own rule, or it will silently time
+// out.
 func appEgress() []networkingv1.NetworkPolicyEgressRule {
 	return []networkingv1.NetworkPolicyEgressRule{
 		{To: []networkingv1.NetworkPolicyPeer{{PodSelector: &metav1.LabelSelector{}}}},

@@ -63,32 +63,69 @@ available if a future need (e.g. method-level scoping) justifies them.
 sibling apps an app may invoke. It is the **single source of truth** for the
 service graph. The control-plane reconciler generates the per-tenant
 `NetworkPolicy` objects (and, in M5 s2, the Zitadel audience grants) from
-it. To change the graph, edit one catalog entry and reconcile — every
-tenant updates. `Calls` is platform-uniform, so it is expressed once in code
-and stamped into each tenant namespace, never duplicated per tenant by hand.
+it. `Calls` is platform-uniform, so it is expressed once in code and stamped
+into each tenant namespace, never duplicated per tenant by hand.
+
+**Create-only, today.** Provisioning writes these policies once at tenant
+creation (`createIfAbsent`, ADR-0013 §3). Changing `Calls` in a later
+release does **not** re-converge existing tenants — a new edge is denied and
+a removed edge stays permitted until drift-correction (the 2027 control-plane
+alpha) or a manual re-apply. This has a security consequence: the
+"reconcile egress to deny-all" kill-switch below is **not automatic on
+already-provisioned tenants** — it requires that same drift-correction (or a
+manual policy edit) to take effect. Tracked with the netpol-hardening
+follow-up.
 
 ### Policy shape (per tenant namespace)
 
-- **Cross-tenant isolation:** default-deny ingress; pods accept traffic only
-  from the same namespace or the ingress controller (`kube-system`). A
-  workload in another tenant namespace cannot reach in. (Addresses #18's
-  network half.)
+- **Cross-tenant isolation:** pods accept traffic only from the same
+  namespace or the ingress controller (`kube-system`). A workload in another
+  tenant namespace cannot make a **direct** cross-tenant dial to *any*
+  service — public or internal (verified: `neta -> netb` on both kamara and
+  openfga is refused). (Addresses #18's network half.)
+  **Known limit (not closed at L3/L4):** apps are allowed to egress to the
+  shared ingress controller for their OIDC issuer path, and that controller
+  routes by `Host` header to every tenant's *public* app Ingress. So a
+  compromised app can reach another tenant's **publicly-exposed** app
+  endpoints by bouncing an HTTP request off the shared ingress — the same
+  reach any internet client has, and gated by those endpoints' own
+  authentication, *not* by the network. Internal surfaces (OpenFGA,
+  Postgres, any port without an Ingress) are **not** routable through the
+  ingress and stay isolated. Closing the public-surface bounce needs L7/FQDN
+  egress (`CiliumNetworkPolicy`) or routing the issuer path off the shared
+  ingress — a deliberate follow-up, since until the token layer (s2/s3)
+  ships, treating public endpoints as internet-reachable is the honest model.
 - **Intra-namespace topology:** each app accepts app-to-app ingress only
   from the callers that declare it in `Calls` (plus the ingress controller
   for browser traffic). OpenFGA accepts traffic only from same-namespace
   apps.
-- **Egress allow-list:** each app may egress only to DNS, its own database
-  and OpenFGA, the ingress path for its OIDC issuer, and its declared
-  `Calls` peers — so a rogue app cannot reach undeclared peers or exfiltrate
-  laterally. *(If staged: see the milestone worklog for what shipped in s1
-  vs. a follow-up.)*
+- **Egress allow-list:** each app may egress only to its own namespace (its
+  DB, OpenFGA, and declared `Calls` peers — the app-to-app leg is still gated
+  on the callee's ingress), DNS, and the shared ingress controller (the OIDC
+  issuer path). Cross-namespace and arbitrary-internet egress are denied, so
+  a rogue app cannot reach another tenant or exfiltrate laterally — modulo
+  the ingress-bounce limit above. The same-namespace and ingress-controller
+  rules are pod-scoped but not port-scoped, so this is broader than a
+  strict "issuer-only" list; tightening to L7 is the follow-up.
+- **Identity is topology, not authentication:** these policies key on pod
+  labels (`app.kubernetes.io/name`), which are self-asserted. They enforce
+  *which labelled workload may reach which* — they do **not** authenticate
+  that a pod is the real app. That guarantee rests on namespace
+  pod-admission control (a tenant's default ServiceAccount cannot create
+  pods) plus the token layer (s2/s3). Network labels answer "may A reach B",
+  never "is this really A".
 
 ### Rogue-service kill-switch
 
 Two central actions, the strong one kernel-enforced: disable the app's
 Zitadel service account (M5 s2 — no more tokens), and/or reconcile its
 egress `NetworkPolicy` to deny-all (enforced by Cilium regardless of what
-the compromised app does).
+the compromised app does). **Caveat (today):** because policy provisioning
+is create-only (see above), the egress kill-switch is not automatic on an
+already-running tenant — it needs drift-correction or a manual `kubectl`
+edit of the policy. The kernel enforcement is real; the *automatic delivery*
+of the changed policy is the gap, tracked with the netpol-hardening
+follow-up.
 
 ## Consequences
 
