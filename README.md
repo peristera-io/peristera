@@ -58,12 +58,18 @@ design-language pilot; the a11y gate runs across four UI states. **Six
 adversarial reviews**, each triaged; an end-to-end Playwright demo (login →
 browse → upload → download) is the acceptance artifact. The **inter-service
 auth model was deliberately deferred** to its own design milestone rather
-than settled to make one test pass — the Ergonomos file-attach flow is that
-milestone's acceptance test (Q&A R41, `docs/m5-plan.md`, #29).
+than settled to make one test pass — the Ergonomos file-attach flow became
+M5's acceptance test (Q&A R41, `docs/m5-plan.md`, #29).
 ADRs: root 0015 (transactional storage); Kamara 0001 (chunk format), 0002
-(folder hierarchy). Next: **M5 — service-to-service auth / intra-tenant
-zero-trust** (#29, `docs/m5-plan.md`, Q&A R10), then OnlyOffice (M6) and the
-SaaS/Scaleway public demo (M7).
+(folder hierarchy). **M5 — service-to-service auth / intra-tenant zero-trust
+— done 2026-07-06** (ADRs 0016 network-enforced topology, 0017 the S2S
+model): Cilium enforces a per-app network allowlist + cross-tenant isolation,
+OpenFGA gets preshared-key auth, and a service calls another **on behalf of a
+user** via RFC-8693 token exchange (per-app machine identity, `private_key_jwt`,
+no shared secret). Acceptance proven end-to-end: Ergonomos uploads to Kamara
+and the file lands **owned by the user**. Next: **M6 — OnlyOffice** (its
+document server ↔ Kamara is the next consumer of this S2S model), then **M7 —
+SaaS/Scaleway public demo**.
 
 *Update this block whenever reality changes — a stale status line is exactly
 the rot §8 warns against.*
@@ -474,13 +480,15 @@ Built in public along the way.
   (living): `kamara/SPEC.md`; plan: `docs/m4-plan.md` / `docs/m4b-plan.md`;
   format decisions in `Q&A.md` Rounds 7–9. E2EE-ready chunk format, but sync
   and E2EE themselves are deferred.
-- **M5 — Service-to-service auth / intra-tenant zero-trust**: one app calls
-  another **on behalf of a user** under a real zero-trust posture — machine
-  identity per app, RFC 8693 on-behalf-of tokens, local JWT validation,
-  Cilium-enforced service-topology allowlist, actor-aware audit. Proven by a
-  real Ergonomos → Kamara call. The platform S2S contract every future
-  app-to-app interaction inherits — and a prerequisite for M6 (OnlyOffice ↔
-  Kamara is itself an S2S call). Plan: `docs/m5-plan.md`; decisions in
+- **M5 — Service-to-service auth / intra-tenant zero-trust** *(done
+  2026-07-06)*: one app calls another **on behalf of a user** under a real
+  zero-trust posture — per-app machine identity, RFC 8693 on-behalf-of token
+  exchange (`private_key_jwt`, no shared secret), Cilium-enforced
+  service-topology allowlist + cross-tenant isolation, OpenFGA preshared-key
+  auth. Proven by a real Ergonomos → Kamara upload owned by the user. The
+  platform S2S contract every future app-to-app interaction inherits — and a
+  prerequisite for M6 (OnlyOffice ↔ Kamara is itself an S2S call). ADRs 0016
+  (network topology), 0017 (S2S model); plan `docs/m5-plan.md`; decisions
   `Q&A.md` Round 10.
 - **M6 — OnlyOffice integration**: open and co-edit a document stored in
   Kamara, in the browser. Without this, the file hub recreates the
