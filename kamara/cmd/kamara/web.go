@@ -32,6 +32,7 @@ func (a *webApp) routes() http.Handler {
 	mux.HandleFunc("GET /{$}", a.page)                     // full page at the root
 	mux.HandleFunc("GET /browse", a.frag)                  // htmx fragment (folder navigation)
 	mux.HandleFunc("GET /files/{id}/download", a.download) // cookie-authed download
+	mux.HandleFunc("GET /files/{id}/details", a.details)   // details drawer fragment
 	// Mutations — POST forms (HTML forms are GET/POST only). CSRF is closed
 	// by the SameSite=Lax session cookie: a cross-site POST omits the cookie,
 	// so the request is unauthenticated and rejected. Each re-renders the
@@ -288,6 +289,21 @@ func (a *webApp) frag(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = web.Listing(w, v)
+}
+
+// details renders the file-details drawer fragment (authorized via Get).
+func (a *webApp) details(w http.ResponseWriter, r *http.Request) {
+	caller, ok := a.authed(w, r)
+	if !ok {
+		return
+	}
+	o, err := a.svc.Get(r.Context(), caller, r.PathValue("id"))
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = web.Details(w, o)
 }
 
 // fail maps a domain error to a status for the browser (plain, not JSON).

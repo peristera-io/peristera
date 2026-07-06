@@ -27,6 +27,8 @@ func main() {
 		AllFolders: []file.Folder{{ID: here, Owner: owner, Name: "Projects"}, sub}, // move-picker options
 		Inline:     true,                                                           // inline the CSS so axe evaluates real colour contrast
 	}
+	// Pre-open the details drawer so its markup is checked too.
+	v.Drawer = &v.Files[0]
 	if err := web.Page(os.Stdout, v); err != nil {
 		panic(err)
 	}

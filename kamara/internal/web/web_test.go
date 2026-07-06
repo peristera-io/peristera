@@ -71,6 +71,24 @@ func TestOperationsMarkup(t *testing.T) {
 	}
 }
 
+func TestDetailsDrawer(t *testing.T) {
+	var b bytes.Buffer
+	o := file.Object{ID: "f1", Name: "report.pdf", Size: 2048, Created: time.Unix(0, 0).UTC()}
+	if err := Details(&b, o); err != nil {
+		t.Fatal(err)
+	}
+	html := b.String()
+	for _, want := range []string{
+		`role="dialog"`, "report.pdf", "2.0 KiB",
+		msg["versions"], msg["versions_soon"], // stubbed version history
+		`href="/files/f1"`,                     // permalink
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("details drawer missing %q", want)
+		}
+	}
+}
+
 func TestListingIsFragment(t *testing.T) {
 	var b bytes.Buffer
 	if err := Listing(&b, sampleView()); err != nil {
