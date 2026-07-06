@@ -454,3 +454,26 @@ Plan: `docs/m5-plan.md`; decisions `Q&A.md` Round 10; roadmap renumbered
   - **s1 complete.** Next: **S2 — machine identity + RFC-8693 token
     exchange** (`lib/oidcrp` retains the user access token; per-app Zitadel
     service user + JWT key; `lib/svcauth`).
+- **Session 2 (machine identity + RFC-8693 token exchange, ADR-0017):**
+  - **S2a:** `lib/oidcrp` retains the user's access token server-side (for a
+    downstream service to exchange). Commit `caf8fdd`.
+  - **Spike → solved (the hard part):** de-risked Zitadel v4.15.3 token
+    exchange live. Cost most of the session — the recipe is non-obvious: the
+    exchange CLIENT must be an **OIDC app with the token-exchange grant +
+    `private_key_jwt`** (not a machine user / API app — Zitadel's
+    `no active client not found` is its misleading error for "client lacks
+    the token-exchange grant"); the SUBJECT token must carry the **project
+    audience** scope; `enableImpersonation` opens the delegation path. Chose
+    `private_key_jwt` over BASIC (no shared secret at rest). Commits
+    `bce924b`, `5fb01ac`, `8ad973a` (thanks to the v2-UserService pointer
+    that broke the client-type assumption).
+  - **Build (verified — `TestS2SExchangeLive` + godog green):** `lib/svcauth`
+    (`Exchanger.OnBehalfOf`, `ProjectAudienceScope`); Zitadel client methods
+    (`ProjectID`, `EnsureS2SClient`, `AddAppKey`, `EnableImpersonation`);
+    reconciler provisions a per-app **S2S OIDC client + key** for apps with
+    `Calls` (mounted at `/mnt/s2s`, `SVCAUTH_KEY_FILE`/`OIDC_PROJECT_ID`
+    injected — ergonomos only), enables impersonation per tenant; ADR-0017.
+    Commits `d79f30b`, `90a2a7e`. Verified in-cluster + full godog.
+  - **s2 complete.** Next: **S3** — callee-side local JWT validation
+    (`lib/svcauth` server half) + the audit on-behalf-of actor (ADR-0011);
+    then **S4** — the real Ergonomos→Kamara on-behalf-of upload (acceptance).
