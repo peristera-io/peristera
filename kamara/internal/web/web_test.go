@@ -82,7 +82,7 @@ func TestDetailsDrawer(t *testing.T) {
 	}
 	html := b.String()
 	for _, want := range []string{
-		`role="dialog"`, "report.pdf", "2.0 KiB",
+		`role="region"`, "data-drawer", "report.pdf", "2.0 KiB",
 		msg["versions"], msg["versions_soon"], // stubbed version history
 		`href="/files/f1"`,                     // permalink
 	} {

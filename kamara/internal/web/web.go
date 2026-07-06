@@ -225,7 +225,7 @@ var pageTmpl = template.Must(template.New("page").Funcs(funcs).Parse(`<!doctype 
 {{end}}
 
 {{define "details"}}
-<div role="dialog" aria-label="{{.Name}}" class="fixed inset-y-0 right-0 w-80 max-w-full overflow-y-auto border-l border-stone-200 bg-white p-4 shadow-lg">
+<div role="region" aria-label="{{.Name}}" tabindex="-1" data-drawer class="fixed inset-y-0 right-0 w-80 max-w-full overflow-y-auto border-l border-stone-200 bg-white p-4 shadow-lg">
  <div class="flex items-start justify-between gap-2">
   <h2 class="text-lg font-semibold text-stone-900">{{.Name}}</h2>
   <button onclick="this.closest('#drawer').innerHTML=''" class="text-sm text-stone-600 underline" aria-label="{{msg "close"}}">✕</button>
