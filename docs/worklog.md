@@ -406,3 +406,43 @@ reviews total; findings triaged inline or filed as #22–#41).
   streaming-server DoS hardening (#40), multi-file upload (#41), and more.
 
 - **M4 declared complete.**
+
+## M5 — service-to-service auth / intra-tenant zero-trust (in progress)
+
+Plan: `docs/m5-plan.md`; decisions `Q&A.md` Round 10; roadmap renumbered
+(M5 = S2S, M6 = OnlyOffice, M7 = public demo — R49).
+
+- **Session 0 (docs):** plan + Q&A R10; renumber propagated to living docs;
+  the per-tenant key-hierarchy / crypto-shredding convention homed at the
+  backup/off-boarding story and #9 closed. Commits `49e8504`, `3a155c1`.
+- **Session 1 (Cilium + network-enforced service topology, ADR-0016):**
+  - **Cilium replaces flannel** as the dev-cluster CNI (flannel can't enforce
+    NetworkPolicy). `hack/dev-cluster.sh` creates the cluster with flannel,
+    k3s's netpol controller, and metrics-server disabled, then installs
+    Cilium via helm in **kube-proxy coexistence** mode (`kubeProxyReplacement
+    =false`; the `cilium` CLI bakes the host-side API address into pods on
+    k3d/macOS, so helm). Reproducible self-host recipe.
+  - **`CatalogApp.Calls []string`** (ergonomos → kamara) is the single source
+    of truth for the service graph (ADR-0013 amendment); the controller
+    generates per-tenant `NetworkPolicy` from it (`netpol.go`): each app
+    accepts ingress only from the ingress controller + declared callers,
+    egress only to same-ns + DNS + the issuer path; OpenFGA only from same-ns
+    apps. Enforces cross-tenant isolation — the network half of **#18**.
+  - **Two regressions surfaced by the CNI switch, both root-caused:**
+    metrics-server can't scrape the kubelet under Cilium/k3d → kept the
+    `metrics.k8s.io` APIService down → stalled *all* namespace GC → broke
+    tenant off-boarding (disabled metrics-server, **#42**); and CNPG's 30-min
+    default `stopDelay` let tenant DB pods ride out the grace period during
+    teardown (capped `stopDelay=30`/`smartShutdownTimeout=10`).
+  - **Verified:** 5/5 live topology probes (stub→kamara denied, ergonomos→
+    kamara allowed, both cross-tenant probes denied) + full godog e2e green
+    (provisioning, OIDC, Kamara storage, off-boarding within timeout).
+  - **Adversarial review** → ADR-0016 corrected (the network layer blocks
+    direct cross-tenant dials but not a Host-header *bounce* off the shared
+    ingress to another tenant's *public* endpoints — internet-equivalent,
+    auth-gated; internal surfaces stay isolated). Filed **#43** (close the
+    public-surface bounce via L7/FQDN or internal issuer routing) and **#44**
+    (netpol hardening: tighten np-openfga, drift-reconcile the kill-switch,
+    label-identity). Commits `d560ed3`, `4551335`.
+  - **Deferred to the next step:** OpenFGA **preshared-key auth** (the other
+    half of #18) — folds with #44's np-openfga tightening.
