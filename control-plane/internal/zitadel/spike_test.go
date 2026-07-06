@@ -57,7 +57,7 @@ func TestS2SExchangeLive(t *testing.T) {
 
 	// Stand-in for a logged-in user's access token: a machine user whose
 	// token carries the project audience (as lib/oidcrp will request).
-	subjTok := projectAudToken(t, c, ctx, base, orgID, projID)
+	subjTok, subjUID := projectAudToken(t, c, ctx, base, orgID, projID)
 
 	// The real client-side exchange.
 	ex, err := svcauth.NewExchanger(base, projID, keyJSON)
@@ -71,12 +71,73 @@ func TestS2SExchangeLive(t *testing.T) {
 	if exchanged == "" {
 		t.Fatal("OnBehalfOf returned empty token")
 	}
-	t.Logf("OK — exchanged token (%d chars) via svcauth", len(exchanged))
+	// Token format (JWT vs Zitadel's opaque JWE): the callee's local-vs-
+	// introspection decision hinges on this.
+	hdr := exchanged
+	if i := strings.IndexByte(hdr, '.'); i > 0 {
+		if b, err := base64.RawURLEncoding.DecodeString(hdr[:i]); err == nil {
+			hdr = string(b)
+		}
+	}
+	t.Logf("exchanged token header: %s", firstN(hdr, 80))
+
+	// The critical acceptance check: does the exchanged token resolve to the
+	// USER (sub) at the callee's existing userinfo path? If so, Kamara owns
+	// the file to the user with no callee change.
+	sub := userinfoSub(t, ctx, base, exchanged)
+	t.Logf("userinfo(sub)=%s  expected user=%s  match=%v", sub, subjUID, sub == subjUID)
+	if sub != subjUID {
+		t.Fatalf("exchanged token resolves to %q, not the user %q", sub, subjUID)
+	}
+	t.Logf("OK — exchanged token resolves to the user via userinfo")
+
+	// Can the callee also recover the calling SERVICE (for the audit actor)?
+	// Introspection returns azp/act; userinfo does not.
+	introspectFields(t, ctx, base, exchanged, ex)
+}
+
+func userinfoSub(t *testing.T, ctx context.Context, base, token string) string {
+	t.Helper()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base+"/oidc/v1/userinfo", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("userinfo: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	var out struct {
+		Sub string `json:"sub"`
+	}
+	json.Unmarshal(raw, &out)
+	if out.Sub == "" {
+		t.Fatalf("userinfo: no sub (HTTP %d): %s", resp.StatusCode, firstN(string(raw), 200))
+	}
+	return out.Sub
+}
+
+// introspectFields logs what token introspection reveals (active, sub, aud,
+// azp, act) — informs the s3 callee-validation design.
+func introspectFields(t *testing.T, ctx context.Context, base, token string, ex *svcauth.Exchanger) {
+	t.Helper()
+	form := url.Values{"token": {token}}
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, base+"/oauth/v2/introspect", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "Bearer "+token) // may be rejected; just probing
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Logf("introspect: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	t.Logf("introspect (HTTP %d): %s", resp.StatusCode, firstN(string(raw), 300))
 }
 
 // projectAudToken creates a machine user with a secret and returns an access
-// token carrying the tenant project's audience.
-func projectAudToken(t *testing.T, c *Client, ctx context.Context, base, orgID, projID string) string {
+// token carrying the tenant project's audience, plus the user's id (the
+// expected `sub` of the exchanged token).
+func projectAudToken(t *testing.T, c *Client, ctx context.Context, base, orgID, projID string) (string, string) {
 	t.Helper()
 	uid, err := c.EnsureMachineUser(ctx, base, orgID, "subj-user")
 	if err != nil {
@@ -112,12 +173,12 @@ func projectAudToken(t *testing.T, c *Client, ctx context.Context, base, orgID, 
 		}
 		json.Unmarshal(raw, &out)
 		if out.AccessToken != "" {
-			return out.AccessToken
+			return out.AccessToken, uid
 		}
 		lastBody = string(raw)
 	}
 	t.Fatalf("subject token: no access_token: %s", lastBody)
-	return ""
+	return "", ""
 }
 
 func env(k, d string) string {
@@ -125,4 +186,11 @@ func env(k, d string) string {
 		return v
 	}
 	return d
+}
+
+func firstN(s string, n int) string {
+	if len(s) > n {
+		return s[:n]
+	}
+	return s
 }
