@@ -54,12 +54,17 @@ Non-obvious findings that shaped this (spike, commit `5fb01ac`):
   `subject_token invalid`. So `lib/oidcrp` requests that scope at login and
   retains the user's access token; `lib/svcauth` requests it on the
   exchanged token.
-- **Delegation** (an explicit `actor_token`) additionally needs the instance
-  **`enableImpersonation`** security setting; the control plane turns it on
-  per tenant. The current flow uses the plain exchange (subject re-scoping):
-  the exchanged token carries `sub` = the user and `azp` = the calling
-  service's client — enough to represent "service S, for user U". The
-  explicit `act` claim is available on top when the audit model wants it.
+- The flow uses the **plain exchange** (subject re-scoping): the exchanged
+  token carries `sub` = the user and `azp` = the calling service's client —
+  enough to represent "service S, for user U", and the source of the audit
+  actor. Verified live that this needs **no** instance setting, so the
+  control plane deliberately does **not** enable the instance-wide
+  `enableImpersonation` security policy (least privilege — leaving it off
+  keeps the R51-rejected "impersonate any user by id" path unreachable even
+  if an S2S key leaks; the plain exchange always requires the user's real
+  token). Explicit `actor_token` **delegation** (the `act` claim) would need
+  that setting *and* an impersonator role on the actor — we add both only if
+  a future audit need justifies it.
 
 ### Where each piece lives
 
@@ -72,8 +77,9 @@ Non-obvious findings that shaped this (spike, commit `5fb01ac`):
   downstream service can exchange it.
 - **Control plane**: provisions a per-app S2S client + JSON app key
   (`EnsureS2SClient` / `AddAppKey`) into a `<app>-s2s-key` Secret mounted for
-  `lib/svcauth`, injects `OIDC_PROJECT_ID`, and enables impersonation per
-  tenant. Provisioned only for apps that declare `Calls` (ADR-0016).
+  `lib/svcauth` and injects `OIDC_PROJECT_ID`. Provisioned only for apps that
+  declare `Calls` (ADR-0016). It does **not** enable instance impersonation
+  (see above).
 - **Audit** (ADR-0011, s3): the on-behalf-of service actor is recorded
   distinctly from the user subject.
 

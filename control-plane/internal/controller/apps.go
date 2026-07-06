@@ -113,14 +113,14 @@ func (r *TenantReconciler) ensureApps(ctx context.Context, tenant *v1alpha1.Tena
 	}
 
 	// Service-to-service auth (ADR-0017): the tenant's app project id scopes
-	// exchange audiences, and the instance must permit token-exchange
-	// delegation. Both are needed by any app that calls another.
+	// exchange audiences for any app that calls another. The plain exchange
+	// (subject re-scoping; azp=service is the actor) needs no instance-wide
+	// impersonation setting — that is only for explicit actor_token
+	// delegation, which we do not use, so we deliberately do NOT enable it
+	// (least privilege; see ADR-0017 and the s2 review).
 	projectID, err := r.IAM.ProjectID(ctx, tenant.Status.Issuer, orgID)
 	if err != nil {
 		return err
-	}
-	if err := r.IAM.EnableImpersonation(ctx, tenant.Status.Issuer); err != nil {
-		return fmt.Errorf("enabling token-exchange delegation: %w", err)
 	}
 
 	for _, app := range catalog {

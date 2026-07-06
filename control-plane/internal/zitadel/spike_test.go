@@ -42,9 +42,8 @@ func TestS2SExchangeLive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("projectID: %v", err)
 	}
-	if err := c.EnableImpersonation(ctx, base); err != nil {
-		t.Fatalf("enable impersonation: %v", err)
-	}
+	// Deliberately NOT enabling impersonation — verifying the plain exchange
+	// works without it (s2 review #4).
 
 	// Provision the caller's S2S client + key (the real methods).
 	_, appID, err := c.EnsureS2SClient(ctx, base, orgID, "ergonomos-s2s")

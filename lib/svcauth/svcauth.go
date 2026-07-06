@@ -92,7 +92,18 @@ func (e *Exchanger) ProjectScope() string { return e.projScope }
 // service can present to another Peristera service in the same tenant. The
 // returned token carries the user as `sub` and this service's client as
 // `azp`, scoped to the tenant's app project.
+//
+// Callee contract: the returned token's audience is the whole tenant app
+// **project**, not a single callee — a token minted to call Kamara is also
+// audience-valid at Ergonomos/stub. So a callee must NOT treat "audience
+// matches" as "this token was meant for me". It authorizes on the **user**
+// (`sub`) via OpenFGA and relies on the network layer (ADR-0016) to bound
+// which services can reach it; the audience only proves "some app in this
+// tenant". The callee-side validation (M5 s3) enforces this.
 func (e *Exchanger) OnBehalfOf(ctx context.Context, userAccessToken string) (string, error) {
+	if userAccessToken == "" {
+		return "", fmt.Errorf("svcauth: no user access token to exchange")
+	}
 	form := url.Values{
 		"grant_type":            {"urn:ietf:params:oauth:grant-type:token-exchange"},
 		"subject_token":         {userAccessToken},

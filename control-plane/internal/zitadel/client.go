@@ -433,16 +433,18 @@ func (c *Client) EnsureS2SClient(ctx context.Context, base, orgID, name string) 
 		fmt.Sprintf("%s/management/v1/projects/%s/apps/oidc", base, projectID), orgID,
 		map[string]any{
 			"name": name,
-			// A redirect + response type is required for OIDC apps; this
-			// client never runs the auth-code flow (it only exchanges), but
-			// the fields must be present.
+			// Zitadel rejects an OIDC app with only the token-exchange grant
+			// ("Application invalid"): a redirect + response type is required.
+			// The auth-code flow is unusable in practice — the client
+			// authenticates with private_key_jwt (no code flow without the
+			// key) and the redirect is non-routable — but the fields must be
+			// present.
 			"redirectUris":    []string{"http://localhost/unused"},
 			"responseTypes":   []string{"OIDC_RESPONSE_TYPE_CODE"},
 			"grantTypes":      []string{"OIDC_GRANT_TYPE_AUTHORIZATION_CODE", "OIDC_GRANT_TYPE_TOKEN_EXCHANGE"},
 			"appType":         "OIDC_APP_TYPE_WEB",
 			"authMethodType":  "OIDC_AUTH_METHOD_TYPE_PRIVATE_KEY_JWT",
 			"accessTokenType": "OIDC_TOKEN_TYPE_JWT",
-			"devMode":         true,
 		}, &out)
 	return out.ClientID, out.AppID, err
 }
@@ -459,9 +461,13 @@ func (c *Client) AddAppKey(ctx context.Context, base, orgID, appID string) ([]by
 	var out struct {
 		KeyDetails string `json:"keyDetails"`
 	}
+	// Relative expiry, not an absolute date: a hardcoded date silently makes
+	// every newly provisioned tenant's key *already expired* once that date
+	// passes. Rotation before this window is a later hardening.
+	expiry := time.Now().AddDate(10, 0, 0).UTC().Format(time.RFC3339)
 	err = c.do(ctx, http.MethodPost,
 		fmt.Sprintf("%s/management/v1/projects/%s/apps/%s/keys", base, projectID, appID), orgID,
-		map[string]any{"type": "KEY_TYPE_JSON", "expirationDate": "2028-01-01T00:00:00Z"}, &out)
+		map[string]any{"type": "KEY_TYPE_JSON", "expirationDate": expiry}, &out)
 	if err != nil {
 		return nil, err
 	}
