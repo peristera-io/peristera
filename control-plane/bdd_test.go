@@ -307,23 +307,28 @@ func (w *world) appLoginGoesToIssuer(app, slug string) error {
 	return nil
 }
 
-func (w *world) initialAdminExists(ns string) error {
-	sec := &corev1.Secret{}
-	if err := w.k8s.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "initial-admin"}, sec); err != nil {
+// createsTenantUser exercises the operator user-creation path: POST an email,
+// get a one-time login + password back (the handover artifact — no Secret to
+// dig out with kubectl, and the same path for lost-login recovery).
+func (w *world) createsTenantUser(slug string) error {
+	body := fmt.Sprintf(`{"email":"newadmin@%s.example"}`, slug)
+	resp, err := w.apiDo(http.MethodPost, "/api/v1/tenants/"+slug+"/users", body, true)
+	if err != nil {
 		return err
 	}
-	if len(sec.Data["username"]) == 0 || len(sec.Data["password"]) == 0 {
-		return fmt.Errorf("initial-admin secret incomplete: keys=%v", keys(sec.Data))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("create user: status=%d body=%s", resp.StatusCode, b)
+	}
+	var out struct{ Login, Password string }
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return err
+	}
+	if out.Login == "" || out.Password == "" {
+		return fmt.Errorf("credentials incomplete: login=%q password-empty=%v", out.Login, out.Password == "")
 	}
 	return nil
-}
-
-func keys(m map[string][]byte) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
 }
 
 // --- control-plane API steps ---
@@ -492,7 +497,7 @@ func TestFeatures(t *testing.T) {
 			sc.Step(`^OIDC discovery on the former issuer of tenant "([^"]*)" stops answering$`, w.formerIssuerDead)
 			sc.Step(`^the app "([^"]*)" of tenant "([^"]*)" answers on its own domain within (\d+) minutes$`, w.appAnswers)
 			sc.Step(`^the app "([^"]*)" of tenant "([^"]*)" sends logins to the tenant's issuer$`, w.appLoginGoesToIssuer)
-			sc.Step(`^the namespace "([^"]*)" holds initial admin credentials$`, w.initialAdminExists)
+			sc.Step(`^creating an admin user for tenant "([^"]*)" returns login credentials$`, w.createsTenantUser)
 			sc.Step(`^I delete the tenant "([^"]*)" once it has an instance$`, w.deleteOnceProvisioned)
 			sc.Step(`^no Zitadel instance for tenant "([^"]*)" remains within (\d+) minutes$`, w.noInstanceRemains)
 			sc.Step(`^I list tenants via the API without credentials$`, w.apiListNoAuth)

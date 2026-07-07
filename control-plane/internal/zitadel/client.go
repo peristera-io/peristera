@@ -318,31 +318,49 @@ func union(base, extra []string) ([]string, bool) {
 // EnsureHumanUser creates a human user with a password if no user with
 // that username exists yet (management v1 import — the endpoint that
 // accepts a password without an init flow).
-func (c *Client) EnsureHumanUser(ctx context.Context, tenantBase, orgID, username, email, password string) error {
+// ErrUserExists reports that a human user with the requested login already
+// exists in the tenant org (surfaced as 409 by the operator API).
+var ErrUserExists = errors.New("user already exists")
+
+// CreateHumanUser creates a human user (login = email) in the tenant org and
+// returns its id. The password must be changed on first login (#6): it is a
+// one-time handover the operator relays, never a standing credential. Fails
+// with ErrUserExists if the login is taken, so the caller can 409 cleanly.
+func (c *Client) CreateHumanUser(ctx context.Context, tenantBase, orgID, email, firstName, lastName, password string) (string, error) {
 	var found struct {
 		Result []struct {
 			ID string `json:"id"`
 		} `json:"result"`
 	}
 	err := c.do(ctx, http.MethodPost, tenantBase+"/management/v1/users/_search", orgID, map[string]any{
-		"queries": []any{map[string]any{"userNameQuery": map[string]any{"userName": username}}},
+		"queries": []any{map[string]any{"userNameQuery": map[string]any{"userName": email}}},
 	}, &found)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if len(found.Result) > 0 {
-		return nil
+		return "", ErrUserExists
 	}
-	return c.do(ctx, http.MethodPost, tenantBase+"/management/v1/users/human/_import", orgID, map[string]any{
-		"userName": username,
-		"profile":  map[string]any{"firstName": "Initial", "lastName": "Admin"},
-		"email":    map[string]any{"email": email, "isEmailVerified": true},
-		"password": password,
-		// The credential is a generated handover secret, so force a change on
-		// first login (#6): the delivered Secret is a one-time artifact, not a
-		// standing password. (Self-service recovery for a forgotten replacement
-		// stays MSP-alpha; until then a lost password means re-provisioning.)
+	var out struct {
+		UserID string `json:"userId"`
+	}
+	err = c.do(ctx, http.MethodPost, tenantBase+"/management/v1/users/human/_import", orgID, map[string]any{
+		"userName":               email,
+		"profile":                map[string]any{"firstName": firstName, "lastName": lastName},
+		"email":                  map[string]any{"email": email, "isEmailVerified": true},
+		"password":               password,
 		"passwordChangeRequired": true,
+	}, &out)
+	return out.UserID, err
+}
+
+// AddOrgMember grants a user org-level roles (e.g. ORG_OWNER) in the tenant
+// org — how the operator makes a created user a tenant admin able to manage
+// its own users in the tenant Zitadel console.
+func (c *Client) AddOrgMember(ctx context.Context, tenantBase, orgID, userID string, roles []string) error {
+	return c.do(ctx, http.MethodPost, tenantBase+"/management/v1/orgs/me/members", orgID, map[string]any{
+		"userId": userID,
+		"roles":  roles,
 	}, nil)
 }
 

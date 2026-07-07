@@ -147,9 +147,11 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 			if err := r.ensureApps(ctx, tenant, nsName); err != nil {
 				return ctrl.Result{}, err
 			}
-			if err := r.ensureInitialAdmin(ctx, tenant, nsName); err != nil {
-				return ctrl.Result{}, err
-			}
+			// No admin user is created here: the operator provisions tenant
+			// users explicitly via the control-plane API (POST
+			// /tenants/{slug}/users), which returns the one-time password —
+			// no Secret to dig out with kubectl, and the same path for
+			// lost-login recovery.
 		}
 	}
 

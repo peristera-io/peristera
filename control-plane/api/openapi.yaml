@@ -79,6 +79,50 @@ paths:
           description: Deletion started; teardown continues asynchronously.
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /tenants/{slug}/users:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
+    post:
+      operationId: createTenantUser
+      summary: Create an admin user in a tenant
+      description: >
+        Creates a human user (login = email) as an ORG_OWNER in the tenant's
+        own Zitadel instance and returns a generated one-time password — the
+        operator's handover artifact. Use it for a tenant's first admin and for
+        lost-login recovery. The password is returned ONCE and never stored; if
+        lost, create another user. Requires the tenant to be provisioned (it
+        must have an issuer).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TenantUserCreate"
+      responses:
+        "201":
+          description: User created; credentials returned once.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantUserCredentials"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: A user with this email already exists in the tenant.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: The tenant is not provisioned yet (no issuer).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 components:
   securitySchemes:
     bearer:
@@ -131,6 +175,26 @@ components:
         permalink:
           type: string
           description: Canonical URL of this resource (ADR-0007).
+    TenantUserCreate:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+          description: Login and contact email of the user to create.
+    TenantUserCredentials:
+      type: object
+      required: [login, password]
+      properties:
+        login:
+          type: string
+          description: The user's login name (their email).
+        password:
+          type: string
+          description: >
+            Generated one-time password (change required at first login).
+            Returned once and never stored — relay it to the tenant.
     Error:
       type: object
       required: [message]

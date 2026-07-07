@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"html/template"
 	"net/http"
 	"sort"
@@ -10,6 +11,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/peristera-io/peristera/control-plane/apis/v1alpha1"
+	"github.com/peristera-io/peristera/control-plane/internal/zitadel"
 )
 
 // messages is the string catalog — no hardcoded strings in templates
@@ -29,6 +31,11 @@ var messages = map[string]string{
 	"logged_in_as":   "Logged in as",
 	"logout":         "Log out",
 	"no_tenants":     "No tenants yet — create the first one below.",
+	"add_admin":      "Add admin",
+	"admin_email":    "admin email",
+	"login_label":    "Login",
+	"password_label": "Password",
+	"creds_note":     "Copy the password now — it is shown once and not stored.",
 }
 
 var funcs = template.FuncMap{
@@ -88,10 +95,26 @@ var pageTmpl = template.Must(template.New("page").Funcs(funcs).Parse(`<!doctype 
   <td>{{.DisplayName}}</td>
   <td>{{.Phase}}</td>
   <td>{{if .Issuer}}<a href="{{.Issuer}}">{{.Issuer}}</a>{{end}}</td>
-  <td><button hx-delete="/ui/tenants/{{.Slug}}" hx-swap="none"
-        hx-confirm="{{msg "confirm_delete"}}">{{msg "delete"}}</button></td>
+  <td>
+    <button hx-delete="/ui/tenants/{{.Slug}}" hx-swap="none"
+        hx-confirm="{{msg "confirm_delete"}}">{{msg "delete"}}</button>
+    {{if eq .Phase "Ready"}}
+    <form hx-post="/ui/tenants/{{.Slug}}/users" hx-target="#creds-{{.Slug}}"
+          hx-swap="innerHTML" style="display:inline; margin-left:.5rem">
+      <input name="email" type="email" placeholder="{{msg "admin_email"}}" required>
+      <button type="submit">{{msg "add_admin"}}</button>
+    </form>
+    <div id="creds-{{.Slug}}"></div>
+    {{end}}
+  </td>
 </tr>
-{{end}}`))
+{{end}}
+{{define "creds"}}
+{{if .Error}}<p class="err">{{.Error}}</p>{{else}}
+<p class="creds"><strong>{{msg "login_label"}}:</strong> {{.Login}}
+   &nbsp; <strong>{{msg "password_label"}}:</strong> <code>{{.Password}}</code></p>
+<p><em>{{msg "creds_note"}}</em></p>
+{{end}}{{end}}`))
 
 type rowData struct {
 	Slug, DisplayName, Phase, Issuer string
@@ -110,7 +133,38 @@ func (s *Server) uiMux() http.Handler {
 	mux.HandleFunc("POST /ui/tenants", s.uiCreate)
 	mux.HandleFunc("DELETE /ui/tenants/{slug}", s.uiDelete)
 	mux.HandleFunc("GET /ui/tenants/{slug}/row", s.uiRow)
+	mux.HandleFunc("POST /ui/tenants/{slug}/users", s.uiCreateUser)
 	return mux
+}
+
+// uiCreateUser creates a tenant admin from the browser and renders the
+// generated one-time password inline (HTMX swaps it into the row). Errors are
+// rendered in place too, so the operator sees them without a page reload.
+func (s *Server) uiCreateUser(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+	login, password, err := s.createTenantUser(r.Context(), slug, r.FormValue("email"))
+	if err != nil {
+		_ = pageTmpl.ExecuteTemplate(w, "creds", map[string]string{"Error": userErrMessage(err)})
+		return
+	}
+	_ = pageTmpl.ExecuteTemplate(w, "creds", map[string]string{"Login": login, "Password": password})
+}
+
+// userErrMessage maps the shared create-user errors to a short operator-facing
+// message (the same conditions the API maps to status codes).
+func userErrMessage(err error) string {
+	switch {
+	case errors.Is(err, errBadEmail):
+		return messages["admin_email"] // "admin email" — hint the field
+	case errors.Is(err, errNoTenant):
+		return "no such tenant"
+	case errors.Is(err, errNotProvisioned):
+		return "tenant is not provisioned yet"
+	case errors.Is(err, zitadel.ErrUserExists):
+		return "a user with this email already exists"
+	default:
+		return "could not create user"
+	}
 }
 
 func (s *Server) uiIndex(w http.ResponseWriter, r *http.Request) {
