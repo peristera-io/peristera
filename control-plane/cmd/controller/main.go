@@ -73,6 +73,7 @@ func main() {
 		LoginDomain:  env("ZITADEL_EXTERNAL_DOMAIN", "iam.127.0.0.1.sslip.io"),
 		ImagePrefix:  env("IMAGE_PREFIX", "peristera-"),
 		ImageTag:     env("IMAGE_TAG", "dev"),
+		URLScheme:    env("TENANT_SCHEME", "http"),
 	}
 	// IAM provisioning switches on when the system-user key is provided
 	// (dev: a file path; in-cluster: the mounted admin-client-tls Secret).

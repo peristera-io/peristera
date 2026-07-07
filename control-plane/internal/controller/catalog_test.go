@@ -46,6 +46,24 @@ func TestImageFor(t *testing.T) {
 	}
 }
 
+func TestPublicURL(t *testing.T) {
+	cases := []struct {
+		name, scheme, port, host, want string
+	}{
+		{"dev http:9080", "http", "9080", "kamara.kam.example", "http://kamara.kam.example:9080"},
+		{"cloud https:443 omits port", "https", "443", "kamara.demo.peristera.app", "https://kamara.demo.peristera.app"},
+		{"http:80 omits port", "http", "80", "h.example", "http://h.example"},
+		{"https custom port kept", "https", "8443", "h.example", "https://h.example:8443"},
+		{"empty scheme defaults http", "", "9080", "h.example", "http://h.example:9080"},
+	}
+	for _, c := range cases {
+		r := &TenantReconciler{URLScheme: c.scheme, ExternalPort: c.port}
+		if got := r.publicURL(c.host); got != c.want {
+			t.Errorf("%s: publicURL = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
 func TestTenantEnables(t *testing.T) {
 	tn := &v1alpha1.Tenant{Spec: v1alpha1.TenantSpec{Apps: []string{"office"}}}
 	if !tenantEnables(tn, "office") {
