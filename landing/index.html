@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Peristera — the European workplace platform</title>
+  <meta name="description" content="Peristera is an open-source, federated workplace suite — files, tasks, and documents — built to give European organisations a sovereign alternative to Microsoft 365. Self-host it, or run it as a service.">
+  <style>
+    :root {
+      --ink: #16181d; --muted: #5b616e; --line: #e6e8ec;
+      --accent: #2f5bd7; --bg: #fbfbfc; --card: #ffffff;
+    }
+    * { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; }
+    body {
+      margin: 0; color: var(--ink); background: var(--bg);
+      font: 17px/1.6 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    }
+    a { color: var(--accent); }
+    .wrap { max-width: 54rem; margin: 0 auto; padding: 0 1.25rem; }
+    header { padding: 2rem 0 1rem; }
+    .brand { display: flex; align-items: baseline; gap: .6rem; }
+    .brand b { font-size: 1.35rem; letter-spacing: -.01em; }
+    .brand span { color: var(--muted); font-size: .95rem; }
+    .hero { padding: 2.5rem 0 1.5rem; }
+    .hero h1 {
+      font-size: clamp(1.9rem, 5vw, 3rem); line-height: 1.1;
+      letter-spacing: -.02em; margin: 0 0 1rem;
+    }
+    .hero p.lead { font-size: 1.2rem; color: var(--muted); margin: 0 0 1.6rem; max-width: 40rem; }
+    .cta { display: flex; flex-wrap: wrap; gap: .75rem; }
+    .btn {
+      display: inline-block; text-decoration: none; padding: .6rem 1.1rem;
+      border-radius: .5rem; border: 1px solid var(--line); font-weight: 600;
+    }
+    .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+    section { padding: 2rem 0; border-top: 1px solid var(--line); }
+    h2 { font-size: 1.35rem; letter-spacing: -.01em; margin: 0 0 1rem; }
+    .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: .6rem; padding: 1.1rem 1.2rem; }
+    .card h3 { margin: 0 0 .35rem; font-size: 1.05rem; }
+    .card p { margin: 0; color: var(--muted); font-size: .97rem; }
+    .why li { margin: .5rem 0; }
+    .note { color: var(--muted); font-size: .95rem; }
+    footer { padding: 2.5rem 0 3rem; border-top: 1px solid var(--line); color: var(--muted); font-size: .92rem; }
+    footer a { color: var(--muted); }
+    .status { display: inline-block; background: #eef3ff; color: var(--accent); border-radius: 2rem; padding: .2rem .7rem; font-size: .82rem; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="brand"><b>Peristera</b> <span>European workplace platform</span></div>
+    </header>
+
+    <div class="hero">
+      <span class="status">Early — building in public</span>
+      <h1>A sovereign home for your organisation's work.</h1>
+      <p class="lead">
+        Peristera is an open-source, federated workplace suite — files, tasks,
+        and documents — built to give European organisations a real alternative
+        to Microsoft 365. Self-host it on your own infrastructure, or let a
+        provider run it for you. Your data stays yours.
+      </p>
+      <div class="cta">
+        <a class="btn primary" href="https://github.com/peristera-io/peristera">View the code</a>
+        <a class="btn" href="https://github.com/peristera-io/peristera#readme">Read the strategy</a>
+      </div>
+    </div>
+
+    <section>
+      <h2>What's in the suite</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>Kamara — files</h3>
+          <p>A per-tenant file store with content-addressed, at-rest-encrypted
+             storage and a clean browser experience.</p>
+        </div>
+        <div class="card">
+          <h3>Ergonomos — tasks</h3>
+          <p>Task and work tracking that talks to the rest of the suite, so a
+             file attaches to a task without leaving your tenant.</p>
+        </div>
+        <div class="card">
+          <h3>Documents in the browser</h3>
+          <p>Open and edit office documents directly in Kamara, each tenant on
+             its own isolated engine — no shared document server.</p>
+        </div>
+        <div class="card">
+          <h3>Federated by design</h3>
+          <p>Organisations connect to each other directly, peer to peer —
+             collaboration without a central gatekeeper.</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Why Peristera</h2>
+      <ul class="why">
+        <li><strong>Sovereignty.</strong> Runs on European infrastructure, or
+            your own. No dependency on a US hyperscaler to do your daily work.</li>
+        <li><strong>No lock-in.</strong> Open source (AGPL). Your data and the
+            software that runs it are both yours to keep.</li>
+        <li><strong>Isolation you can trust.</strong> Every tenant is its own
+            walled space — separate identity, separate data, enforced by the
+            platform, not by policy.</li>
+        <li><strong>Built to be run by many.</strong> Self-hosters first, then
+            managed-service providers, then a hosted service — the same code
+            everywhere.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Where it is today</h2>
+      <p class="note">
+        Peristera is early and honest about it. The platform runs — identity,
+        per-tenant isolation, files, tasks, and browser document editing are
+        real and working — and it is being built in the open, nights and
+        weekends. If that resonates, the code is the best place to start.
+      </p>
+    </section>
+
+    <footer>
+      <div class="wrap" style="padding:0">
+        Peristera · open source, AGPL ·
+        <a href="https://github.com/peristera-io/peristera">github.com/peristera-io</a>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>

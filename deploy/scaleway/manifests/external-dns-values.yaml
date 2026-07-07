@@ -15,6 +15,7 @@ sources:
 
 domainFilters:
   - ${DOMAIN}
+  - ${LANDING_DOMAIN}
 
 policy: sync # create AND delete records, so a torn-down tenant leaves no stragglers
 registry: txt

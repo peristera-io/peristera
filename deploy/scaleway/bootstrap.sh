@@ -26,7 +26,10 @@ NS=peristera-system
 : "${SCW_DEFAULT_PROJECT_ID:?source ../../.env.scaleway first}"
 : "${SCW_DEFAULT_ORGANIZATION_ID:?source ../../.env.scaleway first}"
 SCW_REGION="${SCW_REGION:-fr-par}"
-export DOMAIN LE_EMAIL IMAGE_TAG SCW_REGION SCW_DEFAULT_PROJECT_ID
+# The public marketing/landing apex (s3). Must also be delegated to Scaleway
+# DNS so external-dns can publish it and cert-manager can issue its cert.
+LANDING_DOMAIN="${LANDING_DOMAIN:-peristera.io}"
+export DOMAIN LE_EMAIL IMAGE_TAG SCW_REGION SCW_DEFAULT_PROJECT_ID LANDING_DOMAIN
 
 CILIUM_VERSION=${CILIUM_VERSION:-1.19.4}
 CERT_MANAGER_VERSION=${CERT_MANAGER_VERSION:-v1.16.2}
@@ -35,7 +38,7 @@ EXTERNAL_DNS_VERSION=${EXTERNAL_DNS_VERSION:-1.15.0}
 
 # envsubst limited to our named placeholders, so nothing else in the manifests
 # is accidentally expanded.
-SUBST='${DOMAIN} ${LE_EMAIL} ${IMAGE_TAG} ${SCW_REGION} ${SCW_DEFAULT_PROJECT_ID}'
+SUBST='${DOMAIN} ${LE_EMAIL} ${IMAGE_TAG} ${SCW_REGION} ${SCW_DEFAULT_PROJECT_ID} ${LANDING_DOMAIN}'
 apply_tmpl() { envsubst "$SUBST" < "$1" | kubectl apply -f - ; }
 
 echo "==> helm repos"
@@ -157,12 +160,22 @@ fi
 kubectl rollout restart deploy/control-plane -n "$NS" >/dev/null
 kubectl rollout status deploy/control-plane -n "$NS" --timeout=300s
 
+echo "==> landing page (https://${LANDING_DOMAIN})"
+# The HTML lives in the repo (landing/index.html); ship it as a ConfigMap so
+# there is no image to build. external-dns publishes the record + cert-manager
+# issues the cert from the ingress in manifests/landing.yaml.
+kubectl create namespace landing --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+kubectl create configmap landing-html -n landing --from-file=index.html=../../landing/index.html \
+  --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+apply_tmpl manifests/landing.yaml
+kubectl rollout status deploy/landing -n landing --timeout=120s
+
 echo
 # Report the honest state: several steps above are guarded (certs can lag DNS
 # propagation), so confirm the platform cert actually issued before claiming up.
 if kubectl get certificate/control-plane-tls -n "$NS" \
      -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q True; then
-  echo "ready: https://cp.${DOMAIN}   iam: https://iam.${DOMAIN}"
+  echo "ready: https://cp.${DOMAIN}   iam: https://iam.${DOMAIN}   landing: https://${LANDING_DOMAIN}"
 else
   echo "PARTIAL: workloads are up but cp.${DOMAIN} has no cert yet."
   echo "  Check: DNS delegation for ${DOMAIN}, external-dns logs, and"

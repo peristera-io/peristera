@@ -838,3 +838,25 @@ Rationale: user management is an operator surface, not a k8s Secret; a lost
 login is just "create another user." Naturally pairs with the optional-domain
 tenant-creation flow (s4). Verify: build branch image, create a user for `demo`
 via the CP, log into `demo.peristera.app/ui/console` with it.
+
+## 2026-07-07 — M7 s3: landing page (peristera.io)
+
+A single static "what/why" page for the public marketing apex. Branch
+`m7-s3-landing`.
+
+- **`landing/index.html`** — self-contained (inline CSS, no build, no external
+  assets): what Peristera is (open-source federated workplace suite for
+  European SMEs), the suite (Kamara/Ergonomos/office/federation), why
+  (sovereignty, no lock-in AGPL, per-tenant isolation), an honest
+  early/build-in-public status, links to the repo.
+- **Serving** (`deploy/scaleway/manifests/landing.yaml` + a `landing` step in
+  bootstrap.sh): a tiny `nginx:alpine` in its own `landing` namespace serving
+  the HTML from a ConfigMap (created from `landing/index.html` — no image to
+  build), Service, and an Ingress on `peristera.io` + `www.` with a
+  cert-manager per-host cert. `peristera.io` added to external-dns
+  domainFilters (`LANDING_DOMAIN`, default peristera.io).
+- Validated: `bash -n`, rendered manifests parse, no leftover placeholders.
+
+**Live-verify gated on `peristera.io` being delegated to Scaleway DNS** (like
+peristera.app) so external-dns/cert-manager can serve it on real TLS. Next:
+s4 — custom-domain tenants (`peristera.lu`) + the optional-domain create flow.
