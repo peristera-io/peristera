@@ -338,10 +338,11 @@ func (c *Client) EnsureHumanUser(ctx context.Context, tenantBase, orgID, usernam
 		"profile":  map[string]any{"firstName": "Initial", "lastName": "Admin"},
 		"email":    map[string]any{"email": email, "isEmailVerified": true},
 		"password": password,
-		// The credential is a generated handover secret, not a human
-		// choice — forcing a change on first login is the product-correct
-		// follow-up once account recovery exists (M3+).
-		"passwordChangeRequired": false,
+		// The credential is a generated handover secret, so force a change on
+		// first login (#6): the delivered Secret is a one-time artifact, not a
+		// standing password. (Self-service recovery for a forgotten replacement
+		// stays MSP-alpha; until then a lost password means re-provisioning.)
+		"passwordChangeRequired": true,
 	}, nil)
 }
 
