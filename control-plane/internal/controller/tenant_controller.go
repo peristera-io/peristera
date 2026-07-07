@@ -153,6 +153,10 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		}
 	}
 
+	// Unstick any per-host cert that lost the first-issue race with external-dns
+	// (#52) so it retries now that DNS has propagated. Cloud-only; no-op in dev.
+	r.healTenantCerts(ctx, tenant, nsName)
+
 	// A tenant is only Ready once its app workloads are actually up — not the
 	// moment their manifests are created (#31). Owning Deployments makes an
 	// availability change re-trigger reconcile; the timed requeue below is a
