@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -124,12 +125,27 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		}
 	}
 
+	// A tenant is only Ready once its app workloads are actually up — not the
+	// moment their manifests are created (#31). Owning Deployments makes an
+	// availability change re-trigger reconcile; the timed requeue below is a
+	// backstop until the first pod reports.
+	appsReady := r.IAM == nil // without IAM, apps aren't provisioned — don't gate on them
+	if r.IAM != nil && iamReady && dbReady {
+		appsReady, err = r.appsReady(ctx, tenant, nsName)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
 	phase := v1alpha1.TenantPending
-	if dbReady && iamReady {
+	if dbReady && iamReady && appsReady {
 		phase = v1alpha1.TenantReady
+	} else if requeue == 0 {
+		requeue = 10 * time.Second // re-check workloads that are still coming up
 	}
 	setCondition(tenant, "DatabaseReady", dbReady)
 	setCondition(tenant, "IAMProvisioned", iamReady)
+	setCondition(tenant, "AppsReady", appsReady)
 	if tenant.Status.Phase != phase {
 		tenant.Status.Phase = phase
 		lg.Info("tenant phase", "tenant", tenant.Name, "phase", phase)
@@ -316,6 +332,28 @@ func (r *TenantReconciler) databaseReady(ctx context.Context, ns string) (bool, 
 	return ready >= 1, nil
 }
 
+// appsReady reports whether every catalog app that should run for this tenant
+// has an available Deployment (#31). An optional app the tenant hasn't enabled
+// is skipped; a not-yet-created or zero-available Deployment means not ready.
+func (r *TenantReconciler) appsReady(ctx context.Context, tenant *v1alpha1.Tenant, ns string) (bool, error) {
+	for _, app := range catalog {
+		if app.Optional && !tenantEnables(tenant, app.Name) {
+			continue
+		}
+		var d appsv1.Deployment
+		if err := r.Get(ctx, client.ObjectKey{Namespace: ns, Name: app.Name}, &d); err != nil {
+			if apierrors.IsNotFound(err) {
+				return false, nil
+			}
+			return false, err
+		}
+		if d.Status.AvailableReplicas < 1 {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	db := &unstructured.Unstructured{}
 	db.SetGroupVersionKind(cnpgGVK)
@@ -323,5 +361,6 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&v1alpha1.Tenant{}).
 		Owns(&corev1.Namespace{}).
 		Owns(db).
+		Owns(&appsv1.Deployment{}). // app availability drives Ready (#31)
 		Complete(r)
 }
