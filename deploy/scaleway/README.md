@@ -94,3 +94,30 @@ s1 stands up the **platform** (control plane + Zitadel) on TLS. Tenant
 provisioning on real per-host TLS — each tenant's Zitadel-issuer and app
 ingresses getting their own certs — is **s2** (control-plane work), building on
 the `TENANT_SCHEME=https` knob wired here.
+
+## Custom-domain tenants (s4)
+
+A tenant can bring its own apex instead of `<slug>.peristera.app`: set
+`spec.domain` (or the "custom domain" field / API `domain`) at creation, e.g.
+`peristera.lu`. Its issuer becomes `https://peristera.lu` and its apps
+`https://<app>.peristera.lu`, each with its own per-host cert. The domain is
+immutable (it is the OIDC issuer).
+
+Because the platform must serve and secure that domain, onboarding a custom
+domain is a small operator step, not yet fully automatic:
+
+1. **Delegate** the domain to Scaleway DNS (registrar NS records → Scaleway),
+   like `peristera.app`.
+2. **Let external-dns manage it:** add it to `domainFilters` in
+   `manifests/external-dns-values.yaml` and `helm upgrade external-dns`.
+   (external-dns then publishes the tenant's records; cert-manager issues the
+   certs.)
+3. **In-cluster resolution:** the control plane reaches the tenant issuer over
+   https from inside the cluster. If Scaleway NAT-loopback to the node's own IP
+   doesn't work for the custom apex, add it to the `coredns-custom` override
+   (as the platform domain already is).
+
+Not yet built (follow-ups): dynamic external-dns zones per custom domain, and
+**domain-ownership verification** — today custom domains are
+operator-provisioned, so the operator vouches for ownership; self-serve BYO
+domains need a verification challenge first.

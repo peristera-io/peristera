@@ -59,7 +59,16 @@ type TenantReconciler struct {
 	LoginDomain string
 }
 
+// tenantDomain is the tenant's public base — its OIDC issuer host and the
+// parent of its app hosts. A BYO custom apex (Spec.Domain, e.g. peristera.lu)
+// wins; otherwise the default <slug>.<platform base> (s4). Everything
+// public-facing (issuer, app/office hosts, ingresses, the Zitadel instance's
+// custom domain) derives from this, so the custom-domain flavour flows through
+// unchanged.
 func (r *TenantReconciler) tenantDomain(t *v1alpha1.Tenant) string {
+	if t.Spec.Domain != "" {
+		return t.Spec.Domain
+	}
 	return t.Spec.Slug + "." + r.BaseDomain
 }
 

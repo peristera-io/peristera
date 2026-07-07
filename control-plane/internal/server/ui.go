@@ -18,24 +18,25 @@ import (
 // (README §4: multilingual from the first template). EN only for now;
 // FR/DE/LB are the target locales.
 var messages = map[string]string{
-	"title":          "Peristera Control Plane",
-	"tenants":        "Tenants",
-	"slug":           "Slug",
-	"display_name":   "Display name",
-	"phase":          "Phase",
-	"issuer":         "Issuer",
-	"actions":        "Actions",
-	"create":         "Create tenant",
-	"delete":         "Delete",
-	"confirm_delete": "Delete this tenant and all its data?",
-	"logged_in_as":   "Logged in as",
-	"logout":         "Log out",
-	"no_tenants":     "No tenants yet — create the first one below.",
-	"add_admin":      "Add admin",
-	"admin_email":    "admin email",
-	"login_label":    "Login",
-	"password_label": "Password",
-	"creds_note":     "Copy the password now — it is shown once and not stored.",
+	"title":           "Peristera Control Plane",
+	"tenants":         "Tenants",
+	"slug":            "Slug",
+	"display_name":    "Display name",
+	"domain_optional": "custom domain (optional)",
+	"phase":           "Phase",
+	"issuer":          "Issuer",
+	"actions":         "Actions",
+	"create":          "Create tenant",
+	"delete":          "Delete",
+	"confirm_delete":  "Delete this tenant and all its data?",
+	"logged_in_as":    "Logged in as",
+	"logout":          "Log out",
+	"no_tenants":      "No tenants yet — create the first one below.",
+	"add_admin":       "Add admin",
+	"admin_email":     "admin email",
+	"login_label":     "Login",
+	"password_label":  "Password",
+	"creds_note":      "Copy the password now — it is shown once and not stored.",
 }
 
 var funcs = template.FuncMap{
@@ -84,6 +85,8 @@ var pageTmpl = template.Must(template.New("page").Funcs(funcs).Parse(`<!doctype 
     <input name="slug" placeholder="{{msg "slug"}}" required
            pattern="[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?">
     <input name="displayName" placeholder="{{msg "display_name"}}">
+    <input name="domain" placeholder="{{msg "domain_optional"}}"
+           pattern="([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}">
     <button type="submit">{{msg "create"}}</button>
   </form>
 </main>
@@ -193,6 +196,13 @@ func (s *Server) uiCreate(w http.ResponseWriter, r *http.Request) {
 	t := &v1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: slug},
 		Spec:       v1alpha1.TenantSpec{Slug: slug, DisplayName: r.FormValue("displayName")},
+	}
+	if domain := r.FormValue("domain"); domain != "" {
+		if !v1alpha1.ValidDomain(domain) {
+			http.Error(w, messages["domain_optional"], http.StatusBadRequest)
+			return
+		}
+		t.Spec.Domain = domain
 	}
 	if err := s.K8s.Create(r.Context(), t); err != nil && !apierrors.IsAlreadyExists(err) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

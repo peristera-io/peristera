@@ -32,6 +32,20 @@ func TestIngressTLSGating(t *testing.T) {
 	}
 }
 
+// A tenant's public base is its custom apex when set (s4), else <slug>.<base>.
+// Everything public-facing derives from this, so this is the whole switch.
+func TestTenantDomain(t *testing.T) {
+	r := &TenantReconciler{BaseDomain: "peristera.app"}
+	def := &v1alpha1.Tenant{Spec: v1alpha1.TenantSpec{Slug: "demo"}}
+	if got := r.tenantDomain(def); got != "demo.peristera.app" {
+		t.Errorf("default domain = %q, want demo.peristera.app", got)
+	}
+	custom := &v1alpha1.Tenant{Spec: v1alpha1.TenantSpec{Slug: "lu", Domain: "peristera.lu"}}
+	if got := r.tenantDomain(custom); got != "peristera.lu" {
+		t.Errorf("custom domain = %q, want peristera.lu", got)
+	}
+}
+
 // The per-tenant issuer ingress must publish <slug>.<domain> with a per-host
 // cert and route Login v2 + the instance to the right shared services.
 func TestIssuerIngress(t *testing.T) {

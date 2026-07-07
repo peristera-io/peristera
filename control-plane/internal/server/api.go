@@ -80,6 +80,13 @@ func (a *api) CreateTenant(w http.ResponseWriter, r *http.Request) {
 	if in.DisplayName != nil {
 		t.Spec.DisplayName = *in.DisplayName
 	}
+	if in.Domain != nil && *in.Domain != "" {
+		if !v1alpha1.ValidDomain(*in.Domain) {
+			apiError(w, http.StatusBadRequest, "domain must be a valid FQDN")
+			return
+		}
+		t.Spec.Domain = *in.Domain
+	}
 	err := a.s.K8s.Create(r.Context(), t)
 	switch {
 	case apierrors.IsAlreadyExists(err):
