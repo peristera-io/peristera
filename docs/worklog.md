@@ -562,8 +562,8 @@ decrypted document content is processed alongside another's.
   limitation (drift/teardown is the 2027 alpha). Workaround: delete the stale
   `np-kamara`; manual cleanup on disable.
 - **Next: s2 — Kamara WOPI host** (CheckFileInfo/GetFile/PutFile, OpenFGA-gated
-  per-session access token) + the version-write path (save-back = new version)
-  + #28 (Content-Disposition/fileType on GetFile).
+  per-session access token) + the version-write path (save-back = new version) +
+  #28 (Content-Disposition/fileType on GetFile).
 - **s2 — Kamara WOPI host + version-write + #28.** Kamara now hosts the WOPI
   endpoints the office engine drives: `GET /wopi/files/{id}` (CheckFileInfo),
   `GET .../contents` (GetFile), `POST .../contents` (PutFile) —

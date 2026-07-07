@@ -37,7 +37,7 @@ Round 12.
 
 ## Out of scope (stays deferred)
 
-Tier 3 (sharing/erasure correctness — not exercised by a single-tenant demo:
-#33/#35/#34/#22/#20/#23/#24/#17), Tier 4 (#43 accepted, features, testing,
+Tier 3 (sharing/erasure correctness — not exercised by a single-tenant demo,
+issues #33/#35/#34/#22/#20/#23/#24/#17), Tier 4 (#43 accepted, features, testing,
 tech-debt). #28's Content-Disposition/RFC-6266 half already shipped in M6; only
 its error-surface-docs remainder is left.

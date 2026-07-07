@@ -349,7 +349,9 @@ func (w *world) apiToken() (string, error) {
 		client.ObjectKey{Namespace: "peristera-system", Name: "iam-admin-pat"}, sec); err != nil {
 		return "", fmt.Errorf("reading iam-admin-pat (the seeded operator, ADR-0019): %w", err)
 	}
-	w.token = string(sec.Data["pat"])
+	// TrimSpace: the secret value can carry a trailing newline, which makes an
+	// "Authorization: Bearer <pat>\n" header invalid.
+	w.token = strings.TrimSpace(string(sec.Data["pat"]))
 	if w.token == "" {
 		return "", fmt.Errorf("iam-admin-pat secret has no 'pat' key")
 	}
