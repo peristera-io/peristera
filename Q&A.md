@@ -793,3 +793,52 @@ critical path. Rec: fold #28 into the WOPI-host session. >ok
 **Task (not a decision):** verify CODE's real connection behaviour/cap in the
 s0 spike (OnlyOffice CE caps at 20 editing connections/instance; Collabora
 CODE's is unclear from the docs).
+
+## Round 12 — pre-M7 hardening (Tier 1 + Tier 2)
+
+Before M7 exposes the control plane + tenants publicly. Plan:
+`docs/pre-m7-hardening-plan.md`. The mechanical fixes (#7, #38, #30, #31)
+proceed without answers; these are the real decisions.
+
+**R71. Operator authorization model (#1) — the anchor.** Today any principal
+who can authenticate to the default Zitadel instance is a full control-plane
+operator (create/delete every tenant). Options:
+- **(a) Subject allowlist** — a configured set of operator subjects (sub/email);
+  simplest, fits single-operator/early-MSP, but config-managed and coarse.
+- **(b) Zitadel role claim** — an `operator` role on the control-plane project,
+  checked from the token; IdP-native, but every operator must be granted it.
+- **(c) OpenFGA** — operators go through OpenFGA like everything else (README §4
+  leans this way for "who can do this"); most consistent, but the control plane
+  has no OpenFGA today (it's per-tenant) so this adds a platform-level authz
+  store. Rec: **(a) now + design for (c)** — ship a subject allowlist for the
+  demo (an ADR records the model), with the interface shaped so OpenFGA-backed
+  operator authz is a later swap, not a rewrite. Also **always** add the
+  audience check (below), independent of a/b/c. > 
+
+**R72. Token audience validation (#1).** `requireAuth` accepts any userinfo-OK
+token from the default instance — a token minted for a *tenant app* would pass.
+Rec: validate the token's **audience = the control-plane client** (and issuer =
+the default instance) by checking the JWT `aud`/`iss` (or introspection),
+rejecting tokens not meant for the control plane. This is required regardless
+of R71. > 
+
+**R73. Initial-admin credential lifecycle (#6).** The generated tenant-admin
+password is permanent. Rec: set Zitadel `passwordChangeRequired: true` so the
+first login forces a change (the credential becomes a one-time handover), and
+keep the delivered Secret as the handover artifact only. A full rotate/recovery
+flow stays MSP-alpha. > 
+
+**R74. Is the office engine (Collabora) part of the M7 public demo?** Decides
+whether **#48** (drop SYS_ADMIN, real admin creds, TLS/ssl.termination, WOPI
+token out of ingress logs) is in this batch or stays deferred. Rec: **not in
+the first public demo** — office is an opt-in premium feature that needs the
+prod-hardening + an https scheme (which the platform doesn't have yet), so
+defer #48 with M7's TLS work rather than rush it. The core suite (Kamara +
+Ergonomos) carries the demo. > 
+
+**R75. Kamara bearer-token cache TTL (#26).** A revoked/expired token is
+honoured for ≤ the 60s cache TTL. Rec: on the mutating paths, validate the
+access token's **`exp`** (parse the JWT expiry) so an expired token is rejected
+even within the cache window; keep the userinfo cache for the subject lookup.
+Full introspection stays optional. (Same characteristic exists in the control
+plane; a shared `lib` helper is the clean home.) > 
