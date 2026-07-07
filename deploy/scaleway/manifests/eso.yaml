@@ -1,0 +1,83 @@
+# External Secrets Operator wiring: pull the Tofu-generated platform secrets
+# out of Scaleway Secret Manager and materialise them as native Kubernetes
+# Secrets, so nothing sensitive is ever templated into a manifest or the repo.
+# The store authenticates with the `scaleway-secret` credential bootstrap.sh
+# injects directly (the one root secret ESO can't fetch about itself).
+apiVersion: external-secrets.io/v1beta1
+kind: ClusterSecretStore
+metadata:
+  name: scaleway
+spec:
+  provider:
+    scaleway:
+      region: ${SCW_REGION}
+      projectId: ${SCW_DEFAULT_PROJECT_ID}
+      accessKey:
+        secretRef:
+          name: scaleway-secret
+          key: SCW_ACCESS_KEY
+          namespace: peristera-system
+      secretKey:
+        secretRef:
+          name: scaleway-secret
+          key: SCW_SECRET_KEY
+          namespace: peristera-system
+---
+# Zitadel masterkey — mounted by the Zitadel chart via masterkeySecretName.
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: zitadel-masterkey
+  namespace: peristera-system
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: scaleway
+    kind: ClusterSecretStore
+  target:
+    name: zitadel-masterkey
+  data:
+    - secretKey: masterkey
+      remoteRef:
+        key: name:peristera-zitadel-masterkey
+---
+# Platform OpenFGA preshared token (operator authZ, ADR-0019) — shared by
+# cp-openfga and the control plane.
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: cp-openfga-authn-key
+  namespace: peristera-system
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: scaleway
+    kind: ClusterSecretStore
+  target:
+    name: cp-openfga-authn-key
+  data:
+    - secretKey: token
+      remoteRef:
+        key: name:peristera-cp-openfga-token
+---
+# admin-client system-user keypair — Zitadel System API auth (ADR-0006),
+# mounted by both Zitadel (cert) and the control plane (key).
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: admin-client-tls
+  namespace: peristera-system
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: scaleway
+    kind: ClusterSecretStore
+  target:
+    name: admin-client-tls
+  data:
+    - secretKey: tls.crt
+      remoteRef:
+        key: name:peristera-admin-client-crt
+    - secretKey: tls.key
+      remoteRef:
+        key: name:peristera-admin-client-key

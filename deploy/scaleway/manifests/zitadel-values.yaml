@@ -1,0 +1,81 @@
+# Helm values for Zitadel on the cloud node. The cloud twin of
+# iam/deploy/dev/zitadel-values.yaml — same System API contract, but on real
+# https at iam.${DOMAIN} with a generated masterkey (never a committed literal).
+# Chart: zitadel/zitadel 10.x (app v4.x). ${DOMAIN} is substituted at bootstrap.
+zitadel:
+  # The masterkey now comes from Scaleway Secret Manager via ESO (the
+  # `zitadel-masterkey` secret, key `masterkey`) — no literal in git.
+  masterkeySecretName: zitadel-masterkey
+  configmapConfig:
+    # Real public hostname; TLS is terminated at Traefik (cert-manager), so
+    # Zitadel itself speaks plain http behind the proxy but must know the
+    # external scheme is https (secure cookies, https issuer URLs). Traefik
+    # sets X-Forwarded-Proto=https.
+    ExternalDomain: iam.${DOMAIN}
+    ExternalPort: 443
+    ExternalSecure: true
+    TLS:
+      Enabled: false
+    SystemAPIUsers:
+      admin-client:
+        Path: /secrets/admin-client/tls.crt
+        Memberships:
+          - MemberType: System
+            Roles:
+              - SYSTEM_OWNER
+              - IAM_OWNER
+
+extraVolumes:
+  - name: admin-client-cert
+    secret:
+      secretName: admin-client-tls
+      items:
+        - key: tls.crt
+          path: tls.crt
+extraVolumeMounts:
+  - name: admin-client-cert
+    mountPath: /secrets/admin-client
+    readOnly: true
+
+env:
+  - name: ZITADEL_DATABASE_POSTGRES_DSN
+    valueFrom:
+      secretKeyRef:
+        name: zitadel-db-dsn
+        key: dsn
+
+# Only the platform issuer host here (per-host cert via HTTP-01). Tenant
+# virtual-instance hosts (<tenant>.${DOMAIN}) get their OWN ingress + cert,
+# created by the control plane at tenant-provision time (s2) — a wildcard host
+# is deliberately avoided because HTTP-01 cannot issue a wildcard cert.
+ingress:
+  enabled: true
+  className: traefik
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  tls:
+    - hosts:
+        - iam.${DOMAIN}
+      secretName: zitadel-tls
+  hosts:
+    - host: iam.${DOMAIN}
+      paths:
+        - path: /
+          pathType: Prefix
+
+login:
+  enabled: true
+  ingress:
+    enabled: true
+    className: traefik
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-prod
+    tls:
+      - hosts:
+          - iam.${DOMAIN}
+        secretName: zitadel-login-tls
+    hosts:
+      - host: iam.${DOMAIN}
+        paths:
+          - path: /ui/v2/login
+            pathType: Prefix
