@@ -903,3 +903,32 @@ subdomain regex) to the override. Applied live → cert issued in ~45s.
 **`https://peristera.io` is live on a real Let's Encrypt cert** (200; `www`
 too). Same lesson applies to custom-domain tenants (#56): each custom apex
 needs a CoreDNS entry, not just DNS + a cert.
+
+## 2026-07-07 — M7 backups: Postgres → Object Storage (R85)
+
+The last substantive M7 gap. CNPG streams WAL + daily base backups to Scaleway
+Object Storage (barman-cloud), so the platform identity DB and every tenant DB
+are point-in-time recoverable. Branch `m7-backups`.
+
+- **De-risked live first**: patched `zitadel-db` with `barmanObjectStore` →
+  `ContinuousArchiving=True`, an on-demand backup completed, CNPG set
+  `firstRecoverabilityPoint`/`lastSuccessfulBackup` (only set once base backup +
+  WAL are in the store). Then the same on a tenant DB (`demo` → `tenants/demo`),
+  also verified.
+- **Platform** (`manifests/cnpg-zitadel.yaml`): `backup.barmanObjectStore`
+  (creds = SCW keys in `scaleway-secret`) + a daily `ScheduledBackup`, 7-day
+  retention.
+- **Reconciler** (`internal/controller/backup.go`): when `BACKUP_BUCKET` is set
+  (cloud), `ensureDatabase` adds the backup block to each tenant's CNPG cluster
+  (`s3://<bucket>/tenants/<slug>`), creates the per-namespace `backup-s3`
+  credentials Secret, and a daily `ScheduledBackup`. No-op in dev. Config via
+  `BACKUP_BUCKET`/`BACKUP_ENDPOINT`/`BACKUP_S3_KEY_ID`/`BACKUP_S3_SECRET`
+  (the last two from `scaleway-secret`). RBAC gains cnpg `scheduledbackups`.
+  Tests `TestBarmanBackup`, `TestBackupsEnabled`.
+- **bootstrap.sh**: reads the bucket from `tofu output -raw backups_bucket`,
+  pins the **CNPG chart to 1.30** (in-tree barman is removed in 1.31).
+
+Follow-ups (#59): **blob backup** rides on #21 (blobs → Object Storage; the
+PVC is currently unbacked), and **migrate off in-tree barman** to the
+barman-cloud plugin before CNPG 1.31. **M7 is now feature-complete** — remaining
+is only the `peristera.lu` custom-domain live-verify (DNS-gated).

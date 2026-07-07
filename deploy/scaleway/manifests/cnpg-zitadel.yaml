@@ -1,7 +1,14 @@
 # Postgres for the shared Zitadel deployment (cloud). Single instance: the M7
 # topology is one node, so HA replicas have nowhere to land — that's the
 # accepted single-node trade-off (multi-node HA rides in with Kapsule later).
-# Scheduled dumps to Object Storage are the backup story (threaded into s1/s2).
+#
+# Backups (R85): CNPG streams WAL + base backups to Scaleway Object Storage
+# (barman-cloud → the backups bucket), so the platform identity DB is
+# recoverable (point-in-time). Credentials are the SCW keys already in
+# `scaleway-secret`. The ScheduledBackup below takes a daily base backup; WAL
+# archiving is continuous. Retention 7 days. (In-tree barman is deprecated in
+# CNPG 1.31 in favour of the barman-cloud plugin — see #57-follow-up; the
+# CNPG chart is pinned to 1.30 in bootstrap.sh meanwhile.)
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
@@ -15,3 +22,31 @@ spec:
     initdb:
       database: zitadel
       owner: zitadel
+  backup:
+    retentionPolicy: "7d"
+    barmanObjectStore:
+      destinationPath: s3://${BACKUPS_BUCKET}/zitadel-db
+      endpointURL: https://s3.${SCW_REGION}.scw.cloud
+      s3Credentials:
+        accessKeyId:
+          name: scaleway-secret
+          key: SCW_ACCESS_KEY
+        secretAccessKey:
+          name: scaleway-secret
+          key: SCW_SECRET_KEY
+      wal:
+        compression: gzip
+      data:
+        compression: gzip
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: zitadel-db
+  namespace: peristera-system
+spec:
+  # CNPG cron is 6-field (seconds first): 03:00 daily.
+  schedule: "0 0 3 * * *"
+  backupOwnerReference: self
+  cluster:
+    name: zitadel-db

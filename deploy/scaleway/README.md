@@ -121,3 +121,24 @@ Not yet built (follow-ups): dynamic external-dns zones per custom domain, and
 **domain-ownership verification** — today custom domains are
 operator-provisioned, so the operator vouches for ownership; self-serve BYO
 domains need a verification challenge first.
+
+## Backups (R85)
+
+Postgres is backed up to Object Storage via CNPG's barman-cloud: continuous WAL
+archiving plus a daily base backup, 7-day retention, so both the platform
+identity DB and every tenant DB are point-in-time recoverable.
+
+- **Platform** (`zitadel-db`): `manifests/cnpg-zitadel.yaml` carries the
+  `backup.barmanObjectStore` (creds = the SCW keys in `scaleway-secret`) + a
+  `ScheduledBackup`, streaming to `s3://<backups-bucket>/zitadel-db`.
+- **Tenants**: the control plane configures each tenant's CNPG cluster with the
+  same backup block (to `s3://<backups-bucket>/tenants/<slug>`), creates the
+  per-namespace `backup-s3` credentials Secret, and a daily `ScheduledBackup` —
+  driven by `BACKUP_BUCKET`/`BACKUP_ENDPOINT` env (empty in dev = no backups).
+- `bootstrap.sh` reads the bucket from `tofu output -raw backups_bucket` and
+  pins the **CNPG chart to 1.30** (in-tree barman is removed in 1.31).
+
+Restore: `kubectl cnpg` / a `Cluster` with `bootstrap.recovery` pointing at the
+same object store (CNPG docs). **Blob backup** (Kamara file contents) is not
+here — it rides on #21 (blobs → Object Storage), where the store itself is
+durable; until then the blob PVC is unbacked (see the follow-up issue).

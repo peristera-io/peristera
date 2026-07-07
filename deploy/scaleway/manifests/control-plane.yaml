@@ -24,7 +24,7 @@ rules:
     resources: ["secrets"]
     verbs: ["get", "create"] # NO list/watch (ADR-0007 #7)
   - apiGroups: ["postgresql.cnpg.io"]
-    resources: ["clusters", "databases"]
+    resources: ["clusters", "databases", "scheduledbackups"]
     verbs: ["get", "list", "watch", "create", "delete"]
   - apiGroups: ["apps"]
     resources: ["deployments"]
@@ -127,6 +127,16 @@ spec:
             - name: OPENFGA_API_TOKEN
               valueFrom:
                 secretKeyRef: { name: cp-openfga-authn-key, key: token }
+            # Per-tenant Postgres backups to Object Storage (R85); the S3 creds
+            # are the SCW keys from scaleway-secret.
+            - { name: BACKUP_BUCKET, value: "${BACKUPS_BUCKET}" }
+            - { name: BACKUP_ENDPOINT, value: "https://s3.${SCW_REGION}.scw.cloud" }
+            - name: BACKUP_S3_KEY_ID
+              valueFrom:
+                secretKeyRef: { name: scaleway-secret, key: SCW_ACCESS_KEY }
+            - name: BACKUP_S3_SECRET
+              valueFrom:
+                secretKeyRef: { name: scaleway-secret, key: SCW_SECRET_KEY }
             # Seeded by bootstrap.sh once Zitadel's iam-admin sub is resolved.
             - { name: OPERATOR_SUBJECTS, value: "" }
           volumeMounts:
