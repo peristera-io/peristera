@@ -109,6 +109,9 @@ spec:
             # are https://<app>.<tenant>.${DOMAIN} with no port suffix.
             - { name: TENANT_SCHEME, value: "https" }
             - { name: TENANT_EXTERNAL_PORT, value: "443" }
+            # Per-host tenant certs (s2): the reconciler annotates tenant issuer
+            # + app ingresses for this cert-manager ClusterIssuer.
+            - { name: TENANT_TLS_ISSUER, value: "letsencrypt-prod" }
             # Our own app images are pulled from ghcr on the cloud (imageFor).
             - { name: IMAGE_PREFIX, value: "ghcr.io/peristera-io/" }
             - { name: IMAGE_TAG, value: "${IMAGE_TAG}" }

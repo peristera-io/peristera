@@ -74,6 +74,7 @@ func main() {
 		ImagePrefix:  env("IMAGE_PREFIX", "peristera-"),
 		ImageTag:     env("IMAGE_TAG", "dev"),
 		URLScheme:    env("TENANT_SCHEME", "http"),
+		TLSIssuer:    env("TENANT_TLS_ISSUER", ""),
 	}
 	// IAM provisioning switches on when the system-user key is provided
 	// (dev: a file path; in-cluster: the mounted admin-client-tls Secret).
