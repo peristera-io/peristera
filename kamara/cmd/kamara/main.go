@@ -162,13 +162,19 @@ func main() {
 	mux.HandleFunc("GET /style.css", serveCSS)
 	mux.HandleFunc("GET /htmx.js", serveJS)
 	mux.HandleFunc("GET /kamara.js", serveUploader)
+	mux.HandleFunc("GET /editor.js", serveEditorJS)
 	mux.Handle("/v1/", h.Routes())          // bearer API (authed inside; no cookie, no CSRF surface)
 	mux.Handle("/wopi/", wopiHost.Routes()) // WOPI host for the office engine (session-token authed inside)
 	mux.HandleFunc("GET /auth/login", rp.Login)
 	mux.HandleFunc("GET /auth/callback", rp.Callback)
 	mux.HandleFunc("GET /auth/logout", rp.Logout)
-	// CSRF guard (#4) on the cookie-authed browser UI only.
-	mux.Handle("/", rp.Middleware(oidcrp.SameOriginGuard(publicURL, app.routes()), rp.RedirectToLogin("/auth/login")))
+	// CSRF guard (#4) + Content-Security-Policy (#38) on the cookie-authed
+	// browser UI. The CSP allows the office engine's origin as a frame/form
+	// target only when office is enabled.
+	csp := contentSecurityPolicy(os.Getenv("OFFICE_URL"))
+	mux.Handle("/", rp.Middleware(
+		oidcrp.SameOriginGuard(publicURL, cspMiddleware(csp, app.routes())),
+		rp.RedirectToLogin("/auth/login")))
 
 	addr := env("LISTEN_ADDR", ":5580")
 	// A real http.Server with a header-read timeout (Slowloris defense) and
@@ -255,6 +261,52 @@ func serveUploader(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=3600")
 	_, _ = w.Write(js)
+}
+
+// serveEditorJS serves the office-editor auto-submit script (#38).
+func serveEditorJS(w http.ResponseWriter, _ *http.Request) {
+	js, err := web.EditorScript()
+	if err != nil {
+		http.Error(w, "script unavailable", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	_, _ = w.Write(js)
+}
+
+// contentSecurityPolicy builds the CSP for the browser UI (#38). script-src
+// needs 'unsafe-eval' because htmx evaluates hx-on attributes; inline scripts
+// were removed (#38) so no 'unsafe-inline'. style-src keeps 'unsafe-inline' for
+// the small inline <style> blocks (editor sizing, a11y-inline render). The
+// office engine's origin is allowed as a frame/form target only when enabled.
+func contentSecurityPolicy(officeURL string) string {
+	frameSrc, formAction := "'none'", "'self'"
+	if officeURL != "" {
+		frameSrc = officeURL
+		formAction = "'self' " + officeURL
+	}
+	return strings.Join([]string{
+		"default-src 'self'",
+		"script-src 'self' 'unsafe-eval'",
+		"style-src 'self' 'unsafe-inline'",
+		"img-src 'self' data:",
+		"font-src 'self'",
+		"connect-src 'self'",
+		"object-src 'none'",
+		"base-uri 'self'",
+		"frame-src " + frameSrc,
+		"form-action " + formAction,
+		"frame-ancestors 'none'",
+	}, "; ")
+}
+
+// cspMiddleware sets the Content-Security-Policy header on UI responses.
+func cspMiddleware(csp string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Security-Policy", csp)
+		next.ServeHTTP(w, r)
+	})
 }
 
 func issuerHost(issuer string) string {

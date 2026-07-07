@@ -18,7 +18,7 @@ import (
 	"github.com/peristera-io/peristera/kamara/internal/file"
 )
 
-//go:embed style.css htmx.min.js kamara-uploader.js
+//go:embed style.css htmx.min.js kamara-uploader.js editor.js
 var assets embed.FS
 
 // Stylesheet returns the compiled Tailwind CSS (served at /style.css).
@@ -31,6 +31,10 @@ func Script() ([]byte, error) { return assets.ReadFile("htmx.min.js") }
 // Uploader returns the drag-and-drop uploader component (served at
 // /kamara.js) — Kamara's own progressive-enhancement JS.
 func Uploader() ([]byte, error) { return assets.ReadFile("kamara-uploader.js") }
+
+// EditorScript returns the office-editor auto-submit script (served at
+// /editor.js) — external so the editor page needs no inline script (#38).
+func EditorScript() ([]byte, error) { return assets.ReadFile("editor.js") }
 
 // msg is the string catalog — no hardcoded strings in templates (README §4;
 // EN only for now, FR/DE/LB are targets).
@@ -250,7 +254,7 @@ var pageTmpl = template.Must(template.New("page").Funcs(funcs).Parse(`<!doctype 
 <div role="region" aria-label="{{.Name}}" tabindex="-1" data-drawer class="fixed inset-y-0 right-0 w-80 max-w-full overflow-y-auto border-l border-stone-200 bg-white p-4 shadow-lg">
  <div class="flex items-start justify-between gap-2">
   <h2 class="text-lg font-semibold text-stone-900">{{.Name}}</h2>
-  <button onclick="this.closest('#drawer').innerHTML=''" class="text-sm text-stone-600 underline" aria-label="{{msg "close"}}">✕</button>
+  <button type="button" data-close-drawer class="text-sm text-stone-600 underline" aria-label="{{msg "close"}}">✕</button>
  </div>
  {{if $.Office}}
  <a href="/edit/{{.ID}}" class="mt-4 inline-block rounded-base bg-brand px-3 py-1.5 text-sm font-medium text-white hover:opacity-90">{{msg "edit_office"}}</a>
@@ -297,7 +301,7 @@ var pageTmpl = template.Must(template.New("page").Funcs(funcs).Parse(`<!doctype 
  <input type="hidden" name="access_token_ttl" value="{{.AccessTokenTTL}}">
 </form>
 <iframe id="office_frame" name="office_frame" allow="clipboard-read; clipboard-write"></iframe>
-<script>document.getElementById('office_form').submit();</script>
+<script src="/editor.js" defer></script>
 </body></html>{{end}}`))
 
 // Page renders the whole document for a folder listing.

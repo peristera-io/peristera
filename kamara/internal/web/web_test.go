@@ -125,11 +125,16 @@ func TestEditorPage(t *testing.T) {
 		`id="office_form"`, `target="office_frame"`, `id="office_frame"`,
 		`action="http://office.example/browser/h/cool.html?WOPISrc=`, // engine URL
 		`name="access_token" value="tok-xyz"`,                        // token in the POST body, not the URL
+		`src="/editor.js"`,                                           // external submit script (#38: no inline)
 		"memo.odt",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("editor page missing %q", want)
 		}
+	}
+	// #38: the auto-submit must not be an inline <script> (no script body).
+	if strings.Contains(html, "office_form').submit()") {
+		t.Error("editor page still has an inline submit script (breaks a strict CSP)")
 	}
 }
 

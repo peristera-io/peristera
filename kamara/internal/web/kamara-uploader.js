@@ -78,3 +78,11 @@ document.addEventListener("keydown", (e) => {
   const d = drawerEl();
   if (d && d.innerHTML) d.innerHTML = "";
 });
+// Delegated close-drawer handler (#38: replaces an inline onclick so the
+// pages need no script-src 'unsafe-inline').
+document.addEventListener("click", (e) => {
+  if (e.target.closest("[data-close-drawer]")) {
+    const d = drawerEl();
+    if (d) d.innerHTML = "";
+  }
+});
