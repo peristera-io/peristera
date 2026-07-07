@@ -932,3 +932,18 @@ Follow-ups (#59): **blob backup** rides on #21 (blobs → Object Storage; the
 PVC is currently unbacked), and **migrate off in-tree barman** to the
 barman-cloud plugin before CNPG 1.31. **M7 is now feature-complete** — remaining
 is only the `peristera.lu` custom-domain live-verify (DNS-gated).
+
+## 2026-07-07 — Correction: Scaleway hairpin works (BYO custom domains simplified)
+
+Investigating the BYO-custom-domain design (#56) overturned an earlier
+conclusion: **Scaleway hairpin works.** The Flexible IP is assigned locally on
+the node (`ens2` `51.15.210.70/32`), so a pod reaching it is a local hop, not an
+edge-NAT loopback. Verified from a pod: `--resolve <custom>:80:51.15.210.70` →
+404 (reached Traefik), and `cp.peristera.app` via the node IP **bypassing
+CoreDNS** → 200. The s3 landing cert failure previously blamed on hairpin was
+actually the incomplete `.io` NS delegation (resolving to the EuroDNS parking
+IP). Consequences: the `coredns-custom` override is redundant (harmless), and
+**BYO custom domains need no special in-cluster handling** — the tenant just
+points A/CNAME at our IP (no delegation), and s4's ingress + HTTP-01 wiring
+issues certs. #56 rescoped accordingly (stable CNAME target + ownership
+verification are what actually remain).
