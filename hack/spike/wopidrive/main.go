@@ -3,7 +3,8 @@
 // (CheckFileInfo/GetFile) and accepts a save (PutFile) — no browser needed.
 //
 // Usage: wopidrive <collabora-ws-base> <wopi-src> <access-token>
-//   e.g. wopidrive ws://localhost:9980 http://stub...:8080/wopi/files/doc1 tok
+//
+//	e.g. wopidrive ws://localhost:9980 http://stub...:8080/wopi/files/doc1 tok
 package main
 
 import (

@@ -95,8 +95,8 @@ design milestone (see `docs/s2s-auth-milestone.md`) before M6.
 
 **Reshaped and split — see `docs/m4b-plan.md`** (Q&A Round 9). M4b/M4c became
 the browser file experience over a new **folder hierarchy** in the Peristera
-design language (Tailwind pilot): M4b = hierarchy model + API + browser auth
-+ minimal UI; M4c = polish (extractable uploader, progress bar, file-details
+design language (Tailwind pilot): M4b = hierarchy model + API + browser auth +
+minimal UI; M4c = polish (extractable uploader, progress bar, file-details
 drawer, design tokens, a11y gate, demo). The **Ergonomos attach flow moved
 to the S2S milestone** (`docs/s2s-auth-milestone.md`, #29) as its acceptance
 test — it validates the platform service-to-service model rather than

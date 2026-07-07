@@ -29,7 +29,7 @@ The admin password is in the tenant's `initial-admin` secret:
 
 Screenshots land in `/tmp/edit-*.png`. Expected tail:
 
-```
+```text
 EDITOR LOADED (Collabora rendered the document via WOPI open path)
 PUTFILE status 200 X-WOPI-ItemVersion 1
 REOPEN GetFile bytes match edited: true
