@@ -180,8 +180,8 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request, caller pii.Su
 		h.fail(w, err)
 		return
 	}
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", "attachment; filename="+quoteName(o.Name))
+	w.Header().Set("Content-Type", ContentType(o.ContentType))
+	w.Header().Set("Content-Disposition", ContentDisposition("attachment", o.Name))
 	if err := h.svc.Download(r.Context(), caller, o.ID, w); err != nil {
 		// The status and (some) bytes are already flushed, so this can only
 		// be logged — writing a JSON error here would corrupt the byte
@@ -387,7 +387,59 @@ func writeErr(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"message": msg})
 }
 
-// quoteName escapes a filename for a Content-Disposition header value.
-func quoteName(name string) string {
-	return `"` + strings.NewReplacer(`"`, "", "\r", "", "\n", "").Replace(name) + `"`
+// ContentDisposition builds an RFC 6266 header value (#28): an ASCII
+// "filename=" fallback plus, when the name has non-ASCII, an RFC 5987
+// "filename*=UTF-8”" form so clients render the real (e.g. accented or
+// non-Latin) name. Shared by the API download, the browser download, and
+// (for the type) the WOPI host.
+func ContentDisposition(disposition, name string) string {
+	ascii := asciiFilename(name)
+	v := disposition + `; filename="` + ascii + `"`
+	if ascii != name {
+		v += `; filename*=UTF-8''` + rfc5987(name)
+	}
+	return v
+}
+
+// asciiFilename strips control chars and quotes and replaces any non-ASCII
+// byte with '_' for the plain filename= fallback.
+func asciiFilename(name string) string {
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case r < 0x20 || r == 0x7f || r == '"' || r == '\\':
+			// drop control chars, quotes, backslash
+		case r > 0x7f:
+			b.WriteByte('_')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// rfc5987 percent-encodes name per RFC 5987 (UTF-8), leaving only the
+// attr-char set unescaped.
+func rfc5987(name string) string {
+	const attr = "!#$&+-.^_`|~"
+	var b strings.Builder
+	for _, c := range []byte(name) {
+		if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+			strings.IndexByte(attr, c) >= 0 {
+			b.WriteByte(c)
+			continue
+		}
+		b.WriteByte('%')
+		b.WriteByte("0123456789ABCDEF"[c>>4])
+		b.WriteByte("0123456789ABCDEF"[c&0x0f])
+	}
+	return b.String()
+}
+
+// ContentType returns the stored MIME type or the octet-stream fallback (#28).
+func ContentType(stored string) string {
+	if stored == "" {
+		return "application/octet-stream"
+	}
+	return stored
 }

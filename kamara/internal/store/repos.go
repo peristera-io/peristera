@@ -4,11 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/peristera-io/peristera/kamara/internal/engine"
 	"github.com/peristera-io/peristera/kamara/internal/file"
+	"github.com/peristera-io/peristera/kamara/internal/wopi"
 	"github.com/peristera-io/peristera/lib/audit"
 	"github.com/peristera-io/peristera/lib/dbtx"
 	"github.com/peristera-io/peristera/lib/pgconv"
@@ -20,7 +22,7 @@ import (
 // dbtx.Executor (root ADR-0015).
 type ObjectRepo struct{ db dbtx.Executor }
 
-const objCols = `id, owner_instance, owner_user, name, size, folder_id, created_at, updated_at`
+const objCols = `id, owner_instance, owner_user, name, size, folder_id, content_type, created_at, updated_at`
 
 func nullToPtr(ns sql.NullString) *string {
 	if !ns.Valid {
@@ -33,15 +35,15 @@ func nullToPtr(ns sql.NullString) *string {
 func scanObject(row interface{ Scan(...any) error }) (file.Object, error) {
 	var o file.Object
 	var folder sql.NullString
-	err := row.Scan(&o.ID, &o.Owner.Instance, &o.Owner.UserID, &o.Name, &o.Size, &folder, &o.Created, &o.Updated)
+	err := row.Scan(&o.ID, &o.Owner.Instance, &o.Owner.UserID, &o.Name, &o.Size, &folder, &o.ContentType, &o.Created, &o.Updated)
 	o.FolderID = nullToPtr(folder)
 	return o, err
 }
 
 func (r *ObjectRepo) InsertObject(ctx context.Context, o file.Object) error {
 	_, err := r.db.ExecContext(ctx,
-		`INSERT INTO objects (`+objCols+`) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-		o.ID, o.Owner.Instance, o.Owner.UserID, o.Name, o.Size, o.FolderID, o.Created, o.Updated)
+		`INSERT INTO objects (`+objCols+`) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+		o.ID, o.Owner.Instance, o.Owner.UserID, o.Name, o.Size, o.FolderID, o.ContentType, o.Created, o.Updated)
 	return err
 }
 
@@ -52,6 +54,13 @@ func (r *ObjectRepo) SetObjectFolder(ctx context.Context, id string, folderID *s
 
 func (r *ObjectRepo) SetObjectName(ctx context.Context, id, name string) error {
 	_, err := r.db.ExecContext(ctx, `UPDATE objects SET name=$2, updated_at=now() WHERE id=$1`, id, name)
+	return err
+}
+
+// SetObjectSize records the latest version's size on the object and bumps
+// updated_at (called on WOPI save-back — ADR-0018).
+func (r *ObjectRepo) SetObjectSize(ctx context.Context, id string, size int64) error {
+	_, err := r.db.ExecContext(ctx, `UPDATE objects SET size=$2, updated_at=now() WHERE id=$1`, id, size)
 	return err
 }
 
@@ -109,6 +118,12 @@ func (r *ObjectRepo) InsertVersion(ctx context.Context, objectID, versionID stri
 	if _, err := r.db.ExecContext(ctx,
 		`INSERT INTO versions (id, object_id, ordinal, size, created_at) VALUES ($1,$2,$3,$4,now())`,
 		versionID, objectID, ordinal, size); err != nil {
+		// A concurrent save took this ordinal (unique on object_id, ordinal);
+		// surface it as a domain conflict so the service can retry.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return file.ErrVersionConflict
+		}
 		return err
 	}
 	for i, ref := range refs {
@@ -148,6 +163,37 @@ func (r *ObjectRepo) ManifestOf(ctx context.Context, objectID string) ([]engine.
 		refs = append(refs, ref)
 	}
 	return refs, rows.Err()
+}
+
+// MaxOrdinal returns the highest version ordinal of an object; ok is false
+// when the object has no versions (MAX over no rows is SQL NULL).
+func (r *ObjectRepo) MaxOrdinal(ctx context.Context, objectID string) (int, bool, error) {
+	var ord sql.NullInt64
+	err := r.db.QueryRowContext(ctx,
+		`SELECT MAX(ordinal) FROM versions WHERE object_id=$1`, objectID).Scan(&ord)
+	if err != nil {
+		return 0, false, err
+	}
+	return int(ord.Int64), ord.Valid, nil
+}
+
+// ListVersions returns an object's versions, newest first.
+func (r *ObjectRepo) ListVersions(ctx context.Context, objectID string) ([]file.Version, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id, ordinal, size, created_at FROM versions WHERE object_id=$1 ORDER BY ordinal DESC`, objectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var vs []file.Version
+	for rows.Next() {
+		var v file.Version
+		if err := rows.Scan(&v.ID, &v.Ordinal, &v.Size, &v.Created); err != nil {
+			return nil, err
+		}
+		vs = append(vs, v)
+	}
+	return vs, rows.Err()
 }
 
 // ChunkHashesOf returns every chunk hash the object references (across all
@@ -343,6 +389,46 @@ func (d *DB) storesFor(e dbtx.Executor) file.Stores {
 
 // Reader returns a non-transactional store bundle (reads, export/erase).
 func (d *DB) Reader() file.Stores { return d.storesFor(d.sql) }
+
+// WopiSessions returns the WOPI session store (ADR-0018). Sessions live
+// outside the file unit of work — minted on page render, read on each WOPI
+// call — so they use the base (non-transactional) executor.
+func (d *DB) WopiSessions() *WopiRepo { return &WopiRepo{db: d.sql} }
+
+// WopiRepo persists WOPI editing sessions (wopi.Store).
+type WopiRepo struct{ db dbtx.Executor }
+
+func (r *WopiRepo) Put(ctx context.Context, tokenHash string, s wopi.Session) error {
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO wopi_sessions (token_hash, object_id, subject_instance, subject_user, can_write, expires_at)
+		 VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (token_hash) DO NOTHING`,
+		tokenHash, s.ObjectID, s.Subject.Instance, s.Subject.UserID, s.CanWrite, s.Expires)
+	return err
+}
+
+func (r *WopiRepo) Get(ctx context.Context, tokenHash string) (wopi.Session, bool, error) {
+	var s wopi.Session
+	err := r.db.QueryRowContext(ctx,
+		`SELECT object_id, subject_instance, subject_user, can_write, expires_at
+		   FROM wopi_sessions WHERE token_hash=$1`, tokenHash).
+		Scan(&s.ObjectID, &s.Subject.Instance, &s.Subject.UserID, &s.CanWrite, &s.Expires)
+	if errors.Is(err, sql.ErrNoRows) {
+		return wopi.Session{}, false, nil
+	}
+	return s, err == nil, err
+}
+
+func (r *WopiRepo) DeleteExpired(ctx context.Context, before time.Time) error {
+	_, err := r.db.ExecContext(ctx, `DELETE FROM wopi_sessions WHERE expires_at < $1`, before)
+	return err
+}
+
+func (r *WopiRepo) DeleteByObject(ctx context.Context, objectID string) error {
+	_, err := r.db.ExecContext(ctx, `DELETE FROM wopi_sessions WHERE object_id=$1`, objectID)
+	return err
+}
+
+var _ wopi.Store = (*WopiRepo)(nil)
 
 // InTx runs fn with a transaction-bound store bundle, atomically.
 func (d *DB) InTx(ctx context.Context, fn func(file.Stores) error) error {

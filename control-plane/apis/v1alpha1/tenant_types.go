@@ -23,6 +23,12 @@ type TenantSpec struct {
 	Slug string `json:"slug"`
 	// DisplayName may change freely; it never appears in URLs or domains.
 	DisplayName string `json:"displayName,omitempty"`
+	// Apps is the set of optional catalog apps this tenant has enabled
+	// (ADR-0013 optional-per-tenant dimension, ADR-0018). Always-on apps are
+	// provisioned regardless; an optional app (e.g. "office", the Collabora
+	// engine) is provisioned only when named here, since it carries a real
+	// hardware cost. Editing the list enables or disables the feature.
+	Apps []string `json:"apps,omitempty"`
 }
 
 // TenantPhase summarizes where the reconcile loop stands.

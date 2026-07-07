@@ -22,12 +22,16 @@ import (
 type memRepo struct {
 	objs      map[string]Object
 	folders   map[string]Folder
-	manifests map[string][]engine.ChunkRef // objectID → refs
+	manifests map[string][]engine.ChunkRef // objectID → latest version refs
+	versions  map[string][]Version         // objectID → versions (append order)
 	refCount  map[string]int               // chunk hash → ref count
+	// injectConflicts makes the next N InsertVersion calls return
+	// ErrVersionConflict (simulating a concurrent writer taking the ordinal).
+	injectConflicts int
 }
 
 func newMemRepo() *memRepo {
-	return &memRepo{objs: map[string]Object{}, folders: map[string]Folder{}, manifests: map[string][]engine.ChunkRef{}, refCount: map[string]int{}}
+	return &memRepo{objs: map[string]Object{}, folders: map[string]Folder{}, manifests: map[string][]engine.ChunkRef{}, versions: map[string][]Version{}, refCount: map[string]int{}}
 }
 
 func ptrEq(a, b *string) bool {
@@ -65,8 +69,13 @@ func (m *memRepo) DeleteObject(_ context.Context, id string) error {
 	delete(m.manifests, id)
 	return nil
 }
-func (m *memRepo) InsertVersion(_ context.Context, objectID, _ string, _ int, _ int64, refs []engine.ChunkRef) error {
-	m.manifests[objectID] = refs
+func (m *memRepo) InsertVersion(_ context.Context, objectID, versionID string, ordinal int, size int64, refs []engine.ChunkRef) error {
+	if m.injectConflicts > 0 {
+		m.injectConflicts--
+		return ErrVersionConflict
+	}
+	m.manifests[objectID] = refs // latest wins (ordinal is monotonic)
+	m.versions[objectID] = append(m.versions[objectID], Version{ID: versionID, Ordinal: ordinal, Size: size})
 	for _, r := range refs {
 		m.refCount[r.Hash]++
 	}
@@ -74,6 +83,33 @@ func (m *memRepo) InsertVersion(_ context.Context, objectID, _ string, _ int, _ 
 }
 func (m *memRepo) ManifestOf(_ context.Context, objectID string) ([]engine.ChunkRef, error) {
 	return m.manifests[objectID], nil
+}
+func (m *memRepo) MaxOrdinal(_ context.Context, objectID string) (int, bool, error) {
+	vs := m.versions[objectID]
+	if len(vs) == 0 {
+		return 0, false, nil
+	}
+	max := vs[0].Ordinal
+	for _, v := range vs[1:] {
+		if v.Ordinal > max {
+			max = v.Ordinal
+		}
+	}
+	return max, true, nil
+}
+func (m *memRepo) ListVersions(_ context.Context, objectID string) ([]Version, error) {
+	vs := m.versions[objectID]
+	out := make([]Version, len(vs))
+	for i, v := range vs { // newest first
+		out[len(vs)-1-i] = v
+	}
+	return out, nil
+}
+func (m *memRepo) SetObjectSize(_ context.Context, id string, size int64) error {
+	o := m.objs[id]
+	o.Size = size
+	m.objs[id] = o
+	return nil
 }
 func (m *memRepo) ChunkHashesOf(_ context.Context, objectID string) ([]string, error) {
 	var hs []string
@@ -314,6 +350,112 @@ func TestUploadDownloadRoundTrip(t *testing.T) {
 	}
 	if !bytes.Equal(out.Bytes(), content) {
 		t.Error("download mismatch")
+	}
+}
+
+func TestWriteVersionAppendsRevision(t *testing.T) {
+	ctx := context.Background()
+	svc, _, _, _, sink, _, _ := newService(t)
+	alice := pii.Subject{Instance: "demo.example", UserID: "alice"}
+
+	o, err := svc.Upload(ctx, alice, nil, "memo.odt", bytes.NewReader([]byte("first draft")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// #28: content type inferred from the extension.
+	if o.ContentType == "" {
+		t.Error("content type not inferred from name")
+	}
+
+	// Save-back writes a new version; the file keeps its identity and owner.
+	edited := bytes.Repeat([]byte("edited body "), 100_000) // multi-chunk
+	ver, err := svc.WriteVersion(ctx, alice, o.ID, bytes.NewReader(edited))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ver != "1" {
+		t.Errorf("new version ordinal = %q, want \"1\"", ver)
+	}
+
+	// Reopening now serves the edited bytes.
+	var out bytes.Buffer
+	if err := svc.Download(ctx, alice, o.ID, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(out.Bytes(), edited) {
+		t.Error("download after save-back did not return the edited bytes")
+	}
+
+	// The drawer sees two versions, newest first, and the object size updated.
+	vs, err := svc.ListVersions(ctx, alice, o.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vs) != 2 || vs[0].Ordinal != 1 || vs[1].Ordinal != 0 {
+		t.Errorf("versions = %+v, want ordinals [1 0]", vs)
+	}
+	if got, err := svc.Get(ctx, alice, o.ID); err != nil || got.Size != int64(len(edited)) {
+		t.Errorf("object size = %d (err %v), want %d", got.Size, err, len(edited))
+	}
+	// Audit recorded the editor's write.
+	if n := len(sink.events); n == 0 || sink.events[n-1].Action != "kamara.file.version_written" {
+		t.Errorf("audit tail = %+v, want kamara.file.version_written", sink.events)
+	}
+}
+
+// A concurrent save that loses the ordinal race retries rather than failing
+// the user's save (ErrVersionConflict is internal, never surfaced).
+func TestWriteVersionRetriesOnConflict(t *testing.T) {
+	ctx := context.Background()
+	svc, _, repo, _, _, _, _ := newService(t)
+	alice := pii.Subject{Instance: "demo.example", UserID: "alice"}
+	o, _ := svc.Upload(ctx, alice, nil, "memo.odt", bytes.NewReader([]byte("v0")))
+
+	repo.injectConflicts = 2 // first two attempts lose the race
+	ver, err := svc.WriteVersion(ctx, alice, o.ID, bytes.NewReader([]byte("edited")))
+	if err != nil {
+		t.Fatalf("WriteVersion should retry through conflicts: %v", err)
+	}
+	if ver != "1" {
+		t.Errorf("version = %q, want \"1\"", ver)
+	}
+	if repo.injectConflicts != 0 {
+		t.Errorf("expected both injected conflicts consumed, %d left", repo.injectConflicts)
+	}
+}
+
+func TestWriteVersionUnauthorized(t *testing.T) {
+	ctx := context.Background()
+	svc, _, _, _, _, _, _ := newService(t)
+	alice := pii.Subject{Instance: "demo.example", UserID: "alice"}
+	mallory := pii.Subject{Instance: "demo.example", UserID: "mallory"}
+	o, _ := svc.Upload(ctx, alice, nil, "memo.odt", bytes.NewReader([]byte("x")))
+
+	if _, err := svc.WriteVersion(ctx, mallory, o.ID, bytes.NewReader([]byte("evil"))); !errors.Is(err, ErrForbidden) {
+		t.Errorf("WriteVersion by non-owner err = %v, want ErrForbidden", err)
+	}
+}
+
+type fakeRevoker struct{ revoked []string }
+
+func (f *fakeRevoker) Revoke(_ context.Context, id string) error {
+	f.revoked = append(f.revoked, id)
+	return nil
+}
+
+func TestDeleteRevokesSessions(t *testing.T) {
+	ctx := context.Background()
+	svc, _, _, _, _, _, _ := newService(t)
+	rev := &fakeRevoker{}
+	svc.SetSessionRevoker(rev)
+	alice := pii.Subject{Instance: "demo.example", UserID: "alice"}
+	o, _ := svc.Upload(ctx, alice, nil, "memo.odt", bytes.NewReader([]byte("x")))
+
+	if err := svc.Delete(ctx, alice, o.ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(rev.revoked) != 1 || rev.revoked[0] != o.ID {
+		t.Errorf("delete did not revoke sessions for %s: %v", o.ID, rev.revoked)
 	}
 }
 

@@ -762,33 +762,33 @@ interface. Remaining parameters below.
 apps" set — a field on the `Tenant` CR (e.g. `spec.apps: [office]`) that the
 reconciler reads to provision Collabora + Kamara's WOPI host only when
 enabled. Keeps the catalog a Go slice (ADR-0013) but adds the optional
-dimension; full catalog-as-data CRD stays deferred. >
+dimension; full catalog-as-data CRD stays deferred. > ok
 
 **R66. Kamara version-write path?** Rec: implement the **new-version write**
 (each save = a new version using the M4 `versions` table) and list versions
 in the already-stubbed drawer; restore/diff is a later add. Alternative:
-replace-only (overwrite, no history). >
+replace-only (overwrite, no history). >ok
 
 **R67. Co-editing scope for the DoD?** Rec: DoD = a single user opens → edits
 → saves → reopen shows the change; **build so real-time co-editing works**
-(same WOPI doc key) but don't gate the milestone on multi-user. >
+(same WOPI doc key) but don't gate the milestone on multi-user. >ok
 
 **R68. Collabora deployment + footprint?** Rec: per-tenant Collabora CODE
 container in the tenant namespace (a catalog app with a real resource
 request), WOPI allow-list scoped to that tenant's Kamara, behind the
 ADR-0016 NetworkPolicy (editor↔Kamara same-namespace + browser via ingress).
-Confirm the real footprint in the s0 spike. >
+Confirm the real footprint in the s0 spike. >ok
 
 **R69. WOPI auth?** Rec: Kamara mints a per-session opaque `access_token`
 scoped to (file, user, permissions, TTL) and validated against OpenFGA;
 Collabora presents it on every WOPI call, and Kamara optionally verifies
 Collabora's WOPI proof-key. No shared secret. (WOPI's session model keeps
 save-back within the live token window — cleaner than OnlyOffice's fully
-async callback.) >
+async callback.) >ok
 
 **R70. Fold in `#28`?** The engine fetches the doc via `GetFile`, so correct
 `Content-Type`/`Content-Disposition` (RFC 6266) + `fileType` are now on the
-critical path. Rec: fold #28 into the WOPI-host session. >
+critical path. Rec: fold #28 into the WOPI-host session. >ok
 
 **Task (not a decision):** verify CODE's real connection behaviour/cap in the
 s0 spike (OnlyOffice CE caps at 20 editing connections/instance; Collabora

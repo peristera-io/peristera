@@ -6,11 +6,12 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"strconv"
+	"strings"
 
 	"github.com/peristera-io/peristera/kamara/internal/api"
 	"github.com/peristera-io/peristera/kamara/internal/file"
 	"github.com/peristera-io/peristera/kamara/internal/web"
+	"github.com/peristera-io/peristera/kamara/internal/wopi"
 	"github.com/peristera-io/peristera/lib/oidcrp"
 	"github.com/peristera-io/peristera/lib/pii"
 )
@@ -22,7 +23,19 @@ type webApp struct {
 	svc      *file.Service
 	rp       *oidcrp.RelyingParty
 	instance string // the tenant domain (issuer host), the subject's instance
+	// Office editing (ADR-0018), set only when the tenant enabled the office
+	// engine. sessions mints the per-file WOPI access token; discovery resolves
+	// the engine's editor URL; wopiSrcBase is Kamara's own in-cluster base (the
+	// WOPISrc the engine fetches back). office is the engine's public URL (also
+	// the "is office on?" flag).
+	sessions    *wopi.Sessions
+	discovery   *wopi.Discovery
+	office      string
+	wopiSrcBase string
 }
+
+// officeEnabled reports whether the tenant has the office engine (ADR-0018).
+func (a *webApp) officeEnabled() bool { return a.office != "" }
 
 // routes are the guarded browser routes (mounted behind rp.Middleware). The
 // browser surface is cookie-authed end to end — it never links to the bearer
@@ -33,6 +46,7 @@ func (a *webApp) routes() http.Handler {
 	mux.HandleFunc("GET /browse", a.frag)                  // htmx fragment (folder navigation)
 	mux.HandleFunc("GET /files/{id}/download", a.download) // cookie-authed download
 	mux.HandleFunc("GET /files/{id}/details", a.details)   // details drawer fragment
+	mux.HandleFunc("GET /edit/{id}", a.edit)               // office editor page (ADR-0018)
 	// Mutations — POST forms (HTML forms are GET/POST only). CSRF is closed
 	// by the SameSite=Lax session cookie: a cross-site POST omits the cookie,
 	// so the request is unauthenticated and rejected. Each re-renders the
@@ -218,8 +232,8 @@ func (a *webApp) download(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, err)
 		return
 	}
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", "attachment; filename="+strconv.Quote(o.Name))
+	w.Header().Set("Content-Type", api.ContentType(o.ContentType))
+	w.Header().Set("Content-Disposition", api.ContentDisposition("attachment", o.Name))
 	if err := a.svc.Download(r.Context(), caller, id, w); err != nil {
 		// Status/bytes may be flushed; only log (a JSON error would corrupt
 		// the stream). Integrity errors are rare.
@@ -297,13 +311,82 @@ func (a *webApp) details(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	o, err := a.svc.Get(r.Context(), caller, r.PathValue("id"))
+	id := r.PathValue("id")
+	o, err := a.svc.Get(r.Context(), caller, id)
 	if err != nil {
 		a.fail(w, err)
 		return
 	}
+	versions, err := a.svc.ListVersions(r.Context(), caller, id)
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	latest := 0
+	if len(versions) > 0 { // ListVersions is newest-first
+		latest = versions[0].Ordinal
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = web.Details(w, o)
+	_ = web.Details(w, web.DetailView{Object: o, Versions: versions, Latest: latest, Office: a.officeEnabled()})
+}
+
+// edit renders the office editor page for a file: authorize, mint a per-session
+// WOPI access token, resolve the engine's editor URL, and return an
+// auto-submitting form that embeds the Collabora iframe (ADR-0018). The engine
+// then calls back to Kamara's /wopi host with the token.
+func (a *webApp) edit(w http.ResponseWriter, r *http.Request) {
+	caller, ok := a.caller(r)
+	if !ok {
+		http.Redirect(w, r, "/auth/login", http.StatusFound)
+		return
+	}
+	if !a.officeEnabled() {
+		http.Error(w, "office editing is not enabled", http.StatusNotFound)
+		return
+	}
+	id := r.PathValue("id")
+	o, err := a.svc.Get(r.Context(), caller, id) // authorizes + gives the name/type
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	// Mint an opaque, per-session token scoped to (file, user, write, TTL); the
+	// engine presents it on every WOPI call and Kamara re-checks OpenFGA.
+	// canWrite is true because only the owner can pass svc.Get today; once
+	// read-only shares exist (#33) this must derive write from the caller's
+	// grant, not hardcode it.
+	token, err := a.sessions.Mint(r.Context(), caller, id, true)
+	if err != nil {
+		log.Printf("kamara web: mint wopi token %s: %v", id, err)
+		http.Error(w, "could not open editor", http.StatusInternalServerError)
+		return
+	}
+	// WOPISrc is Kamara's own in-cluster address — the engine fetches it back
+	// intra-namespace (R68). Resolve the editor URL from the engine's discovery.
+	wopiSrc := a.wopiSrcBase + "/wopi/files/" + id
+	actionURL, err := a.discovery.EditURL(r.Context(), fileExt(o.Name), wopiSrc)
+	if err != nil {
+		log.Printf("kamara web: editor url for %s: %v", id, err)
+		http.Error(w, "no editor for this file type", http.StatusUnsupportedMediaType)
+		return
+	}
+	// The page body carries the WOPI access token — keep it out of any cache.
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = web.Editor(w, web.EditorView{
+		Name:           o.Name,
+		ActionURL:      actionURL,
+		AccessToken:    token,
+		AccessTokenTTL: 0, // 0 = the host does not expire the token client-side; server TTL governs
+	})
+}
+
+// fileExt returns a file name's extension without the dot ("" if none).
+func fileExt(name string) string {
+	if i := strings.LastIndexByte(name, '.'); i >= 0 && i < len(name)-1 {
+		return name[i+1:]
+	}
+	return ""
 }
 
 // fail maps a domain error to a status for the browser (plain, not JSON).

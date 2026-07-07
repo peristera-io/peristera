@@ -24,7 +24,12 @@ exceptions today:
 |---|---|---|
 | **Zitadel** | bootstrap, **all-in** | Auth bugs are security incidents; Entra ID/LDAP import machinery took others a decade. No abstraction-layer hedge — if Zitadel fails us, fallbacks (Ory, Keycloak) are worse fits. Accepted as a named risk. |
 | **OpenFGA** | **permanent** | Genuinely good, fits every constraint; ReBAC is exactly our domain. One instance per tenant namespace. |
-| **OnlyOffice** | bootstrap | Document co-editing must exist by the first public demo (M7; integrated at M6); an editor suite is a decade of work. Integrated behind a document-service interface, not absorbed. |
+| **Office engine** | bootstrap | Document co-editing must exist by the first public demo (M7; integrated at M6); an editor suite is a decade of work. Integrated behind a document-service interface, not absorbed. |
+
+> **Amended by [ADR-0018](0018-document-editing-collabora-wopi.md) (2026-07-06):**
+> the office-engine exception is realised with **Collabora Online (CODE)** via
+> WOPI (not OnlyOffice), deployed opt-in per tenant. OnlyOffice remains a valid
+> alternative behind the same document-service interface.
 
 Everything else — federation protocol, sync engine, control plane,
 collaboration engine — is built in-house. The federation protocol is

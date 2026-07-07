@@ -54,6 +54,16 @@ spec:
               (ADR-0007): it forms the tenant domain, which is the OIDC issuer and
               must never change.
             properties:
+              apps:
+                description: |-
+                  Apps is the set of optional catalog apps this tenant has enabled
+                  (ADR-0013 optional-per-tenant dimension, ADR-0018). Always-on apps are
+                  provisioned regardless; an optional app (e.g. "office", the Collabora
+                  engine) is provisioned only when named here, since it carries a real
+                  hardware cost. Editing the list enables or disables the feature.
+                items:
+                  type: string
+                type: array
               displayName:
                 description: DisplayName may change freely; it never appears in URLs
                   or domains.

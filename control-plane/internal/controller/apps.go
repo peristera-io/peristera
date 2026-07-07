@@ -46,7 +46,21 @@ type CatalogApp struct {
 	// service-topology graph (ADR-0016): the reconciler generates the
 	// per-tenant NetworkPolicy (and, later, the Zitadel audience grants)
 	// from it. Platform-uniform — the same graph in every tenant.
+	//
+	// For an External engine (below), Calls still feeds the network graph
+	// (e.g. office calls kamara over WOPI, so kamara's NetworkPolicy admits
+	// office) but does NOT provision an S2S identity — the engine authenticates
+	// with WOPI access tokens, not RFC-8693 token exchange.
 	Calls []string
+	// Optional makes the app opt-in per tenant (ADR-0013 optional dimension,
+	// ADR-0018): it is provisioned only when the tenant's Spec.Apps names it.
+	// Always-on apps (Optional=false) are provisioned for every tenant.
+	Optional bool
+	// External marks a third-party engine (Collabora), not a Peristera Go app.
+	// It has no OIDC client / database / OpenFGA / S2S contract; it is
+	// provisioned by ensureOffice with its own image, capabilities, and WOPI
+	// configuration. The standard app-provisioning path is skipped for it.
+	External bool
 }
 
 var catalog = []CatalogApp{
@@ -55,6 +69,23 @@ var catalog = []CatalogApp{
 		NeedsDatabase: true, NeedsOpenFGA: true, Calls: []string{"kamara"}},
 	{Name: "kamara", Image: "peristera-kamara:dev", Port: 5580,
 		NeedsDatabase: true, NeedsOpenFGA: true, NeedsBlob: true, NeedsDEK: true},
+	// The office engine (Collabora Online / CODE): opt-in per tenant, a
+	// third-party engine reached over WOPI (ADR-0018). Calls kamara so the
+	// network graph admits the editor→WOPI-host path; provisioned by
+	// ensureOffice, not the standard path.
+	{Name: "office", Image: "collabora/code:latest", Port: 9980,
+		Optional: true, External: true, Calls: []string{"kamara"}},
+}
+
+// tenantEnables reports whether the tenant has opted into the named optional
+// app (ADR-0018). Always-on apps ignore this.
+func tenantEnables(tenant *v1alpha1.Tenant, name string) bool {
+	for _, a := range tenant.Spec.Apps {
+		if a == name {
+			return true
+		}
+	}
+	return false
 }
 
 // callersOf returns the catalog apps that declare target in their Calls —
@@ -125,6 +156,19 @@ func (r *TenantReconciler) ensureApps(ctx context.Context, tenant *v1alpha1.Tena
 	}
 
 	for _, app := range catalog {
+		// Optional apps (ADR-0018) are provisioned only when the tenant opts in.
+		if app.Optional && !tenantEnables(tenant, app.Name) {
+			continue
+		}
+		// External engines (Collabora) don't use the Peristera OIDC/DB/OpenFGA
+		// contract; provision them on their own path and skip the rest.
+		if app.External {
+			if err := r.ensureOffice(ctx, tenant, ns, app); err != nil {
+				return err
+			}
+			continue
+		}
+
 		host := fmt.Sprintf("%s.%s", app.Name, r.tenantDomain(tenant))
 		publicURL := fmt.Sprintf("http://%s:%s", host, r.ExternalPort)
 		labels := map[string]string{
@@ -233,6 +277,19 @@ func (r *TenantReconciler) ensureApps(ctx context.Context, tenant *v1alpha1.Tena
 				}},
 			})
 			mounts = append(mounts, corev1.VolumeMount{Name: "s2s-key", MountPath: s2sKeyMountPath, ReadOnly: true})
+		}
+
+		// Office editing (ADR-0018): Kamara embeds the tenant's Collabora when
+		// the office app is enabled. It needs the engine's public URL (to fetch
+		// WOPI discovery and build the editor iframe) and its own in-cluster
+		// base (the WOPISrc the engine fetches back, intra-namespace). Injected
+		// only into kamara, only when office is on.
+		if app.Name == "kamara" && tenantEnables(tenant, "office") {
+			officeURL := fmt.Sprintf("http://office.%s:%s", r.tenantDomain(tenant), r.ExternalPort)
+			env = append(env,
+				corev1.EnvVar{Name: "OFFICE_URL", Value: officeURL},
+				corev1.EnvVar{Name: "WOPI_SRC_BASE", Value: fmt.Sprintf("http://kamara.%s.svc.cluster.local", ns)},
+			)
 		}
 
 		deploy := &appsv1.Deployment{

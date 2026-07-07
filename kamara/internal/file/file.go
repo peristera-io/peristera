@@ -11,6 +11,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/peristera-io/peristera/kamara/internal/blob"
@@ -47,6 +51,11 @@ var ErrNotFound = errors.New("file: not found")
 // The HTTP layer maps it to 403 (distinct from a 500 on a real failure).
 var ErrForbidden = errors.New("file: not authorized")
 
+// ErrVersionConflict is returned by InsertVersion when the object's next
+// ordinal was taken by a concurrent writer (the versions (object_id, ordinal)
+// unique constraint). WriteVersion retries on it; it never reaches the client.
+var ErrVersionConflict = errors.New("file: version ordinal conflict")
+
 // Object is a stored file (identity = UUIDv7, URLs carry it — ADR-0007).
 // FolderID is its location: nil means the owner's root (Kamara ADR-0002).
 type Object struct {
@@ -55,12 +64,25 @@ type Object struct {
 	Name     string
 	Size     int64
 	FolderID *string
-	Created  time.Time
-	Updated  time.Time
+	// ContentType is the file's MIME type, inferred from the name on upload
+	// (#28). Empty means unknown; the HTTP layer falls back to
+	// application/octet-stream.
+	ContentType string
+	Created     time.Time
+	Updated     time.Time
 }
 
 // Permalink is the canonical URL (stable across moves — ADR-0007).
 func (o Object) Permalink() string { return "/files/" + o.ID }
+
+// Version is one revision of an object (the versions table). Save-back from
+// the office engine appends a version (ADR-0018); the drawer lists them.
+type Version struct {
+	ID      string
+	Ordinal int
+	Size    int64
+	Created time.Time
+}
 
 // Repo is the object/version/chunk metadata persistence port (Postgres in
 // production, in-memory in tests). Chunk *bytes* live in the blob store,
@@ -75,9 +97,17 @@ type Repo interface {
 	// InsertVersion records a version and its manifest, upserting each
 	// chunk and incrementing its ref_count (cross-file/version dedup).
 	InsertVersion(ctx context.Context, objectID, versionID string, ordinal int, size int64, refs []engine.ChunkRef) error
-	// ManifestOf returns the ordered chunk refs of an object's current
-	// (only, for M4a) version.
+	// ManifestOf returns the ordered chunk refs of an object's latest version.
 	ManifestOf(ctx context.Context, objectID string) ([]engine.ChunkRef, error)
+	// MaxOrdinal returns the highest version ordinal for an object (ok=false
+	// when it has no versions — treated as not-found). Save-back writes
+	// ordinal+1 (ADR-0018).
+	MaxOrdinal(ctx context.Context, objectID string) (ordinal int, ok bool, err error)
+	// ListVersions returns an object's versions, newest first (for the drawer).
+	ListVersions(ctx context.Context, objectID string) ([]Version, error)
+	// SetObjectSize records a new latest-version size and bumps updated_at
+	// (called on save-back so the object reflects its newest version).
+	SetObjectSize(ctx context.Context, id string, size int64) error
 	// ChunkHashesOf returns every chunk hash the object references.
 	ChunkHashesOf(ctx context.Context, objectID string) ([]string, error)
 	// DecRef decrements ref_count for each hash and returns those that
@@ -134,14 +164,27 @@ type TxRunner interface {
 	Reader() Stores
 }
 
+// SessionRevoker drops any editing sessions bound to an object — an optional
+// hook so deleting a file proactively invalidates a live editor's WOPI token
+// (satisfied by *wopi.Sessions; kept an interface so the domain doesn't import
+// the wopi package). The per-call OpenFGA re-check already invalidates on
+// delete; this also clears the rows.
+type SessionRevoker interface {
+	Revoke(ctx context.Context, objectID string) error
+}
+
 // Service is the file domain.
 type Service struct {
-	tx     TxRunner
-	authz  Authorizer
-	blobs  blob.Store
-	cipher *crypto.Cipher
-	now    func() time.Time
+	tx      TxRunner
+	authz   Authorizer
+	blobs   blob.Store
+	cipher  *crypto.Cipher
+	revoker SessionRevoker
+	now     func() time.Time
 }
+
+// SetSessionRevoker wires the optional WOPI-session revoker (ADR-0018).
+func (s *Service) SetSessionRevoker(r SessionRevoker) { s.revoker = r }
 
 // NewService builds the service and registers the file personal-data
 // descriptor (ADR-0009). Pass pii.Default in production, a fresh registry
@@ -181,7 +224,8 @@ func (s *Service) Upload(ctx context.Context, owner pii.Subject, folderID *strin
 		return Object{}, err
 	}
 	now := s.now().UTC()
-	o := Object{ID: id.V7(), Owner: owner, Name: name, Size: total, FolderID: folderID, Created: now, Updated: now}
+	o := Object{ID: id.V7(), Owner: owner, Name: name, Size: total, FolderID: folderID,
+		ContentType: contentTypeOf(name), Created: now, Updated: now}
 	verID := id.V7()
 	if err := s.tx.InTx(ctx, func(st Stores) error {
 		if err := st.Objects.InsertObject(ctx, o); err != nil {
@@ -221,6 +265,66 @@ func (s *Service) Download(ctx context.Context, caller pii.Subject, objectID str
 		return err
 	}
 	return engine.Reassemble(ctx, refs, s.cipher, s.blobs, w)
+}
+
+// WriteVersion appends a new version of an existing object from r and returns
+// the new version's ordinal (as a string — the WOPI X-WOPI-ItemVersion). Used
+// by the office engine's save-back (ADR-0018): the file keeps its owner and
+// identity; each save is a new revision, and the acting user is recorded in
+// the audit event. Blob bytes are written durably first (like Upload), then
+// one transaction commits the version + manifest + the object's new size.
+func (s *Service) WriteVersion(ctx context.Context, caller pii.Subject, objectID string, r io.Reader) (string, error) {
+	if err := s.authorize(ctx, caller, objectID); err != nil {
+		return "", err
+	}
+	refs, total, err := engine.Ingest(ctx, r, s.cipher, s.blobs)
+	if err != nil {
+		return "", err
+	}
+	// The next ordinal is read then written; two concurrent saves (e.g.
+	// Collabora autosave racing save-on-close) can pick the same one and the
+	// loser hits the versions unique constraint. Retry rather than lose the
+	// save — each retry recomputes the ordinal, so the winner just gets N+2.
+	const maxAttempts = 5
+	var ordinal int
+	for attempt := 0; ; attempt++ {
+		verID := id.V7()
+		err := s.tx.InTx(ctx, func(st Stores) error {
+			maxOrd, ok, err := st.Objects.MaxOrdinal(ctx, objectID)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return ErrNotFound
+			}
+			ordinal = maxOrd + 1
+			if err := st.Objects.InsertVersion(ctx, objectID, verID, ordinal, total, refs); err != nil {
+				return err
+			}
+			if err := st.Objects.SetObjectSize(ctx, objectID, total); err != nil {
+				return err
+			}
+			return st.Audit.Emit(ctx, caller, "kamara.file.version_written",
+				audit.Object{Type: Type, ID: objectID, Permalink: "/files/" + objectID}, nil)
+		})
+		if err == nil {
+			break
+		}
+		if errors.Is(err, ErrVersionConflict) && attempt < maxAttempts-1 {
+			continue
+		}
+		return "", err
+	}
+	return strconv.Itoa(ordinal), nil
+}
+
+// ListVersions returns an object's versions (newest first) after an
+// authorization check — the data behind the details drawer's version list.
+func (s *Service) ListVersions(ctx context.Context, caller pii.Subject, objectID string) ([]Version, error) {
+	if err := s.authorize(ctx, caller, objectID); err != nil {
+		return nil, err
+	}
+	return s.tx.Reader().Objects.ListVersions(ctx, objectID)
 }
 
 // List returns the caller's files, permission-filtered through OpenFGA.
@@ -282,6 +386,11 @@ func (s *Service) Delete(ctx context.Context, caller pii.Subject, objectID strin
 		// a deleted file is harmless, reconciled like the owner-tuple seam).
 		_ = s.authz.DeleteObjectTuple(ctx, folderObj(*folderID), ParentRelation, obj(objectID))
 	}
+	// Proactively drop any editing sessions for the now-deleted file (ADR-0018;
+	// best-effort — the per-call OpenFGA re-check already invalidates them).
+	if s.revoker != nil {
+		_ = s.revoker.Revoke(ctx, objectID)
+	}
 	return s.authz.Delete(ctx, caller, Relation, obj(objectID))
 }
 
@@ -298,6 +407,18 @@ func (s *Service) Get(ctx context.Context, caller pii.Subject, objectID string) 
 		return Object{}, ErrNotFound
 	}
 	return o, nil
+}
+
+// contentTypeOf infers a MIME type from a file name's extension (#28). It
+// returns "" when unknown; the HTTP layer falls back to octet-stream. The
+// charset suffix mime adds (e.g. "; charset=utf-8") is dropped — WOPI/office
+// engines want the bare type.
+func contentTypeOf(name string) string {
+	ct := mime.TypeByExtension(filepath.Ext(name))
+	if i := strings.IndexByte(ct, ';'); i >= 0 {
+		ct = ct[:i]
+	}
+	return strings.TrimSpace(ct)
 }
 
 func (s *Service) authorize(ctx context.Context, caller pii.Subject, objectID string) error {

@@ -44,7 +44,8 @@ var msg = map[string]string{
 	"create": "Create", "move_to": "Move to", "confirm_delete": "Delete this item?",
 	"location": "Location", "permalink": "Link", "created": "Created",
 	"versions": "Versions", "versions_soon": "Version history is coming soon.",
-	"close": "Close",
+	"close": "Close", "edit_office": "Edit in office", "no_versions": "No versions yet.",
+	"version_current": "current", "editor": "Editor", "back_to_files": "Back to files",
 }
 
 var funcs = template.FuncMap{
@@ -104,7 +105,27 @@ type View struct {
 	Inline bool
 	// Drawer, when set, pre-renders the details drawer open — used by the
 	// a11y render so the drawer markup is checked in context.
-	Drawer *file.Object
+	Drawer *DetailView
+}
+
+// DetailView is the details-drawer model: the file, its versions (newest
+// first), the current (latest) ordinal for the "current" marker, and whether
+// the office engine is enabled (to show the Edit button, ADR-0018).
+type DetailView struct {
+	Object   file.Object
+	Versions []file.Version
+	Latest   int
+	Office   bool
+}
+
+// EditorView is the /edit page model: the auto-submitting WOPI form that
+// embeds the office engine (ADR-0018). ActionURL is the engine editor URL
+// (carrying WOPISrc); AccessTokenTTL is epoch milliseconds per the WOPI spec.
+type EditorView struct {
+	Name           string
+	ActionURL      string
+	AccessToken    string
+	AccessTokenTTL int64
 }
 
 // Here is the id of the folder currently shown ("" = root).
@@ -225,11 +246,15 @@ var pageTmpl = template.Must(template.New("page").Funcs(funcs).Parse(`<!doctype 
 {{end}}
 
 {{define "details"}}
+{{with .Object}}
 <div role="region" aria-label="{{.Name}}" tabindex="-1" data-drawer class="fixed inset-y-0 right-0 w-80 max-w-full overflow-y-auto border-l border-stone-200 bg-white p-4 shadow-lg">
  <div class="flex items-start justify-between gap-2">
   <h2 class="text-lg font-semibold text-stone-900">{{.Name}}</h2>
   <button onclick="this.closest('#drawer').innerHTML=''" class="text-sm text-stone-600 underline" aria-label="{{msg "close"}}">✕</button>
  </div>
+ {{if $.Office}}
+ <a href="/edit/{{.ID}}" class="mt-4 inline-block rounded-base bg-brand px-3 py-1.5 text-sm font-medium text-white hover:opacity-90">{{msg "edit_office"}}</a>
+ {{end}}
  <dl class="mt-4 space-y-3 text-sm">
   <div><dt class="text-stone-500">{{msg "size"}}</dt><dd class="text-stone-900">{{bytes .Size}}</dd></div>
   <div><dt class="text-stone-500">{{msg "created"}}</dt><dd class="text-stone-900">{{.Created.Format "2006-01-02 15:04"}}</dd></div>
@@ -238,12 +263,42 @@ var pageTmpl = template.Must(template.New("page").Funcs(funcs).Parse(`<!doctype 
   <div><dt class="text-stone-500">{{msg "permalink"}}</dt>
    <dd><a href="{{.Permalink}}" class="text-brand underline break-all">{{.Permalink}}</a></dd></div>
  </dl>
+{{end}}
  <section class="mt-6">
   <h3 class="text-sm font-semibold text-stone-700">{{msg "versions"}}</h3>
-  <p class="mt-1 text-sm text-stone-500">{{msg "versions_soon"}}</p>
+  {{if .Versions}}
+  <ol class="mt-2 space-y-1 text-sm">
+   {{range .Versions}}
+   <li class="flex justify-between text-stone-700">
+    <span>v{{.Ordinal}}{{if eq .Ordinal $.Latest}} · {{msg "version_current"}}{{end}}</span>
+    <span class="text-stone-500">{{bytes .Size}} · {{.Created.Format "2006-01-02 15:04"}}</span>
+   </li>
+   {{end}}
+  </ol>
+  {{else}}
+  <p class="mt-1 text-sm text-stone-500">{{msg "no_versions"}}</p>
+  {{end}}
  </section>
 </div>
-{{end}}`))
+{{end}}
+
+{{define "editor"}}<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Name}} — {{msg "editor"}}</title>
+<style>html,body{margin:0;height:100%}#office_frame{width:100%;height:100vh;border:0;display:block}
+.bar{font:14px system-ui;padding:6px 12px;background:#fafaf9;border-bottom:1px solid #e7e5e4}
+.bar a{color:#0369a1;text-decoration:none}</style>
+</head>
+<body>
+<div class="bar"><a href="/">← {{msg "back_to_files"}}</a> · {{.Name}}</div>
+<form id="office_form" method="post" target="office_frame" action="{{.ActionURL}}">
+ <input type="hidden" name="access_token" value="{{.AccessToken}}">
+ <input type="hidden" name="access_token_ttl" value="{{.AccessTokenTTL}}">
+</form>
+<iframe id="office_frame" name="office_frame" allow="clipboard-read; clipboard-write"></iframe>
+<script>document.getElementById('office_form').submit();</script>
+</body></html>{{end}}`))
 
 // Page renders the whole document for a folder listing.
 func Page(w io.Writer, v View) error { return pageTmpl.Execute(w, v) }
@@ -252,4 +307,8 @@ func Page(w io.Writer, v View) error { return pageTmpl.Execute(w, v) }
 func Listing(w io.Writer, v View) error { return pageTmpl.ExecuteTemplate(w, "listing", v) }
 
 // Details renders the file-details drawer fragment.
-func Details(w io.Writer, o file.Object) error { return pageTmpl.ExecuteTemplate(w, "details", o) }
+func Details(w io.Writer, v DetailView) error { return pageTmpl.ExecuteTemplate(w, "details", v) }
+
+// Editor renders the /edit page: an auto-submitting form that embeds the
+// office engine's iframe with a WOPI access token (ADR-0018).
+func Editor(w io.Writer, v EditorView) error { return pageTmpl.ExecuteTemplate(w, "editor", v) }
