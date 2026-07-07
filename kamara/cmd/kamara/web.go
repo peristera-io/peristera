@@ -352,6 +352,9 @@ func (a *webApp) edit(w http.ResponseWriter, r *http.Request) {
 	}
 	// Mint an opaque, per-session token scoped to (file, user, write, TTL); the
 	// engine presents it on every WOPI call and Kamara re-checks OpenFGA.
+	// canWrite is true because only the owner can pass svc.Get today; once
+	// read-only shares exist (#33) this must derive write from the caller's
+	// grant, not hardcode it.
 	token, err := a.sessions.Mint(r.Context(), caller, id, true)
 	if err != nil {
 		log.Printf("kamara web: mint wopi token %s: %v", id, err)
@@ -367,6 +370,8 @@ func (a *webApp) edit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no editor for this file type", http.StatusUnsupportedMediaType)
 		return
 	}
+	// The page body carries the WOPI access token — keep it out of any cache.
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = web.Editor(w, web.EditorView{
 		Name:           o.Name,
