@@ -1,0 +1,53 @@
+name: images
+
+# Build and push the app images to GitHub Container Registry so the cloud
+# cluster can pull them (dev still uses `k3d image import`). amd64 only — the
+# Scaleway nodes are x64 (dev builds arm64 locally). M7 s0.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { app: control-plane, dockerfile: control-plane/Dockerfile }
+          - { app: kamara, dockerfile: kamara/Dockerfile }
+          - { app: ergonomos, dockerfile: ergonomos/Dockerfile }
+          - { app: stub, dockerfile: iam/Dockerfile }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/peristera-io/${{ matrix.app }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=ref,event=tag
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=main-,enable={{is_default_branch}}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

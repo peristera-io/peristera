@@ -26,6 +26,26 @@ func TestOfficeCatalogEntry(t *testing.T) {
 	}
 }
 
+func TestImageFor(t *testing.T) {
+	kamara := CatalogApp{Name: "kamara"}
+	office := CatalogApp{Name: "office", Image: "collabora/code:latest"}
+
+	// dev default (no prefix/tag configured)
+	dev := &TenantReconciler{}
+	if got := dev.imageFor(kamara); got != "peristera-kamara:dev" {
+		t.Errorf("dev image = %q, want peristera-kamara:dev", got)
+	}
+	// cloud (ghcr)
+	cloud := &TenantReconciler{ImagePrefix: "ghcr.io/peristera-io/", ImageTag: "v1.2.3"}
+	if got := cloud.imageFor(kamara); got != "ghcr.io/peristera-io/kamara:v1.2.3" {
+		t.Errorf("cloud image = %q, want ghcr.io/peristera-io/kamara:v1.2.3", got)
+	}
+	// external engine keeps its literal image regardless of config
+	if got := cloud.imageFor(office); got != "collabora/code:latest" {
+		t.Errorf("external image = %q, want collabora/code:latest", got)
+	}
+}
+
 func TestTenantEnables(t *testing.T) {
 	tn := &v1alpha1.Tenant{Spec: v1alpha1.TenantSpec{Apps: []string{"office"}}}
 	if !tenantEnables(tn, "office") {

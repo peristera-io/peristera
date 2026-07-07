@@ -40,6 +40,11 @@ type TenantReconciler struct {
 	// (dev: 127.0.0.1.sslip.io); ExternalPort its public port.
 	BaseDomain   string
 	ExternalPort string
+	// ImagePrefix + ImageTag resolve catalog app images (M7 s0): dev
+	// "peristera-" / "dev" (k3d-imported), cloud "ghcr.io/peristera-io/" /
+	// "<version>" (pulled).
+	ImagePrefix string
+	ImageTag    string
 	// LoginDomain is the deployment's ExternalDomain — every new
 	// instance must trust it or the shared Login v2 cannot serve it.
 	LoginDomain string

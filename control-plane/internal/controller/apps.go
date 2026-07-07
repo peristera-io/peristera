@@ -63,11 +63,15 @@ type CatalogApp struct {
 	External bool
 }
 
+// The images of our own apps are resolved from the reconciler's ImagePrefix +
+// name + ImageTag (M7 s0), so the same catalog works in dev (peristera-<app>:dev,
+// k3d-imported) and on the cloud (ghcr.io/peristera-io/<app>:<tag>, pulled).
+// External engines (office) carry a literal upstream Image.
 var catalog = []CatalogApp{
-	{Name: "stub", Image: "peristera-stub:dev", Port: 5556},
-	{Name: "ergonomos", Image: "peristera-ergonomos:dev", Port: 5570,
+	{Name: "stub", Port: 5556},
+	{Name: "ergonomos", Port: 5570,
 		NeedsDatabase: true, NeedsOpenFGA: true, Calls: []string{"kamara"}},
-	{Name: "kamara", Image: "peristera-kamara:dev", Port: 5580,
+	{Name: "kamara", Port: 5580,
 		NeedsDatabase: true, NeedsOpenFGA: true, NeedsBlob: true, NeedsDEK: true},
 	// The office engine (Collabora Online / CODE): opt-in per tenant, a
 	// third-party engine reached over WOPI (ADR-0018). Calls kamara so the
@@ -75,6 +79,24 @@ var catalog = []CatalogApp{
 	// ensureOffice, not the standard path.
 	{Name: "office", Image: "collabora/code:latest", Port: 9980,
 		Optional: true, External: true, Calls: []string{"kamara"}},
+}
+
+// imageFor resolves a catalog app's container image. An app with a literal
+// Image (external engines) uses it verbatim; ours is
+// `<ImagePrefix><name>:<ImageTag>` — dev "peristera-kamara:dev",
+// cloud "ghcr.io/peristera-io/kamara:<tag>".
+func (r *TenantReconciler) imageFor(app CatalogApp) string {
+	if app.Image != "" {
+		return app.Image
+	}
+	prefix, tag := r.ImagePrefix, r.ImageTag
+	if prefix == "" {
+		prefix = "peristera-"
+	}
+	if tag == "" {
+		tag = "dev"
+	}
+	return prefix + app.Name + ":" + tag
 }
 
 // tenantEnables reports whether the tenant has opted into the named optional
@@ -306,7 +328,7 @@ func (r *TenantReconciler) ensureApps(ctx context.Context, tenant *v1alpha1.Tena
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{{
 						Name:            app.Name,
-						Image:           app.Image,
+						Image:           r.imageFor(app),
 						ImagePullPolicy: corev1.PullIfNotPresent,
 						Ports:           []corev1.ContainerPort{{ContainerPort: app.Port}},
 						Env:             env,
