@@ -1,10 +1,54 @@
 package server
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"testing"
+
+	"github.com/peristera-io/peristera/lib/pii"
 )
+
+// fakeAuthz records writes and answers Check from what's been written.
+type fakeAuthz struct {
+	tuples map[string]bool
+	writes int
+}
+
+func tkey(u pii.Subject, rel, obj string) string { return u.String() + "|" + rel + "|" + obj }
+
+func (f *fakeAuthz) Check(_ context.Context, u pii.Subject, rel, obj string) (bool, error) {
+	return f.tuples[tkey(u, rel, obj)], nil
+}
+func (f *fakeAuthz) Write(_ context.Context, u pii.Subject, rel, obj string) error {
+	f.writes++
+	f.tuples[tkey(u, rel, obj)] = true
+	return nil
+}
+
+// The HIGH review finding: seeding must be idempotent so a control-plane
+// restart against an already-seeded (separate, possibly still-up) OpenFGA does
+// not crash on a duplicate-tuple write.
+func TestSeedOperatorsIdempotent(t *testing.T) {
+	fa := &fakeAuthz{tuples: map[string]bool{}}
+	s := &Server{authz: fa, Cfg: Config{
+		Issuer:       "http://iam.example:9080",
+		OperatorSubs: []string{"sub1", "sub2"},
+	}}
+	if err := s.seedOperators(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if fa.writes != 2 {
+		t.Fatalf("first seed writes = %d, want 2", fa.writes)
+	}
+	// Re-seed (a restart): every tuple already exists, so no new writes.
+	if err := s.seedOperators(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if fa.writes != 2 {
+		t.Errorf("re-seed writes = %d, want 2 (must be idempotent)", fa.writes)
+	}
+}
 
 func mkJWT(aud any) string {
 	hdr := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256"}`))

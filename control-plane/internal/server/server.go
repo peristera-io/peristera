@@ -42,8 +42,15 @@ type Server struct {
 
 	rp       *oidcrp.RelyingParty // browser flow (shared, lib/oidcrp)
 	tokens   *tokenCache          // bearer-token validation cache (API path)
-	authz    *authz.Client        // platform operator authorization (ADR-0019)
+	authz    authorizer           // platform operator authorization (ADR-0019)
 	clientID string               // our own OIDC client id (bearer audience)
+}
+
+// authorizer is the operator-authorization surface the server needs (satisfied
+// by *authz.Client; an interface so seeding is testable).
+type authorizer interface {
+	Check(ctx context.Context, user pii.Subject, relation, object string) (bool, error)
+	Write(ctx context.Context, user pii.Subject, relation, object string) error
 }
 
 // NeedLeaderElection: the UI/API serves on every replica; only the
@@ -72,16 +79,14 @@ func (s *Server) Start(ctx context.Context) error {
 	// the operator model, and seed the bootstrap operators so the first
 	// operator is never locked out. The store is in-memory and re-seeded here
 	// on every startup.
-	s.authz, err = authz.Connect(ctx, s.Cfg.OpenFGAURL, "control-plane", operatorModel,
+	client, err := authz.Connect(ctx, s.Cfg.OpenFGAURL, "control-plane", operatorModel,
 		authz.WithToken(s.Cfg.OpenFGAToken))
 	if err != nil {
 		return fmt.Errorf("operator authz: %w", err)
 	}
-	inst := issuerHost(s.Cfg.Issuer)
-	for _, sub := range s.Cfg.OperatorSubs {
-		if err := s.authz.Write(ctx, pii.Subject{Instance: inst, UserID: sub}, operatorRelation, platformObject); err != nil {
-			return fmt.Errorf("seeding operator %s: %w", sub, err)
-		}
+	s.authz = client
+	if err := s.seedOperators(ctx); err != nil {
+		return err
 	}
 	if len(s.Cfg.OperatorSubs) == 0 {
 		lg.Info("WARNING: no OPERATOR_SUBJECTS seeded — no one can operate the control plane (ADR-0019)")

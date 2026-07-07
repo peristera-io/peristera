@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -44,6 +45,29 @@ func newTokenCache(ttl time.Duration) *tokenCache {
 func (t *tokenCache) get(tok string) (pii.Subject, bool) { return t.store.Get(tok) }
 func (t *tokenCache) put(tok string, s pii.Subject)      { t.store.Put(tok, s) }
 
+// seedOperators writes the bootstrap operator tuples (ADR-0019). It is
+// idempotent: it checks each subject first and only writes if the tuple is
+// absent, so a control-plane restart against an already-seeded OpenFGA (the
+// platform store is a separate Deployment that may outlive us) does not fail on
+// a duplicate write.
+func (s *Server) seedOperators(ctx context.Context) error {
+	inst := issuerHost(s.Cfg.Issuer)
+	for _, sub := range s.Cfg.OperatorSubs {
+		subject := pii.Subject{Instance: inst, UserID: sub}
+		ok, err := s.authz.Check(ctx, subject, operatorRelation, platformObject)
+		if err != nil {
+			return fmt.Errorf("checking operator %s: %w", sub, err)
+		}
+		if ok {
+			continue // already an operator
+		}
+		if err := s.authz.Write(ctx, subject, operatorRelation, platformObject); err != nil {
+			return fmt.Errorf("seeding operator %s: %w", sub, err)
+		}
+	}
+	return nil
+}
+
 // requireAuth guards a handler with the two ADR-0019 gates: the request must
 // resolve to a subject whose credential is *for* the control plane (audience),
 // and that subject must be an operator in the platform OpenFGA. A missing
@@ -58,12 +82,12 @@ func (s *Server) requireAuth(next http.Handler, isAPI bool) http.Handler {
 		allowed, err := s.authz.Check(r.Context(), subject, operatorRelation, platformObject)
 		if err != nil {
 			// Authorization store unreachable — fail closed, don't leak detail.
-			s.writeStatus(w, http.StatusBadGateway, "authorization unavailable")
+			s.deny(w, isAPI, http.StatusBadGateway, "authorization unavailable")
 			return
 		}
 		if !allowed {
 			// Authenticated, but not an operator.
-			s.writeStatus(w, http.StatusForbidden, "not authorized as an operator")
+			s.deny(w, isAPI, http.StatusForbidden, "not authorized as an operator")
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -105,6 +129,16 @@ func (s *Server) denyUnauthenticated(w http.ResponseWriter, r *http.Request, isA
 		return
 	}
 	http.Redirect(w, r, "/auth/login", http.StatusFound)
+}
+
+// deny writes a JSON error for the API and a plain-text one for the browser
+// (a raw JSON body is an unfriendly page for a logged-in non-operator).
+func (s *Server) deny(w http.ResponseWriter, isAPI bool, code int, msg string) {
+	if isAPI {
+		s.writeStatus(w, code, msg)
+		return
+	}
+	http.Error(w, msg, code)
 }
 
 func (s *Server) writeStatus(w http.ResponseWriter, code int, msg string) {

@@ -67,10 +67,11 @@ control plane (audience), and its subject must be an *operator* (OpenFGA).**
 
 ## Consequences
 
-- The control plane gains a dependency: a platform OpenFGA (CNPG-backed,
-  preshared-key auth, `NetworkPolicy`-fronted — the same shape as the
-  per-tenant deployment, ADR-0016/0010). Provisioned by the platform manifests
-  (`hack/dev-cluster.sh`), not the tenant reconciler.
+- The control plane gains a dependency: a platform OpenFGA (in-memory
+  datastore, preshared-key auth, `NetworkPolicy`-fronted so only the control
+  plane may reach it — ADR-0016/0010). Provisioned by the platform manifests
+  (`hack/dev-cluster.sh`), not the tenant reconciler. Because it is fail-closed,
+  the control plane is unavailable while the platform OpenFGA is down.
 - **Lock-out is real:** an empty `OPERATOR_SUBJECTS` on a fresh deployment
   means no one can operate. The seed is mandatory in production; document it.
 - The bearer path now introspects (a call per distinct token, cached briefly)

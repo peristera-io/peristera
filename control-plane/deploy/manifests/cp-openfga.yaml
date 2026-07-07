@@ -54,3 +54,21 @@ spec:
   selector: { app.kubernetes.io/name: cp-openfga }
   ports:
     - { name: http, port: 8080, targetPort: 8080 }
+---
+# Only the control plane may reach the platform OpenFGA (ADR-0019). Tenant
+# namespaces already can't (their egress is same-namespace only); this fronts
+# it in peristera-system too, as defense-in-depth beside the preshared key.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cp-openfga
+  namespace: peristera-system
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/name: cp-openfga } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app.kubernetes.io/name: control-plane } }
+      ports:
+        - { protocol: TCP, port: 8080 }
+        - { protocol: TCP, port: 8081 }
