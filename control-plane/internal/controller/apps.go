@@ -292,25 +292,36 @@ func (r *TenantReconciler) ensureApps(ctx context.Context, tenant *v1alpha1.Tena
 			)
 		}
 
-		deploy := &appsv1.Deployment{
-			ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: ns, Labels: labels},
-			Spec: appsv1.DeploymentSpec{
-				Selector: &metav1.LabelSelector{MatchLabels: labels},
-				Template: corev1.PodTemplateSpec{
-					ObjectMeta: metav1.ObjectMeta{Labels: labels},
-					Spec: corev1.PodSpec{
-						Containers: []corev1.Container{{
-							Name:            app.Name,
-							Image:           app.Image,
-							ImagePullPolicy: corev1.PullIfNotPresent,
-							Ports:           []corev1.ContainerPort{{ContainerPort: app.Port}},
-							Env:             env,
-							VolumeMounts:    mounts,
-						}},
-						Volumes: volumes,
-					},
+		// A blob-backed app owns a ReadWriteOnce PVC (#30): the default rolling
+		// update would start the new pod while the old still holds the volume,
+		// so it either wedges on multi-attach or (same node) two writers race
+		// the chunk store. Recreate (stop-then-start) + a single replica keeps
+		// exactly one writer. Stateless apps keep the default rolling update.
+		replicas := int32(1)
+		deploySpec := appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			Selector: &metav1.LabelSelector{MatchLabels: labels},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: labels},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{
+						Name:            app.Name,
+						Image:           app.Image,
+						ImagePullPolicy: corev1.PullIfNotPresent,
+						Ports:           []corev1.ContainerPort{{ContainerPort: app.Port}},
+						Env:             env,
+						VolumeMounts:    mounts,
+					}},
+					Volumes: volumes,
 				},
 			},
+		}
+		if app.NeedsBlob {
+			deploySpec.Strategy = appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}
+		}
+		deploy := &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: ns, Labels: labels},
+			Spec:       deploySpec,
 		}
 		svc := &corev1.Service{
 			ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: ns, Labels: labels},
