@@ -1,15 +1,17 @@
 # In-cluster DNS override so pods resolve the platform's public hostnames to
 # the cluster-internal Traefik instead of hairpinning out to the node's own
 # Flexible IP (which Scaleway may not NAT-loopback). The control plane calls
-# https://iam.${DOMAIN} from inside the cluster to validate operator tokens and
-# drive the Zitadel System API — this keeps that traffic internal. Traefik
-# still serves the real Let's Encrypt cert by SNI, so TLS validates.
+# https://iam.${DOMAIN} (operator tokens, System API) and every tenant issuer
+# https://<slug>.${DOMAIN} (DiscoveryAlive, app token validation) from inside
+# the cluster — this keeps that traffic internal. Traefik still serves the real
+# Let's Encrypt cert by SNI, so TLS validates.
 #
-# This is the cloud twin of iam/deploy/dev/coredns-sslip.yaml (dev rewrites
-# *.sslip.io the same way). k3s imports `*.override` ConfigMap keys into the
-# default CoreDNS server block; the rewrite plugin runs early in the chain
-# regardless of textual position. s2 extends this to tenant issuer hosts
-# (<tenant>.${DOMAIN}) when tenants start resolving each other in-cluster.
+# The regex rewrites the WHOLE ${DOMAIN} zone (cp, iam, and every tenant/app
+# host) to Traefik in one rule — `answer auto` restores the original name in
+# the response so callers still see the host they asked for. Cloud twin of
+# iam/deploy/dev/coredns-sslip.yaml (dev rewrites *.sslip.io the same way). k3s
+# imports `*.override` ConfigMap keys into the default CoreDNS server block; the
+# rewrite plugin runs early in the chain regardless of textual position.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -17,5 +19,4 @@ metadata:
   namespace: kube-system
 data:
   peristera.override: |
-    rewrite name iam.${DOMAIN} traefik.kube-system.svc.cluster.local
-    rewrite name cp.${DOMAIN} traefik.kube-system.svc.cluster.local
+    rewrite name regex (.*)\.${DOMAIN} traefik.kube-system.svc.cluster.local answer auto

@@ -726,3 +726,39 @@ override + operator authZ), while no-token → 401 and non-operator → 403. The
 CoreDNS hairpin override and ESO secret chain both worked first try. **M7 s1
 complete.** Next: s2 — first operator provisions one tenant on real per-host
 TLS.
+
+## 2026-07-07 — M7 s2 (tenant TLS, reconciler code — offline, verify pending)
+
+Root cause of the s1 tenant stall (found by creating a test tenant on the live
+platform): `provisionIAM` blocks at `DiscoveryAlive(issuer)` — the control
+plane polls `https://<slug>.peristera.app/.well-known/openid-configuration`,
+which never answers because that host has no ingress/DNS/cert. (Dev doesn't hit
+this: Zitadel's chart `*.<domain>` wildcard ingress covers tenant hosts, but
+HTTP-01 can't issue a wildcard, so the cloud needs per-tenant ingresses.)
+
+s2 wires it (branch `m7-s2-tenant-tls`, offline + unit-tested; **live verify is
+the next, meter-spending step**):
+
+- **Reconciler TLS config** (`TenantReconciler.TLSIssuer`, env
+  `TENANT_TLS_ISSUER`; empty = dev/plain-http, `letsencrypt-prod` = cloud).
+  New `internal/controller/ingress.go`: `ingressAnnotations`/`ingressTLS`
+  helpers (cert-manager cluster-issuer annotation + per-host `tls` block, both
+  no-ops in dev) and a **per-tenant issuer ingress** (`issuerIngress` builder +
+  `ensureIssuerIngress`) — publishes `<slug>.<domain>` in the platform
+  namespace, routing `/ui/v2/login`→`zitadel-login:3000` and `/`→`zitadel:8080`
+  (mirrors the shared platform ingress), owned by the cluster-scoped Tenant so
+  it's GC'd on off-boarding. Created early in `provisionIAM` so the cert can
+  issue before `DiscoveryAlive` needs the host. App + office ingresses gain the
+  same annotation + `tls` block.
+- **CoreDNS override widened** to a regex over the whole `${DOMAIN}` zone
+  (`rewrite name regex (.*)\.<domain> traefik… answer auto`) so every tenant
+  issuer + app host resolves to internal Traefik (no NAT hairpin), replacing the
+  two exact cp/iam rules. Control-plane cloud manifest gets
+  `TENANT_TLS_ISSUER=letsencrypt-prod`.
+- Dev unchanged (empty issuer → no annotations/TLS/issuer-ingress; the wildcard
+  chart ingress still serves tenant hosts). `go build`/`vet` clean, controller
+  tests green (`TestIngressTLSGating`, `TestIssuerIngress`).
+
+**Verify (next, meter):** re-apply to the node, provision one tenant, confirm
+`https://<app>.<slug>.peristera.app` on real per-host certs end to end — the M7
+acceptance.

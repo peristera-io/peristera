@@ -48,6 +48,12 @@ type TenantReconciler struct {
 	// cloud with real certs. The tenant issuer is a public URL and must equal
 	// the token `iss`, so this is load-bearing for OIDC.
 	URLScheme string
+	// TLSIssuer is the cert-manager ClusterIssuer name for per-host tenant
+	// certs (M7 s2): "letsencrypt-prod" on the cloud, empty in dev (Traefik
+	// serves plain http and Zitadel's wildcard ingress covers tenant hosts).
+	// When set, tenant issuer + app ingresses get a cert-manager annotation +
+	// TLS block, and the tenant issuer host gets its own ingress.
+	TLSIssuer string
 	// LoginDomain is the deployment's ExternalDomain — every new
 	// instance must trust it or the shared Login v2 cannot serve it.
 	LoginDomain string
@@ -185,6 +191,14 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 func (r *TenantReconciler) provisionIAM(ctx context.Context, tenant *v1alpha1.Tenant) (bool, time.Duration, error) {
 	lg := log.FromContext(ctx)
 	domain, issuer := r.tenantDomain(tenant), r.tenantIssuer(tenant)
+
+	// Publish the issuer host over real TLS (cloud) before anything tries to
+	// reach it: DiscoveryAlive below polls https://<issuer>, which only answers
+	// once this ingress exists, external-dns has a record, and cert-manager has
+	// issued the per-host cert. No-op in dev.
+	if err := r.ensureIssuerIngress(ctx, tenant); err != nil {
+		return false, 0, err
+	}
 
 	if tenant.Status.InstanceID == "" {
 		id, err := r.IAM.InstanceIDByDomain(ctx, domain) // adopt strays
