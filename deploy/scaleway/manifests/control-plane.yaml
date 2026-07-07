@@ -145,7 +145,11 @@ metadata:
   name: control-plane
   namespace: peristera-system
   annotations:
-    traefik.ingress.kubernetes.io/router.priority: "1000"
+    # No router.priority here (unlike dev): on the public domain nothing else
+    # claims cp.<domain>, and a high priority would capture the ACME HTTP-01
+    # challenge path (/.well-known/acme-challenge/*) before cert-manager's
+    # solver, blocking issuance. Dev needs it only to outrank Zitadel's
+    # *.sslip.io wildcard, which does not exist here.
     cert-manager.io/cluster-issuer: letsencrypt-prod
 spec:
   ingressClassName: traefik

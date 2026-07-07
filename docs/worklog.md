@@ -700,5 +700,29 @@ Peristera onto the public internet (Scaleway/k3s, OpenTofu). Plan
 
 **Scope line:** s1 = platform (cp + iam) on TLS. Per-tenant TLS (each tenant's
 Zitadel-issuer + app ingresses getting their own per-host certs) is **s2**
-control-plane work, on the `TENANT_SCHEME=https` knob wired here. Next: present
-`tofu plan` + costs, then `apply` + verify the platform on real certs.
+control-plane work, on the `TENANT_SCHEME=https` knob wired here.
+
+**Applied + verified live (2026-07-07).** `tofu apply` (18 resources, node
+`51.15.210.70`, firewall locked to the operator IP) → `bootstrap.sh` brought up
+the whole stack. Two cloud-only bugs surfaced during apply and were fixed
+(committed):
+
+- **System-user key format.** The control plane parses the key with
+  `x509.ParsePKCS8PrivateKey`; `tls_private_key.private_key_pem` is PKCS#1 for
+  RSA → crashloop. Fixed by storing `private_key_pem_pkcs8` (dev's openssl key
+  is PKCS#8, so dev never hit it). Same key material — the issued cert stays
+  valid.
+- **ACME challenge misrouted.** The control-plane Ingress carried dev's
+  `router.priority: "1000"` (there to outrank Zitadel's `*.sslip.io` wildcard);
+  on the public domain nothing competes for `cp.<domain>`, and the high
+  priority captured `/.well-known/acme-challenge/*` before cert-manager's
+  solver — so `iam` got a cert but `cp` didn't. Dropped the annotation.
+
+Verified end to end: `https://cp.peristera.app` + `https://iam.peristera.app`
+serve real Let's Encrypt certs (issuer `O=Let's Encrypt`); Zitadel OIDC
+discovery 200; the seeded operator's PAT gets **200** from
+`GET /api/v1/tenants` (proving control-plane→Zitadel hairpin over the CoreDNS
+override + operator authZ), while no-token → 401 and non-operator → 403. The
+CoreDNS hairpin override and ESO secret chain both worked first try. **M7 s1
+complete.** Next: s2 — first operator provisions one tenant on real per-host
+TLS.
