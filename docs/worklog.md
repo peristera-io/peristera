@@ -947,3 +947,26 @@ IP). Consequences: the `coredns-custom` override is redundant (harmless), and
 points A/CNAME at our IP (no delegation), and s4's ingress + HTTP-01 wiring
 issues certs. #56 rescoped accordingly (stable CNAME target + ownership
 verification are what actually remain).
+
+## 2026-07-08 — M7 s4 verified live: peristera.lu custom domain, no delegation
+
+The BYO-custom-domain acceptance, dogfooded on the real flow. Deployed `main`
+(s4 + backups) to the cloud, applied the updated CRD, and provisioned a tenant
+`{slug: lu, domain: peristera.lu}`. The founder set only two records at EuroDNS
+(the registrar — **NS never delegated to Scaleway**): `peristera.lu A →
+51.15.210.70` (apex) and `*.peristera.lu A → 51.15.210.70` (app hosts).
+
+Result: **Ready in 60s**, `IAMProvisioned=True` (issuer `https://peristera.lu`),
+apps up, **zero cert self-heals** (certs issued first try — hairpin works, DNS
+was warm). Verified: `https://peristera.lu/.well-known/openid-configuration` →
+200 (real LE cert `CN=peristera.lu`); `https://stub.peristera.lu` → 200;
+`https://kamara.peristera.lu` → 302 /auth/login; all on real per-host certs;
+`peristera.lu` NS still `ns1.eurodns.com`. This proves BYO custom domains need
+only the tenant's A/CNAME → our IP — no delegation, no CoreDNS, no DNAT — and
+that s4's existing reconciler wiring handles it unchanged.
+
+**M7 COMPLETE.** Public platform + landing (peristera.io) + operator-provisioned
+tenants on real TLS (default and custom domains) + tenant users + backups, all
+live on Scaleway. Remaining follow-ups are tracked issues (#56 stable-CNAME
+target + ownership verification, #59 blob backup + barman plugin, #53 tenant
+dashboard).
