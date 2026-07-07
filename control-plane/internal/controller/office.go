@@ -64,7 +64,7 @@ func (r *TenantReconciler) ensureOffice(ctx context.Context, tenant *v1alpha1.Te
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{{
 						Name:            app.Name,
-						Image:           app.Image,
+						Image:           r.imageFor(app),
 						ImagePullPolicy: corev1.PullIfNotPresent,
 						Ports:           []corev1.ContainerPort{{ContainerPort: app.Port}},
 						Env:             env,
