@@ -7,7 +7,6 @@ package controller
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -45,6 +44,10 @@ type TenantReconciler struct {
 	// "<version>" (pulled).
 	ImagePrefix string
 	ImageTag    string
+	// Scheme of tenant public URLs (M7 s1): "http" in dev, "https" on the
+	// cloud with real certs. The tenant issuer is a public URL and must equal
+	// the token `iss`, so this is load-bearing for OIDC.
+	URLScheme string
 	// LoginDomain is the deployment's ExternalDomain — every new
 	// instance must trust it or the shared Login v2 cannot serve it.
 	LoginDomain string
@@ -54,10 +57,24 @@ func (r *TenantReconciler) tenantDomain(t *v1alpha1.Tenant) string {
 	return t.Spec.Slug + "." + r.BaseDomain
 }
 
+// publicURL builds a tenant-facing URL for host under the configured scheme,
+// omitting the port when it is the scheme's default (443 for https, 80 for
+// http) — so cloud tenants are clean `https://<host>` and dev keeps
+// `http://<host>:9080` (M7 s1).
+func (r *TenantReconciler) publicURL(host string) string {
+	scheme := r.URLScheme
+	if scheme == "" {
+		scheme = "http"
+	}
+	port := r.ExternalPort
+	if port == "" || (scheme == "https" && port == "443") || (scheme == "http" && port == "80") {
+		return scheme + "://" + host
+	}
+	return scheme + "://" + host + ":" + port
+}
+
 func (r *TenantReconciler) tenantIssuer(t *v1alpha1.Tenant) string {
-	// http is dev-grade; the scheme becomes config with the first TLS
-	// environment (M6).
-	return fmt.Sprintf("http://%s:%s", r.tenantDomain(t), r.ExternalPort)
+	return r.publicURL(r.tenantDomain(t))
 }
 
 func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -196,7 +213,7 @@ func (r *TenantReconciler) provisionIAM(ctx context.Context, tenant *v1alpha1.Te
 	if err != nil {
 		return false, 0, err
 	}
-	appBase := fmt.Sprintf("http://stub.%s:%s", domain, r.ExternalPort)
+	appBase := r.publicURL("stub." + domain)
 	clientID, err := r.IAM.EnsureStubApp(ctx, issuer, orgID,
 		[]string{appBase + "/auth/callback"}, []string{appBase + "/"})
 	if err != nil {

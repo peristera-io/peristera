@@ -192,7 +192,7 @@ func (r *TenantReconciler) ensureApps(ctx context.Context, tenant *v1alpha1.Tena
 		}
 
 		host := fmt.Sprintf("%s.%s", app.Name, r.tenantDomain(tenant))
-		publicURL := fmt.Sprintf("http://%s:%s", host, r.ExternalPort)
+		publicURL := r.publicURL(host)
 		labels := map[string]string{
 			"app.kubernetes.io/name":       app.Name,
 			"app.kubernetes.io/managed-by": "peristera-control-plane",
@@ -307,7 +307,7 @@ func (r *TenantReconciler) ensureApps(ctx context.Context, tenant *v1alpha1.Tena
 		// base (the WOPISrc the engine fetches back, intra-namespace). Injected
 		// only into kamara, only when office is on.
 		if app.Name == "kamara" && tenantEnables(tenant, "office") {
-			officeURL := fmt.Sprintf("http://office.%s:%s", r.tenantDomain(tenant), r.ExternalPort)
+			officeURL := r.publicURL("office." + r.tenantDomain(tenant))
 			env = append(env,
 				corev1.EnvVar{Name: "OFFICE_URL", Value: officeURL},
 				corev1.EnvVar{Name: "WOPI_SRC_BASE", Value: fmt.Sprintf("http://kamara.%s.svc.cluster.local", ns)},

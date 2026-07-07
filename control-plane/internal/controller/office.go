@@ -40,7 +40,7 @@ func (r *TenantReconciler) ensureOffice(ctx context.Context, tenant *v1alpha1.Te
 	// browser embeds the editor from Kamara's public origin, so that origin
 	// must be an allowed frame ancestor.
 	kamaraInCluster := fmt.Sprintf("http://kamara.%s.svc.cluster.local", ns)
-	kamaraOrigin := fmt.Sprintf("http://kamara.%s:%s", r.tenantDomain(tenant), r.ExternalPort)
+	kamaraOrigin := r.publicURL("kamara." + r.tenantDomain(tenant))
 
 	env := []corev1.EnvVar{
 		// WOPI host allow-list: only this tenant's in-cluster Kamara.
