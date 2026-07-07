@@ -34,18 +34,26 @@ control plane (audience), and its subject must be an *operator* (OpenFGA).**
 - **Browser cookie (oidcrp):** already audience-correct — the relying party
   verifies the ID token's `aud` equals the control-plane client. No change
   beyond resolving the subject from the session.
-- **Bearer token (API/automation):** validated by **introspection** against
-  the default instance (`/oauth/v2/introspect`), which returns `active`, `sub`,
-  and `aud`/`client_id`. Reject unless active **and** the audience includes the
-  control-plane client. This closes the "a tenant-app token passes" gap that
-  plain userinfo left open. (Introspection also gives a real `active`/`exp`, so
-  the bearer path no longer depends on a validity cache alone.)
+- **Bearer token (API/automation):** userinfo resolves the subject as today;
+  additionally, when the token is a **JWT**, its `aud` is validated locally
+  (via the issuer JWKS) to include the control-plane client, rejecting a
+  tenant-app token presented at the control plane. **Opaque** tokens (Zitadel
+  PATs) carry no locally-readable audience, and the control-plane app is a
+  public PKCE client that cannot authenticate to the introspection endpoint, so
+  those are gated by the **operator check below** rather than an audience
+  check. **Full introspection** (making the control plane a confidential client
+  so opaque tokens are audience-checked too) is the MSP-alpha upgrade; the
+  operator check is the load-bearing gate in the meantime.
 
 ### 2. Operator authorization (OpenFGA)
 
 - A **platform-level OpenFGA** runs beside the control plane (in
   `peristera-system`), separate from the per-tenant instances (which are tenant
-  data). It is the control plane's own authorization store.
+  data). It is the control plane's own authorization store. It runs the
+  **in-memory** datastore: operator tuples are derived from configuration and
+  re-seeded on every startup, so nothing needs to survive a restart (a
+  CNPG-backed store is the upgrade for when a runtime operator-management
+  surface writes durable tuples).
 - **Model:** a singleton `platform:peristera` object with an `operator`
   relation of `user`. The check is
   `platform:peristera#operator@user:<subject>`.

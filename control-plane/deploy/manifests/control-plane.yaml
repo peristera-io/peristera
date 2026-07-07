@@ -113,6 +113,15 @@ spec:
             - {name: ZITADEL_EXTERNAL_DOMAIN, value: "iam.127.0.0.1.sslip.io"}
             - {name: CP_LISTEN_ADDR, value: ":8090"}
             - {name: CP_PUBLIC_URL, value: "http://cp.127.0.0.1.sslip.io:9080"}
+            # Operator authorization (ADR-0019): the platform OpenFGA + its key,
+            # and the bootstrap operator subjects (Zitadel `sub`s in the default
+            # instance). OPERATOR_SUBJECTS is set by hack/dev-cluster.sh from the
+            # iam-admin user; an empty value locks everyone out.
+            - {name: OPENFGA_API_URL, value: "http://cp-openfga.peristera-system.svc.cluster.local:8080"}
+            - name: OPENFGA_API_TOKEN
+              valueFrom:
+                secretKeyRef: {name: cp-openfga-authn-key, key: token}
+            - {name: OPERATOR_SUBJECTS, value: ""}
           volumeMounts:
             - {name: admin-client, mountPath: /secrets/admin-client, readOnly: true}
           readinessProbe:

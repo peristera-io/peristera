@@ -1,0 +1,56 @@
+# Platform OpenFGA for control-plane operator authorization (ADR-0019). Runs
+# the in-memory datastore: operator tuples are seeded from OPERATOR_SUBJECTS on
+# every control-plane startup, so nothing needs to survive a restart. Preshared
+# key authn (like the per-tenant OpenFGA) gates the API; it lives in
+# peristera-system, unreachable from tenant namespaces.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cp-openfga-authn-key
+  namespace: peristera-system
+type: Opaque
+stringData:
+  # Dev-only preshared key; a real deployment generates and mounts its own.
+  token: "dev-cp-openfga-preshared-key"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cp-openfga
+  namespace: peristera-system
+  labels: { app.kubernetes.io/name: cp-openfga }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app.kubernetes.io/name: cp-openfga } }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: cp-openfga }
+    spec:
+      containers:
+        - name: openfga
+          image: openfga/openfga:v1.8.0
+          args: ["run"] # no OPENFGA_DATASTORE_ENGINE -> in-memory
+          env:
+            - { name: OPENFGA_AUTHN_METHOD, value: preshared }
+            - name: OPENFGA_AUTHN_PRESHARED_KEYS
+              valueFrom:
+                secretKeyRef: { name: cp-openfga-authn-key, key: token }
+          ports:
+            - { name: http, containerPort: 8080 }
+            - { name: grpc, containerPort: 8081 }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 3
+          resources:
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits: { cpu: "500m", memory: "256Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cp-openfga
+  namespace: peristera-system
+spec:
+  selector: { app.kubernetes.io/name: cp-openfga }
+  ports:
+    - { name: http, port: 8080, targetPort: 8080 }

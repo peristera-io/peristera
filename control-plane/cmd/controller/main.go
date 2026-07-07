@@ -5,6 +5,7 @@ package main
 
 import (
 	"os"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -23,6 +24,17 @@ func env(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// splitList parses a comma-separated env value into a trimmed, non-empty list.
+func splitList(v string) []string {
+	var out []string
+	for _, p := range strings.Split(v, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func main() {
@@ -87,9 +99,12 @@ func main() {
 			K8s: mgr.GetClient(),
 			IAM: rec.IAM,
 			Cfg: server.Config{
-				ListenAddr: env("CP_LISTEN_ADDR", ":8090"),
-				PublicURL:  env("CP_PUBLIC_URL", "http://localhost:8090"),
-				Issuer:     env("ZITADEL_BASE_URL", "http://iam.127.0.0.1.sslip.io:9080"),
+				ListenAddr:   env("CP_LISTEN_ADDR", ":8090"),
+				PublicURL:    env("CP_PUBLIC_URL", "http://localhost:8090"),
+				Issuer:       env("ZITADEL_BASE_URL", "http://iam.127.0.0.1.sslip.io:9080"),
+				OpenFGAURL:   env("OPENFGA_API_URL", "http://cp-openfga.peristera-system.svc.cluster.local:8080"),
+				OpenFGAToken: os.Getenv("OPENFGA_API_TOKEN"),
+				OperatorSubs: splitList(os.Getenv("OPERATOR_SUBJECTS")),
 			},
 		}); err != nil {
 			lg.Error(err, "adding UI/API server")
