@@ -859,7 +859,7 @@ the decisions to settle. Answer each `>`.
 (build); **`.lu` = the flagship dogfood tenant on a custom apex**
 (`kamara.peristera.lu`), doubling as the EU/Luxembourg-sovereignty showcase
 (prove). Key point: giving the SaaS its own apex (`.app`) — not a subdomain of
-`.io` — is what avoids the sub-sub-domain problem. >
+`.io` — is what avoids the sub-sub-domain problem. >ok
 
 **R77. Tenant URL + TLS model (the cert-strategy fork).**
 - **(A)** keep today's `<app>.<tenant>.peristera.app` (per-app hosts, no naming
@@ -871,22 +871,22 @@ the decisions to settle. Answer each `>`.
 - **(C)** `<tenant>.peristera.app` + app *paths* — one wildcard but apps share
   an origin (bigger change: OIDC redirects, cookies). Avoid.
 Rec: **(A)** for the demo (least change, keeps the built+tested model;
-cert-manager automates), revisit toward (B) only if tenant count explodes. >
+cert-manager automates), revisit toward (B) only if tenant count explodes. >A
 
 **R78. HTTP→HTTPS migration.** The code hardcodes `http://` in load-bearing
 spots (tenant issuer = token `iss`, oidcrp, app URL derivations). Rec: M7
 includes a **"scheme is config" pass** (control plane + apps) so tenants serve
-`https://` with real certs. This also unblocks #48 (office TLS) later. >
+`https://` with real certs. This also unblocks #48 (office TLS) later. > yes
 
 **R79. Custom domains — first demo or phase 2?** Custom apex (`peristera.lu`,
 BYO-domain tenants) needs DNS delegation/verification + per-domain certs — more
 work than SaaS subdomains under a wildcard. Rec: **phase 2** — ship
 `<tenant>.peristera.app` + one demo tenant first; bring `peristera.lu` as the
-custom-domain showcase right after. >
+custom-domain showcase right after. > lets add domains as final step to M7, when the rest works. This is loading bearing for propper deployment.
 
 **R80. Self-service sign-up?** Rec: **no** for the demo — tenants are
 **operator-provisioned only** (the operator creates a tenant with its domain +
-admin). Public self-serve signup is a later feature. >
+admin). Public self-serve signup is a later feature. > no self-service
 
 ### Operator & provisioning
 
@@ -894,32 +894,32 @@ admin). Public self-serve signup is a later feature. >
 user in the platform Zitadel post-apply and sets `OPERATOR_SUBJECTS` — the
 "single operator created on deploy" you described, building on the merged #1
 operator-authz. Tenant creation already mints the tenant admin (`initial-admin`
-secret, #6 forces a first-login change). M7 adds the **domain** to that flow. >
+secret, #6 forces a first-login change). M7 adds the **domain** to that flow. > yes, optional domain (for example for users who just want to test)
 
 **R82. OpenTofu scope / the dogfooding seam.** Rec: **Tofu = infra + platform +
 first operator; the control plane = tenants** (ADR-0008). Concretely Tofu
 provisions Scaleway Kapsule + node pool + Load Balancer + DNS zones + Object
 Storage, then bootstraps Cilium, CNPG operator, Zitadel, control-plane,
-cp-openfga. The product provisions tenants itself. >
+cp-openfga. The product provisions tenants itself. > ok. Also requires network probably. Maybe also secret manager? 
 
 ### Scaleway / storage / ops
 
 **R83. Kamara blobs in production.** A per-tenant PVC is fine in dev; a public
 deploy wants durability. Rec: move blobs to **Scaleway Object Storage (S3)**
-(this is the deferred #21 — Kamara's chunk format is already E2EE/S3-ready). >
+(this is the deferred #21 — Kamara's chunk format is already E2EE/S3-ready). > yes, S3, encrypted if possible. We add E2EE later.
 
 **R84. Postgres.** Rec: **keep CNPG** (portable, k8s-native, already built)
-rather than Scaleway Managed Database — one less provider lock-in for now. >
+rather than Scaleway Managed Database — one less provider lock-in for now. > yes
 
 **R85. Backups.** Even a demo with real data wants them. Rec: **minimal M7
 backups** — CNPG scheduled backups + blob object-storage versioning/lifecycle,
-both to Scaleway Object Storage. Full DR/restore drills stay MSP-alpha. >
+both to Scaleway Object Storage. Full DR/restore drills stay MSP-alpha. > yes
 
 **R86. Tofu state & secrets (+ the public-repo problem).** The Zitadel
 masterkey / DB creds must NOT live in the AGPL public monorepo. Rec: Tofu
 **state** in a Scaleway Object Storage backend; **secrets** either a **private
 deploy repo** or **SOPS/sealed-secrets in the monorepo** — which do you prefer?
-(Shapes how the Tofu is structured.) >
+(Shapes how the Tofu is structured.) > Can we use the scaleway secret manager?
 
 ### Sites & budget
 
@@ -927,11 +927,11 @@ deploy repo** or **SOPS/sealed-secrets in the monorepo** — which do you prefer
 on `.io` + the running product + one demo tenant** — don't build four polished
 sites for the first cut. `.dev` docs and the `.lu` custom-domain tenant follow.
 (How much of a landing page — a single static page, or a small multi-section
-marketing site?) >
+marketing site?) >landing page on IO, just what peristera is and why.
 
 **R88. Budget / node sizing.** A small Kapsule pool + LB + object storage is
 ~tens of €/month. Rec: confirm a rough monthly ceiling so we size the node pool
-(and don't design for scale we don't need yet). What's comfortable? >
+(and don't design for scale we don't need yet). What's comfortable? > below 50€ and if possible below 20€.
 
 ### Sequencing
 
@@ -939,4 +939,4 @@ marketing site?) >
 smallest end-to-end slice: one Tofu-provisioned Scaleway cluster + the platform
 + a single tenant on `*.peristera.app` with **real TLS**, to nail the
 domain/cert/https-scheme trio (the riskiest, most-coupled part). Then write
-`docs/m7-plan.md` from what the spike teaches. >
+`docs/m7-plan.md` from what the spike teaches. >yes
