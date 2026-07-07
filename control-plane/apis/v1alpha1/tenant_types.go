@@ -23,6 +23,15 @@ type TenantSpec struct {
 	Slug string `json:"slug"`
 	// DisplayName may change freely; it never appears in URLs or domains.
 	DisplayName string `json:"displayName,omitempty"`
+	// Domain, when set, is the tenant's custom apex (BYO domain, e.g.
+	// "peristera.lu"): the public base for its OIDC issuer and app hosts
+	// (<app>.<domain>) instead of the default <slug>.<platform-base-domain>.
+	// Immutable, because it is the issuer. The domain must resolve to the
+	// platform (delegated to its DNS, or its records pointed at the node) so
+	// per-host certs can be issued. Empty = the default <slug>.<base> host.
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="domain is immutable"
+	// +kubebuilder:validation:Pattern=`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$`
+	Domain string `json:"domain,omitempty"`
 	// Apps is the set of optional catalog apps this tenant has enabled
 	// (ADR-0013 optional-per-tenant dimension, ADR-0018). Always-on apps are
 	// provisioned regardless; an optional app (e.g. "office", the Collabora
@@ -84,4 +93,13 @@ var slugRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 // the slug becomes the leftmost label of the tenant domain.
 func ValidSlug(s string) bool {
 	return slugRe.MatchString(s)
+}
+
+var domainRe = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$`)
+
+// ValidDomain reports whether s is a usable custom tenant apex: a
+// dotted, lowercase FQDN (e.g. "peristera.lu"). It becomes the tenant's
+// public base domain and OIDC issuer.
+func ValidDomain(s string) bool {
+	return domainRe.MatchString(s)
 }

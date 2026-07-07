@@ -68,6 +68,19 @@ spec:
                 description: DisplayName may change freely; it never appears in URLs
                   or domains.
                 type: string
+              domain:
+                description: |-
+                  Domain, when set, is the tenant's custom apex (BYO domain, e.g.
+                  "peristera.lu"): the public base for its OIDC issuer and app hosts
+                  (<app>.<domain>) instead of the default <slug>.<platform-base-domain>.
+                  Immutable, because it is the issuer. The domain must resolve to the
+                  platform (delegated to its DNS, or its records pointed at the node) so
+                  per-host certs can be issued. Empty = the default <slug>.<base> host.
+                pattern: ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$
+                type: string
+                x-kubernetes-validations:
+                - message: domain is immutable
+                  rule: self == oldSelf
               slug:
                 description: |-
                   Slug is a DNS label: the permanent, human-chosen tenant identifier.

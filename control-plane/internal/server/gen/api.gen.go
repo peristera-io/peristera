@@ -53,6 +53,9 @@ type TenantPhase string
 type TenantCreate struct {
 	DisplayName *string `json:"displayName,omitempty"`
 
+	// Domain Optional custom apex (BYO domain, e.g. peristera.lu). When set, the tenant's issuer and apps live under it (<app>.<domain>) instead of the default <slug>.<platform-base>. Immutable. The domain must resolve to the platform so certs can issue.
+	Domain *string `json:"domain,omitempty"`
+
 	// Slug Permanent identifier; forms the tenant domain (immutable).
 	Slug string `json:"slug"`
 }

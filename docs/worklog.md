@@ -860,3 +860,32 @@ A single static "what/why" page for the public marketing apex. Branch
 **Live-verify gated on `peristera.io` being delegated to Scaleway DNS** (like
 peristera.app) so external-dns/cert-manager can serve it on real TLS. Next:
 s4 — custom-domain tenants (`peristera.lu`) + the optional-domain create flow.
+
+## 2026-07-07 — M7 s4: custom-domain tenants (BYO apex)
+
+The load-bearing step for real deployments (R79/R81): a tenant can run under its
+own domain instead of `<slug>.peristera.app`. Branch `m7-s4-custom-domains`.
+
+- **`Tenant.spec.domain`** (optional, immutable, FQDN-validated) — the custom
+  apex. `ValidDomain` + CRD schema (pattern + `self == oldSelf`).
+- **Reconciler**: `tenantDomain` returns `spec.domain` when set, else
+  `<slug>.<base>`. Everything public-facing (OIDC issuer, app/office hosts,
+  ingresses, the Zitadel instance's custom domain) already derives from
+  `tenantDomain`, so the whole custom-domain flavour flows through one switch —
+  issuer `https://peristera.lu`, apps `https://<app>.peristera.lu`, each with a
+  per-host cert (s2 wiring).
+- **CP create** takes the optional domain (OpenAPI `domain` + `CreateTenant`
+  handler + the UI create form), validated as an FQDN.
+- Tests: `TestValidDomain`, `TestTenantDomain` (custom vs default).
+
+Onboarding a custom domain is a small **operator step** (delegate to Scaleway
+DNS, add to external-dns `domainFilters`, and — if NAT-loopback fails — a
+`coredns-custom` entry): documented in `deploy/scaleway/README.md`. The
+automation (dynamic external-dns zones, in-cluster resolution) and
+**domain-ownership verification** for self-serve BYO domains are filed as #56 —
+today custom domains are operator-provisioned, so the operator vouches for
+ownership.
+
+**Live-verify (gated on `peristera.lu` delegated to Scaleway DNS):** create a
+tenant with `domain=peristera.lu` and confirm its apps serve on
+`https://<app>.peristera.lu`. This completes M7's tenant story.
