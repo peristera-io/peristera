@@ -616,3 +616,39 @@ decrypted document content is processed alongside another's.
   the edit lands back as a new version, owned by the user, with per-session
   OpenFGA-gated WOPI tokens as the trust boundary and no tenant's document
   content ever sharing an engine. **Next: M7 — public demo.**
+
+## 2026-07-07 — pre-M7 hardening (triage Tier 1 + Tier 2)
+
+Before M7 puts the control plane + tenants on the public internet, a security +
+reliability batch from the issue triage (branch `pre-m7-hardening`; plan
+`docs/pre-m7-hardening-plan.md`, Q&A Round 12). All verified in-cluster.
+
+- **#30** blob-backed apps get the `Recreate` strategy + `replicas: 1` (no RWO
+  PVC multi-attach on a rolling deploy).
+- **#31** a tenant is `Ready` only once its app Deployments are Available
+  (`Owns` Deployments + an `AppsReady` condition); a fresh tenant now goes
+  Pending→Ready on the workloads, not on manifest creation.
+- **#38** a Content-Security-Policy on the Kamara UI: `script-src 'self'
+  'unsafe-eval'` with **no `unsafe-inline`** — the office-editor auto-submit
+  moved to an external `/editor.js` and the drawer-close inline `onclick` to a
+  delegated handler. Re-verified the editor e2e under the CSP.
+- **#7** dropped cluster-wide secret `list/watch` from the control-plane SA:
+  the manager no longer caches Secrets (get-by-name only), so RBAC is
+  `[get, create]` — it can't enumerate the Zitadel masterkey / system key.
+- **#6** the generated tenant-admin credential is `passwordChangeRequired` — a
+  one-time handover, not a standing password.
+- **#26** Kamara rejects an expired JWT locally (reads `exp`) before its token
+  cache, closing the ≤TTL honour-window for JWTs (opaque tokens unchanged).
+- **#1 (anchor, ADR-0019, R71=OpenFGA):** control-plane operator
+  authorization. Two gates per request — audience (browser cookies via oidcrp;
+  JWT bearer tokens audience-checked against the control-plane client; opaque
+  PATs gated by the operator check) and an **operator** relation in a
+  platform-level OpenFGA (`cp-openfga`, in-memory, preshared-key, in
+  peristera-system). Operators seeded from `OPERATOR_SUBJECTS`;
+  `hack/dev-cluster.sh` resolves the iam-admin sub. Verified: unseeded operator
+  token → 403, seeded → 200, no/bad token → 401. godog now uses the seeded
+  iam-admin PAT (also closes **#32**).
+- **#48** office prod-hardening: **deferred** to M7's TLS work (R74 — office is
+  not in the first public demo).
+
+**Batch complete; a fresh-context review then merge to main. Next: M7.**

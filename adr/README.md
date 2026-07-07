@@ -35,3 +35,4 @@ ADR, not in chat history.
 - [ADR-0016](0016-network-policy-and-service-topology.md) — Network policy and service topology
 - [ADR-0017](0017-service-to-service-auth.md) — Service-to-service auth (on-behalf-of via token exchange)
 - [ADR-0018](0018-document-editing-collabora-wopi.md) — Browser document editing (Collabora + WOPI, opt-in per tenant)
+- [ADR-0019](0019-operator-authorization.md) — Control-plane operator authorization (OpenFGA + audience)

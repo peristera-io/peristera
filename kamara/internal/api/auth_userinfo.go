@@ -2,9 +2,11 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/peristera-io/peristera/lib/pii"
@@ -46,6 +48,14 @@ func NewUserinfoAuth(issuer, instance string, ttl time.Duration) *UserinfoAuth {
 // for an invalid/expired token; err is set only on a transport/provider
 // failure (so the caller can distinguish "denied" from "provider down").
 func (a *UserinfoAuth) Subject(ctx context.Context, token string) (pii.Subject, bool, error) {
+	// #26: if the token is a JWT whose exp has passed, reject it here — before
+	// the cache — so an already-expired token isn't honoured from a still-warm
+	// cache entry for up to the TTL. Opaque tokens (not a JWT) fall through to
+	// userinfo, which rejects expired ones (the residual TTL window there is
+	// the bound; full introspection is the deeper fix).
+	if tokenExpired(token, time.Now()) {
+		return pii.Subject{}, false, nil
+	}
 	if s, ok := a.cache.Get(token); ok {
 		return s, true, nil
 	}
@@ -77,6 +87,29 @@ func (a *UserinfoAuth) Subject(ctx context.Context, token string) (pii.Subject, 
 	s := pii.Subject{Instance: a.instance, UserID: claims.Sub}
 	a.cache.Put(token, s)
 	return s, true, nil
+}
+
+// tokenExpired reports whether token is a JWT whose exp claim is in the past.
+// It only *reads* exp (the signature is validated by userinfo) — a cheap local
+// pre-filter. Returns false for a non-JWT (opaque) token or one without exp, so
+// those are left to userinfo. No reliance on the exp for security beyond
+// rejecting an already-expired-but-previously-valid token faster than the cache.
+func tokenExpired(token string, now time.Time) bool {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return false // not a JWS/JWT — can't tell locally
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return false
+	}
+	var claims struct {
+		Exp int64 `json:"exp"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil || claims.Exp == 0 {
+		return false
+	}
+	return now.Unix() >= claims.Exp
 }
 
 var _ Authenticator = (*UserinfoAuth)(nil)

@@ -5,9 +5,12 @@ package main
 
 import (
 	"os"
+	"strings"
 
+	corev1 "k8s.io/api/core/v1"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	"github.com/peristera-io/peristera/control-plane/apis/v1alpha1"
@@ -21,6 +24,17 @@ func env(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// splitList parses a comma-separated env value into a trimmed, non-empty list.
+func splitList(v string) []string {
+	var out []string
+	for _, p := range strings.Split(v, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func main() {
@@ -40,6 +54,13 @@ func main() {
 		LeaderElection:          true,
 		LeaderElectionID:        "control-plane.peristera.io",
 		LeaderElectionNamespace: env("CP_NAMESPACE", "peristera-system"),
+		// Don't cache Secrets: the informer cache would need cluster-wide
+		// secrets list/watch (the whole point of #7). Reads go direct via the
+		// API (get by name), so the SA needs only get + create, never list all
+		// secrets. The reconciler only ever Gets secrets by name, never Lists.
+		Client: client.Options{Cache: &client.CacheOptions{
+			DisableFor: []client.Object{&corev1.Secret{}},
+		}},
 	})
 	if err != nil {
 		lg.Error(err, "creating manager")
@@ -78,9 +99,12 @@ func main() {
 			K8s: mgr.GetClient(),
 			IAM: rec.IAM,
 			Cfg: server.Config{
-				ListenAddr: env("CP_LISTEN_ADDR", ":8090"),
-				PublicURL:  env("CP_PUBLIC_URL", "http://localhost:8090"),
-				Issuer:     env("ZITADEL_BASE_URL", "http://iam.127.0.0.1.sslip.io:9080"),
+				ListenAddr:   env("CP_LISTEN_ADDR", ":8090"),
+				PublicURL:    env("CP_PUBLIC_URL", "http://localhost:8090"),
+				Issuer:       env("ZITADEL_BASE_URL", "http://iam.127.0.0.1.sslip.io:9080"),
+				OpenFGAURL:   env("OPENFGA_API_URL", "http://cp-openfga.peristera-system.svc.cluster.local:8080"),
+				OpenFGAToken: os.Getenv("OPENFGA_API_TOKEN"),
+				OperatorSubs: splitList(os.Getenv("OPERATOR_SUBJECTS")),
 			},
 		}); err != nil {
 			lg.Error(err, "adding UI/API server")

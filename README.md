@@ -83,7 +83,15 @@ OpenFGA on every WOPI call and bound to one file). `#28` folded in
 (content-type + RFC 6266 downloads). Verified end-to-end in-cluster: real
 Collabora opens a real encrypted Kamara file and a real save writes version 1.
 The engine stays behind the ADR-0004 document-service interface (a later
-OnlyOffice swap is contained). Next: **M7 — SaaS/Scaleway public demo**.
+OnlyOffice swap is contained).
+
+**Pre-M7 hardening (2026-07-07):** a security + reliability batch before the
+public demo — **control-plane operator authorization** (ADR-0019: a
+platform-level OpenFGA `operator` check + token audience validation, closing
+"any authenticated principal is an operator"), least-privilege secret RBAC, a
+Content-Security-Policy on the Kamara UI, `Recreate` for stateful apps,
+`Ready` gated on real app health, forced initial-admin password change, and a
+local token-expiry check. Next: **M7 — SaaS/Scaleway public demo**.
 
 *Update this block whenever reality changes — a stale status line is exactly
 the rot §8 warns against.*

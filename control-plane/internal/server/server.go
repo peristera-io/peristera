@@ -17,7 +17,9 @@ import (
 
 	"github.com/peristera-io/peristera/control-plane/internal/server/gen"
 	"github.com/peristera-io/peristera/control-plane/internal/zitadel"
+	"github.com/peristera-io/peristera/lib/authz"
 	"github.com/peristera-io/peristera/lib/oidcrp"
+	"github.com/peristera-io/peristera/lib/pii"
 )
 
 type Config struct {
@@ -25,6 +27,12 @@ type Config struct {
 	PublicURL  string // e.g. http://localhost:8090 or http://cp.<base>:9080
 	// Issuer of the DEFAULT Zitadel instance — operators live there.
 	Issuer string
+	// Operator authorization (ADR-0019): the platform OpenFGA the control
+	// plane checks the `operator` relation against, its preshared key, and the
+	// bootstrap operator subjects seeded on startup.
+	OpenFGAURL   string
+	OpenFGAToken string
+	OperatorSubs []string
 }
 
 type Server struct {
@@ -32,8 +40,17 @@ type Server struct {
 	IAM *zitadel.Client
 	Cfg Config
 
-	rp     *oidcrp.RelyingParty // browser flow (shared, lib/oidcrp)
-	tokens *tokenCache          // bearer-token validation cache (API path)
+	rp       *oidcrp.RelyingParty // browser flow (shared, lib/oidcrp)
+	tokens   *tokenCache          // bearer-token validation cache (API path)
+	authz    authorizer           // platform operator authorization (ADR-0019)
+	clientID string               // our own OIDC client id (bearer audience)
+}
+
+// authorizer is the operator-authorization surface the server needs (satisfied
+// by *authz.Client; an interface so seeding is testable).
+type authorizer interface {
+	Check(ctx context.Context, user pii.Subject, relation, object string) (bool, error)
+	Write(ctx context.Context, user pii.Subject, relation, object string) error
 }
 
 // NeedLeaderElection: the UI/API serves on every replica; only the
@@ -55,6 +72,26 @@ func (s *Server) Start(ctx context.Context) error {
 		[]string{s.Cfg.PublicURL + "/auth/callback"}, []string{s.Cfg.PublicURL + "/"})
 	if err != nil {
 		return fmt.Errorf("ensuring own OIDC app: %w", err)
+	}
+	s.clientID = clientID
+
+	// Operator authorization (ADR-0019): connect the platform OpenFGA, install
+	// the operator model, and seed the bootstrap operators so the first
+	// operator is never locked out. The store is in-memory and re-seeded here
+	// on every startup.
+	client, err := authz.Connect(ctx, s.Cfg.OpenFGAURL, "control-plane", operatorModel,
+		authz.WithToken(s.Cfg.OpenFGAToken))
+	if err != nil {
+		return fmt.Errorf("operator authz: %w", err)
+	}
+	s.authz = client
+	if err := s.seedOperators(ctx); err != nil {
+		return err
+	}
+	if len(s.Cfg.OperatorSubs) == 0 {
+		lg.Info("WARNING: no OPERATOR_SUBJECTS seeded — no one can operate the control plane (ADR-0019)")
+	} else {
+		lg.Info("seeded control-plane operators", "count", len(s.Cfg.OperatorSubs))
 	}
 
 	s.rp, err = oidcrp.New(ctx, oidcrp.Config{

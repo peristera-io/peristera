@@ -813,20 +813,20 @@ operator (create/delete every tenant). Options:
   store. Rec: **(a) now + design for (c)** — ship a subject allowlist for the
   demo (an ADR records the model), with the interface shaped so OpenFGA-backed
   operator authz is a later swap, not a rewrite. Also **always** add the
-  audience check (below), independent of a/b/c. > 
+  audience check (below), independent of a/b/c. > c
 
 **R72. Token audience validation (#1).** `requireAuth` accepts any userinfo-OK
 token from the default instance — a token minted for a *tenant app* would pass.
 Rec: validate the token's **audience = the control-plane client** (and issuer =
 the default instance) by checking the JWT `aud`/`iss` (or introspection),
 rejecting tokens not meant for the control plane. This is required regardless
-of R71. > 
+of R71. > ok
 
 **R73. Initial-admin credential lifecycle (#6).** The generated tenant-admin
 password is permanent. Rec: set Zitadel `passwordChangeRequired: true` so the
 first login forces a change (the credential becomes a one-time handover), and
 keep the delivered Secret as the handover artifact only. A full rotate/recovery
-flow stays MSP-alpha. > 
+flow stays MSP-alpha. > ok
 
 **R74. Is the office engine (Collabora) part of the M7 public demo?** Decides
 whether **#48** (drop SYS_ADMIN, real admin creds, TLS/ssl.termination, WOPI
@@ -834,11 +834,11 @@ token out of ingress logs) is in this batch or stays deferred. Rec: **not in
 the first public demo** — office is an opt-in premium feature that needs the
 prod-hardening + an https scheme (which the platform doesn't have yet), so
 defer #48 with M7's TLS work rather than rush it. The core suite (Kamara +
-Ergonomos) carries the demo. > 
+Ergonomos) carries the demo. > defer
 
 **R75. Kamara bearer-token cache TTL (#26).** A revoked/expired token is
 honoured for ≤ the 60s cache TTL. Rec: on the mutating paths, validate the
 access token's **`exp`** (parse the JWT expiry) so an expired token is rejected
 even within the cache window; keep the userinfo cache for the subject lookup.
 Full introspection stays optional. (Same characteristic exists in the control
-plane; a shared `lib` helper is the clean home.) > 
+plane; a shared `lib` helper is the clean home.) > yes

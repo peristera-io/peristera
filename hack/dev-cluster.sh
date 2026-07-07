@@ -101,7 +101,28 @@ docker build -q -f kamara/Dockerfile -t peristera-kamara:dev .
 k3d image import -c "$CLUSTER" peristera-stub:dev peristera-control-plane:dev \
   peristera-ergonomos:dev peristera-kamara:dev
 kubectl apply -f control-plane/deploy/crd/peristera.io_tenants.yaml >/dev/null
+kubectl apply -f control-plane/deploy/manifests/cp-openfga.yaml >/dev/null
 kubectl apply -f control-plane/deploy/manifests/control-plane.yaml >/dev/null
+
+# Seed the control-plane operator (ADR-0019): the dev operator is the Zitadel
+# chart's iam-admin machine user; resolve its `sub` from its PAT via userinfo
+# and inject it as OPERATOR_SUBJECTS, so the control plane authorizes it.
+# Without a seed, every operator request is denied 403.
+kubectl rollout status deploy/cp-openfga -n "$NS" --timeout=120s
+PAT=$(kubectl get secret iam-admin-pat -n "$NS" -o jsonpath='{.data.pat}' 2>/dev/null | base64 -d || true)
+OP_SUB=""
+if [ -n "$PAT" ]; then
+  OP_SUB=$(curl -s -H "Authorization: Bearer $PAT" \
+    http://iam.127.0.0.1.sslip.io:9080/oidc/v1/userinfo |
+    python3 -c 'import sys,json; print(json.load(sys.stdin).get("sub",""))' 2>/dev/null || true)
+fi
+if [ -n "$OP_SUB" ]; then
+  kubectl set env deploy/control-plane -n "$NS" "OPERATOR_SUBJECTS=$OP_SUB" >/dev/null
+  echo "    seeded control-plane operator sub=$OP_SUB"
+else
+  echo "    WARNING: could not resolve an operator sub — set OPERATOR_SUBJECTS manually (ADR-0019)"
+fi
+
 kubectl rollout restart deploy/control-plane -n "$NS" >/dev/null
 kubectl rollout status deploy/control-plane -n "$NS" --timeout=300s
 

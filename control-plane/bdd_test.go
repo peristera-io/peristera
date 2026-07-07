@@ -34,7 +34,7 @@ type world struct {
 	former       map[string]string // slug → issuer before deletion
 	updateErr    error
 	pollInterval time.Duration
-	token        string            // PAT of the machine operator (lazy)
+	token        string // PAT of the machine operator (lazy)
 	lastStatus   int
 	kamaraToks   map[string]string // slug → tenant-instance PAT (lazy)
 	kamaraFile   string            // id of the file under test
@@ -335,35 +335,25 @@ func cpBase() string {
 	return "http://localhost:8090"
 }
 
-// apiToken lazily provisions a machine operator with a PAT in the default
-// instance — the automation path an MSP script would use.
+// apiToken returns the seeded control-plane operator's PAT — the Zitadel
+// chart's iam-admin machine user, whose sub dev-cluster.sh seeds as the
+// operator (ADR-0019). The API scenarios use it because, with operator
+// authorization, the caller must be a seeded operator; reusing the existing
+// PAT also avoids minting a fresh one per run (#32).
 func (w *world) apiToken() (string, error) {
 	if w.token != "" {
 		return w.token, nil
 	}
-	keyPath := os.Getenv("SYSTEM_USER_KEY")
-	if keyPath == "" {
-		return "", fmt.Errorf("SYSTEM_USER_KEY required for API scenarios")
+	sec := &corev1.Secret{}
+	if err := w.k8s.Get(context.Background(),
+		client.ObjectKey{Namespace: "peristera-system", Name: "iam-admin-pat"}, sec); err != nil {
+		return "", fmt.Errorf("reading iam-admin-pat (the seeded operator, ADR-0019): %w", err)
 	}
-	base := os.Getenv("ZITADEL_BASE_URL")
-	if base == "" {
-		base = "http://iam.127.0.0.1.sslip.io:9080"
+	w.token = string(sec.Data["pat"])
+	if w.token == "" {
+		return "", fmt.Errorf("iam-admin-pat secret has no 'pat' key")
 	}
-	iam, err := zitadel.NewFromKeyFile(base, "admin-client", keyPath)
-	if err != nil {
-		return "", err
-	}
-	ctx := context.Background()
-	orgID, err := iam.FirstOrgID(ctx, base)
-	if err != nil {
-		return "", err
-	}
-	userID, err := iam.EnsureMachineUser(ctx, base, orgID, "operator-ci")
-	if err != nil {
-		return "", err
-	}
-	w.token, err = iam.CreatePAT(ctx, base, orgID, userID)
-	return w.token, err
+	return w.token, nil
 }
 
 func (w *world) apiDo(method, path string, body string, auth bool) (*http.Response, error) {

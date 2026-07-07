@@ -338,10 +338,11 @@ func (c *Client) EnsureHumanUser(ctx context.Context, tenantBase, orgID, usernam
 		"profile":  map[string]any{"firstName": "Initial", "lastName": "Admin"},
 		"email":    map[string]any{"email": email, "isEmailVerified": true},
 		"password": password,
-		// The credential is a generated handover secret, not a human
-		// choice — forcing a change on first login is the product-correct
-		// follow-up once account recovery exists (M3+).
-		"passwordChangeRequired": false,
+		// The credential is a generated handover secret, so force a change on
+		// first login (#6): the delivered Secret is a one-time artifact, not a
+		// standing password. (Self-service recovery for a forgotten replacement
+		// stays MSP-alpha; until then a lost password means re-provisioning.)
+		"passwordChangeRequired": true,
 	}, nil)
 }
 
@@ -496,17 +497,34 @@ func (c *Client) EnableImpersonation(ctx context.Context, base string) error {
 // UserinfoOK reports whether a bearer token is accepted by the issuer's
 // userinfo endpoint — the control plane's cheap token validation.
 func (c *Client) UserinfoOK(ctx context.Context, issuer, token string) bool {
+	_, ok := c.UserinfoSubject(ctx, issuer, token)
+	return ok
+}
+
+// UserinfoSubject validates the token at the issuer's userinfo endpoint and
+// returns its `sub`. ok is false for an invalid token or a transport failure
+// (the control plane treats both as "denied").
+func (c *Client) UserinfoSubject(ctx context.Context, issuer, token string) (string, bool) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, issuer+"/oidc/v1/userinfo", nil)
 	if err != nil {
-		return false
+		return "", false
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return false
+		return "", false
 	}
 	defer resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+	if resp.StatusCode != http.StatusOK {
+		return "", false
+	}
+	var claims struct {
+		Sub string `json:"sub"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&claims); err != nil || claims.Sub == "" {
+		return "", false
+	}
+	return claims.Sub, true
 }
 
 // EnsureWebApp makes sure a public PKCE OIDC app with this name exists in
