@@ -436,6 +436,29 @@ func TestWriteVersionUnauthorized(t *testing.T) {
 	}
 }
 
+type fakeRevoker struct{ revoked []string }
+
+func (f *fakeRevoker) Revoke(_ context.Context, id string) error {
+	f.revoked = append(f.revoked, id)
+	return nil
+}
+
+func TestDeleteRevokesSessions(t *testing.T) {
+	ctx := context.Background()
+	svc, _, _, _, _, _, _ := newService(t)
+	rev := &fakeRevoker{}
+	svc.SetSessionRevoker(rev)
+	alice := pii.Subject{Instance: "demo.example", UserID: "alice"}
+	o, _ := svc.Upload(ctx, alice, nil, "memo.odt", bytes.NewReader([]byte("x")))
+
+	if err := svc.Delete(ctx, alice, o.ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(rev.revoked) != 1 || rev.revoked[0] != o.ID {
+		t.Errorf("delete did not revoke sessions for %s: %v", o.ID, rev.revoked)
+	}
+}
+
 func TestListIsPermissionFiltered(t *testing.T) {
 	ctx := context.Background()
 	svc, _, _, _, _, _, _ := newService(t)

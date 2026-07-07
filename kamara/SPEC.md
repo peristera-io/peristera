@@ -221,9 +221,14 @@ Kamara mints, not the userinfo bearer.
   name on upload, so both `GetFile` and the `/v1` + browser downloads serve a
   correct `Content-Type` and an RFC 6266 `Content-Disposition` (with a
   `filename*` for non-ASCII names) instead of a blanket `octet-stream`.
+- **The `/edit/{id}` page** (cookie-authed, `internal/web`) mints the token,
+  resolves the engine's editor URL from its WOPI discovery (`internal/wopi`
+  `Discovery`), and renders an auto-submitting form embedding the Collabora
+  iframe (the token rides the POST body, not the URL). Deleting a file drops
+  its editing sessions (`SessionRevoker` hook), over and above the per-call
+  OpenFGA re-check.
 - **Not yet:** WOPI locks (`SupportsLocks=false` — the M6 DoD is single-user
-  open→edit→save; co-editing works on the same document key but is not gated);
-  the `/edit` page + iframe embed (s3).
+  open→edit→save; co-editing works on the same document key but is not gated).
 
 ## 8. Cross-cutting conventions (files are user data)
 

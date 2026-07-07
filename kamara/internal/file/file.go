@@ -164,14 +164,27 @@ type TxRunner interface {
 	Reader() Stores
 }
 
+// SessionRevoker drops any editing sessions bound to an object — an optional
+// hook so deleting a file proactively invalidates a live editor's WOPI token
+// (satisfied by *wopi.Sessions; kept an interface so the domain doesn't import
+// the wopi package). The per-call OpenFGA re-check already invalidates on
+// delete; this also clears the rows.
+type SessionRevoker interface {
+	Revoke(ctx context.Context, objectID string) error
+}
+
 // Service is the file domain.
 type Service struct {
-	tx     TxRunner
-	authz  Authorizer
-	blobs  blob.Store
-	cipher *crypto.Cipher
-	now    func() time.Time
+	tx      TxRunner
+	authz   Authorizer
+	blobs   blob.Store
+	cipher  *crypto.Cipher
+	revoker SessionRevoker
+	now     func() time.Time
 }
+
+// SetSessionRevoker wires the optional WOPI-session revoker (ADR-0018).
+func (s *Service) SetSessionRevoker(r SessionRevoker) { s.revoker = r }
 
 // NewService builds the service and registers the file personal-data
 // descriptor (ADR-0009). Pass pii.Default in production, a fresh registry
@@ -372,6 +385,11 @@ func (s *Service) Delete(ctx context.Context, caller pii.Subject, objectID strin
 		// Containment tuple cleanup (best-effort; a dangling parent tuple to
 		// a deleted file is harmless, reconciled like the owner-tuple seam).
 		_ = s.authz.DeleteObjectTuple(ctx, folderObj(*folderID), ParentRelation, obj(objectID))
+	}
+	// Proactively drop any editing sessions for the now-deleted file (ADR-0018;
+	// best-effort — the per-call OpenFGA re-check already invalidates them).
+	if s.revoker != nil {
+		_ = s.revoker.Revoke(ctx, objectID)
 	}
 	return s.authz.Delete(ctx, caller, Relation, obj(objectID))
 }

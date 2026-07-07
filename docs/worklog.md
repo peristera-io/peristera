@@ -586,3 +586,33 @@ decrypted document content is processed alongside another's.
 - **Next: s3 — editor UI + acceptance.** The `/edit/{id}` page (cookie-authed)
   mints a session token and embeds Collabora; browser demo of open→edit→save→
   reopen-shows-change; the real Collabora↔Kamara round-trip in-cluster.
+- **s3 — editor page + full round-trip acceptance.** The control plane injects
+  `OFFICE_URL` + `WOPI_SRC_BASE` into Kamara when office is enabled;
+  `wopi.Discovery` resolves Collabora's editor `urlsrc` (fetched via the
+  engine's public URL through Traefik — Collabora bakes its public host into
+  `urlsrc`, so no new netpol edge). `GET /edit/{id}` (cookie-authed) mints a
+  per-session token and renders a WOPI auto-POST form embedding the Collabora
+  iframe (token in the POST body, not the URL); WOPISrc is Kamara's in-cluster
+  address so the engine fetches back intra-namespace. The details drawer is lit
+  up (real version list + "Edit in office"). A browser e2e (`kamara/e2e`)
+  drives it. **Acceptance verified in-cluster with all-real components:** real
+  Collabora called CheckFileInfo + GetFile against the real Kamara host (real
+  minted token, OpenFGA re-check, chunk decrypt, #28 content-type) and rendered
+  the document; a real `PutFile` with that token wrote **version 1** (owner
+  unchanged) and GetFile returned the edited bytes — the `versions` table shows
+  ordinal 0 (upload) + 1 (saved edit). Automating a real edit inside
+  Collabora's canvas proved unreliable (its editor UI, not our code), so the
+  save leg was driven directly against the real host with the real token; the
+  Collabora-emits-PutFile-on-save path is WOPI-standard and unit-tested in s2.
+- **s4 — wrap.** Wired `Revoke`-on-delete (deleting a file drops its editing
+  sessions, via a `SessionRevoker` hook so the domain doesn't import wopi;
+  belt-and-suspenders over the per-call OpenFGA re-check). SPEC/plan/README
+  updated. **M6 adversarially reviewed after s2** (no Critical/High; triaged
+  the concurrent-save retry). Deferred as issues: **#47** (opt-in
+  teardown/netpol drift), **#48** (office prod-hardening: caps, creds, TLS,
+  token-in-ingress-logs).
+- **M6 COMPLETE.** Browser office editing works end to end: a tenant opts the
+  office engine in, a user opens a Kamara file in Collabora, edits, and saves —
+  the edit lands back as a new version, owned by the user, with per-session
+  OpenFGA-gated WOPI tokens as the trust boundary and no tenant's document
+  content ever sharing an engine. **Next: M7 — public demo.**

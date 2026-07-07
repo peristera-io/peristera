@@ -129,6 +129,7 @@ func main() {
 	// WOPI host (ADR-0018): the office engine opens/saves files here, authed by
 	// per-session access tokens re-checked against OpenFGA on every call.
 	sessions := wopi.NewSessions(db.WopiSessions(), az, 0)
+	svc.SetSessionRevoker(sessions) // deleting a file drops its editing sessions
 	wopiHost := api.NewWopi(svc, sessions, 0)
 
 	// Browser UI: the OIDC relying-party (cookie session) beside the bearer

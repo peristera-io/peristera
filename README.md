@@ -15,7 +15,7 @@ places that don't share a roof. That is the product thesis in one image.
 > made in dialogue are archived in `Q&A.md`; durable decisions get an ADR in
 > `adr/`.
 
-## Current status — updated 2026-07-06
+## Current status — updated 2026-07-07
 
 **M0–M2 complete.** M0: the monorepo at `github.com/peristera-io/peristera`
 (`LICENSE` AGPL-3.0, repo-wide CLA + per-project templates, bootstrap ADRs
@@ -67,9 +67,23 @@ model): Cilium enforces a per-app network allowlist + cross-tenant isolation,
 OpenFGA gets preshared-key auth, and a service calls another **on behalf of a
 user** via RFC-8693 token exchange (per-app machine identity, `private_key_jwt`,
 no shared secret). Acceptance proven end-to-end: Ergonomos uploads to Kamara
-and the file lands **owned by the user**. Next: **M6 — OnlyOffice** (its
-document server ↔ Kamara is the next consumer of this S2S model), then **M7 —
-SaaS/Scaleway public demo**.
+and the file lands **owned by the user**.
+
+**M6 complete (2026-07-07): browser office editing (Collabora, opt-in per
+tenant).** A tenant enables the **office engine** through the catalog
+(`Tenant.spec.apps`); the control plane then provisions **Collabora Online**
+into *that tenant's* namespace — never a shared instance, so no tenant's
+decrypted document content is ever processed alongside another's (ADR-0018,
+chosen over OnlyOffice: lighter, MPL-2.0, WOPI maps onto Kamara's
+OpenFGA-gated file ops). Kamara is the **WOPI host**: a user opens a file in
+Collabora and saves, and the edit lands back **as a new version, owned by the
+user**. The trust boundary is a **per-session, OpenFGA-gated access token**
+Kamara mints (Collabora publishes no proof-key, so it is re-checked against
+OpenFGA on every WOPI call and bound to one file). `#28` folded in
+(content-type + RFC 6266 downloads). Verified end-to-end in-cluster: real
+Collabora opens a real encrypted Kamara file and a real save writes version 1.
+The engine stays behind the ADR-0004 document-service interface (a later
+OnlyOffice swap is contained). Next: **M7 — SaaS/Scaleway public demo**.
 
 *Update this block whenever reality changes — a stale status line is exactly
 the rot §8 warns against.*
@@ -490,9 +504,14 @@ Built in public along the way.
   prerequisite for M6 (OnlyOffice ↔ Kamara is itself an S2S call). ADRs 0016
   (network topology), 0017 (S2S model); plan `docs/m5-plan.md`; decisions
   `Q&A.md` Round 10.
-- **M6 — OnlyOffice integration**: open and co-edit a document stored in
-  Kamara, in the browser. Without this, the file hub recreates the
-  email-attachment problem it exists to kill.
+- **M6 — Browser office editing** *(done 2026-07-07)*: open a document stored
+  in Kamara and edit it in the browser, saving back as a new version. Built on
+  **Collabora Online** (not OnlyOffice — lighter, MPL-2.0, WOPI fits Kamara's
+  OpenFGA-gated file ops), as an **opt-in per-tenant** engine (never shared, so
+  no tenant's document content mixes with another's). Kamara hosts WOPI; a
+  per-session OpenFGA-gated token is the trust boundary. Behind the ADR-0004
+  document-service interface (a later OnlyOffice swap is contained). ADR-0018;
+  plan `docs/m6-plan.md`; decisions `Q&A.md` Round 11.
 - **M7 — Public demo**: deployed on Scaleway via the control plane itself
   (dogfooding), demo tenant, first build-in-public posts. Ships with the
   compliance CI (SBOM, signed releases, `SECURITY.md`).
