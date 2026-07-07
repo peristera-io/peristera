@@ -1,0 +1,40 @@
+# Remote state in Scaleway Object Storage (S3-compatible). Off by default so a
+# fresh `tofu init` works with local state; turn it on for the real deploy so
+# state (which can hold secret values) lives in the cloud, not on a laptop.
+#
+# Two-phase, because the state bucket must exist before it can hold state:
+#
+#   1. Create the bucket once, out of band (keeps it out of this config's
+#      lifecycle, so `tofu destroy` never deletes the store holding its own
+#      state):
+#        scw object bucket create name=peristera-tfstate region=fr-par
+#
+#   2. Map the Scaleway keys to the AWS names the s3 backend reads, then
+#      migrate:
+#        export AWS_ACCESS_KEY_ID="$SCW_ACCESS_KEY"
+#        export AWS_SECRET_ACCESS_KEY="$SCW_SECRET_KEY"
+#        cp backend.tf.example backend.tf
+#        tofu init -migrate-state
+#
+# backend.tf is gitignored-by-pattern? No — commit it once real, but it holds
+# no secrets (bucket name only), so committing the real backend.tf is fine.
+
+terraform {
+  backend "s3" {
+    bucket = "peristera-tfstate"
+    key    = "m7/terraform.tfstate"
+    region = "fr-par"
+
+    endpoints = {
+      s3 = "https://s3.fr-par.scw.cloud"
+    }
+
+    # Scaleway is S3-compatible but not AWS: skip the AWS-only preflight checks
+    # and the newer object checksums Scaleway rejects.
+    skip_credentials_validation = true
+    skip_region_validation      = true
+    skip_requesting_account_id  = true
+    skip_metadata_api_check     = true
+    skip_s3_checksum            = true
+  }
+}

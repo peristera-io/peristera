@@ -1,0 +1,19 @@
+# Let's Encrypt via HTTP-01, solved through the k3s-bundled Traefik. Per-host
+# (no wildcard, no DNS-01 webhook) — the spike proved this issues a real cert
+# in ~40s, and model A only ever needs per-host certs (cp.<domain>,
+# iam.<domain>, and later one per tenant issuer/app). ${LE_EMAIL} is the ACME
+# account contact, injected from TF_VAR_letsencrypt_email at bootstrap.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: ${LE_EMAIL}
+    privateKeySecretRef:
+      name: letsencrypt-prod-account
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: traefik

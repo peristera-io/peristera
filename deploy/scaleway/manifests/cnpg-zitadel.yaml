@@ -1,0 +1,17 @@
+# Postgres for the shared Zitadel deployment (cloud). Single instance: the M7
+# topology is one node, so HA replicas have nowhere to land — that's the
+# accepted single-node trade-off (multi-node HA rides in with Kapsule later).
+# Scheduled dumps to Object Storage are the backup story (threaded into s1/s2).
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: zitadel-db
+  namespace: peristera-system
+spec:
+  instances: 1
+  storage:
+    size: 5Gi
+  bootstrap:
+    initdb:
+      database: zitadel
+      owner: zitadel

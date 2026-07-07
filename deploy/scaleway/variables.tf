@@ -26,3 +26,33 @@ variable "image" {
   type        = string
   default     = "ubuntu_jammy"
 }
+
+variable "domain" {
+  # Where tenants run (model A): <app>.<tenant>.peristera.app. The platform
+  # itself is cp.<domain> (control plane) and iam.<domain> (Zitadel). This
+  # zone must be delegated to Scaleway DNS so external-dns can write records.
+  description = "Public base domain, delegated to Scaleway DNS"
+  type        = string
+  default     = "peristera.app"
+}
+
+variable "letsencrypt_email" {
+  # The ACME account contact. Empty here on purpose — set it in the
+  # environment (TF_VAR_letsencrypt_email) so no personal address lands in
+  # the public repo. cert-manager needs it for the Let's Encrypt account.
+  description = "Contact email for the Let's Encrypt ACME account"
+  type        = string
+  default     = ""
+}
+
+variable "admin_cidr" {
+  # SSH (22) and the k3s API (6443) are exposed only to this CIDR. Scaleway
+  # opens 6443 to the whole internet by default, so this is load-bearing:
+  # set it to your /32 (TF_VAR_admin_cidr) before apply. The default is a
+  # deliberately unusable placeholder that documents the intent and fails
+  # closed if someone forgets — it locks admin access to a single TEST-NET-3
+  # address (RFC 5737) that reaches nothing.
+  description = "CIDR allowed to reach SSH (22) and the k3s API (6443)"
+  type        = string
+  default     = "203.0.113.1/32"
+}

@@ -36,3 +36,4 @@ ADR, not in chat history.
 - [ADR-0017](0017-service-to-service-auth.md) — Service-to-service auth (on-behalf-of via token exchange)
 - [ADR-0018](0018-document-editing-collabora-wopi.md) — Browser document editing (Collabora + WOPI, opt-in per tenant)
 - [ADR-0019](0019-operator-authorization.md) — Control-plane operator authorization (OpenFGA + audience)
+- [ADR-0020](0020-public-deployment-scaleway-k3s.md) — Public deployment: Scaleway single-node k3s, OpenTofu, per-host TLS

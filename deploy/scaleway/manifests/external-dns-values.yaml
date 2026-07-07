@@ -1,0 +1,43 @@
+# Helm values for external-dns (Scaleway provider). It watches Ingresses and
+# writes the matching A records into the Scaleway DNS zone for ${DOMAIN}, so
+# cp.<domain>, iam.<domain> and every tenant host resolve automatically —
+# no manual record-keeping. Scaleway API creds come from the `scaleway-secret`
+# Kubernetes secret bootstrap.sh creates (the ESO/external-dns root credential).
+provider:
+  name: scaleway
+
+# Ingress hosts are the authoritative source of records (cp/iam and each tenant
+# host). The Traefik LoadBalancer service is deliberately NOT a source: it
+# carries no hostname, and with policy=sync external-dns could churn records it
+# doesn't own.
+sources:
+  - ingress
+
+domainFilters:
+  - ${DOMAIN}
+
+policy: sync # create AND delete records, so a torn-down tenant leaves no stragglers
+registry: txt
+txtOwnerId: peristera-m7
+
+env:
+  - name: SCW_ACCESS_KEY
+    valueFrom:
+      secretKeyRef:
+        name: scaleway-secret
+        key: SCW_ACCESS_KEY
+  - name: SCW_SECRET_KEY
+    valueFrom:
+      secretKeyRef:
+        name: scaleway-secret
+        key: SCW_SECRET_KEY
+  - name: SCW_DEFAULT_ORGANIZATION_ID
+    valueFrom:
+      secretKeyRef:
+        name: scaleway-secret
+        key: SCW_DEFAULT_ORGANIZATION_ID
+  - name: SCW_DEFAULT_PROJECT_ID
+    valueFrom:
+      secretKeyRef:
+        name: scaleway-secret
+        key: SCW_DEFAULT_PROJECT_ID

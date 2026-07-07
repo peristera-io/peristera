@@ -652,3 +652,53 @@ reliability batch from the issue triage (branch `pre-m7-hardening`; plan
   not in the first public demo).
 
 **Batch complete; a fresh-context review then merge to main. Next: M7.**
+
+## 2026-07-07 — M7 s0 + s1 (cloud bootstrap, no meter yet)
+
+Peristera onto the public internet (Scaleway/k3s, OpenTofu). Plan
+`docs/m7-plan.md`, Q&A Round 13, ADR-0020.
+
+- **s0 (merged):** a `images.yml` CI job builds amd64 and pushes
+  `control-plane`/`kamara`/`ergonomos`/`stub` to `ghcr.io/peristera-io/<app>`
+  (public). The catalog resolves our app images from `IMAGE_PREFIX`/`IMAGE_TAG`
+  (`imageFor`), so dev stays `peristera-<app>:dev` (k3d-imported) and cloud
+  pulls from ghcr. `TestImageFor`/`TestPublicURL`.
+- **s1 http→https "scheme is config" (merged):** the reconciler's `publicURL`
+  makes scheme/port config (`TENANT_SCHEME`, `TENANT_EXTERNAL_PORT`); tenant
+  issuer + app URLs are `https://` on the cloud, `http://` in dev. (Also fixed
+  the real godog PAT trailing-newline bug found greening CI.)
+- **s1 cloud bootstrap (this branch, `m7-s1-cloud-bootstrap`):** the no-meter
+  build — nothing applied yet.
+  - **Tofu** (`deploy/scaleway/`): firewall (80/443 world; SSH + k3s API 6443 to
+    `admin_cidr` only — Scaleway opens 6443 by default), Secret Manager entries
+    for generated platform secrets (Zitadel masterkey, cp-openfga token,
+    admin-client keypair — born in Tofu, never on disk/git), Object Storage
+    state backend (`backend.tf.example`, two-phase), Cilium-ready cloud-init
+    (flannel + network-policy disabled).
+  - **bootstrap.sh** — cloud twin of `hack/dev-cluster.sh`: Cilium → cert-manager
+    (LE HTTP-01) → external-dns (Scaleway) → ESO → CNPG → Zitadel → cp-openfga →
+    control-plane → operator seed, all on real https.
+  - **manifests/** — cloud twins with https + ghcr + Secret-Manager secrets:
+    cert-manager issuer, external-dns values, ESO store+ExternalSecrets,
+    Zitadel values (iam.<domain>, generated masterkey, per-host cert — no
+    wildcard), CNPG, cp-openfga (ESO token), control-plane (ghcr image,
+    `TENANT_SCHEME=https`).
+  - **ADR-0020** — deployment architecture; **README** — operator runbook
+    (deploy, remote state, pause/resume, teardown).
+  - Validated offline: `tofu validate` green, `tofu fmt` clean, all rendered
+    manifests parse, no leftover placeholders.
+  - **Fresh-context adversarial review** (pre-apply, no meter). Fixed: the
+    `scaleway-secret` root credential is now created in the external-dns
+    namespace too (secretKeyRef is namespace-local — external-dns would have
+    crash-looped, breaking all DNS→certs); external-dns `sources` narrowed to
+    `[ingress]` (no record churn from the Traefik LB service); added a CoreDNS
+    hairpin override (`coredns-custom`, twin of dev's `coredns-sslip`) so the
+    control plane reaches Zitadel internally, not via node NAT-loopback; honest
+    end-of-run status. Confirmed non-issues: the four-secret name/key chain
+    matches end-to-end; the operator seed uses the chart's default iam-admin
+    PAT exactly as dev does.
+
+**Scope line:** s1 = platform (cp + iam) on TLS. Per-tenant TLS (each tenant's
+Zitadel-issuer + app ingresses getting their own per-host certs) is **s2**
+control-plane work, on the `TENANT_SCHEME=https` knob wired here. Next: present
+`tofu plan` + costs, then `apply` + verify the platform on real certs.
