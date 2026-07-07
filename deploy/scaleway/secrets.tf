@@ -44,7 +44,11 @@ locals {
     "peristera-zitadel-masterkey" = random_password.zitadel_masterkey.result
     "peristera-cp-openfga-token"  = random_password.cp_openfga_token.result
     "peristera-admin-client-crt"  = tls_self_signed_cert.admin_client.cert_pem
-    "peristera-admin-client-key"  = tls_private_key.admin_client.private_key_pem
+    # PKCS#8 ("BEGIN PRIVATE KEY") — the control plane parses the system-user
+    # key with x509.ParsePKCS8PrivateKey (dev's openssl key is PKCS#8 too).
+    # private_key_pem is PKCS#1 for RSA ("BEGIN RSA PRIVATE KEY"), which fails
+    # to parse. Same key material, so the already-issued cert stays valid.
+    "peristera-admin-client-key" = tls_private_key.admin_client.private_key_pem_pkcs8
   }
 }
 
