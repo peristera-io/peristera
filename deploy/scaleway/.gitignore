@@ -1,0 +1,9 @@
+# never commit state or provider binaries — state can hold sensitive values,
+# and real deploys keep state in the Scaleway Object Storage backend.
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
