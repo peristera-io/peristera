@@ -759,6 +759,23 @@ the next, meter-spending step**):
   chart ingress still serves tenant hosts). `go build`/`vet` clean, controller
   tests green (`TestIngressTLSGating`, `TestIssuerIngress`).
 
-**Verify (next, meter):** re-apply to the node, provision one tenant, confirm
-`https://<app>.<slug>.peristera.app` on real per-host certs end to end — the M7
-acceptance.
+**VERIFIED LIVE (2026-07-07, path a — branch image before merge).** Built the
+s2 control-plane image via `images.yml workflow_dispatch` on the branch (added a
+`type=ref,event=branch` tag rule so a feature branch pushes
+`ghcr…/<app>:<branch>`), pointed the running control plane at it +
+`TENANT_TLS_ISSUER=letsencrypt-prod`, applied the widened CoreDNS override, and
+provisioned tenant `demo`. Result: **Ready** (DatabaseReady/IAMProvisioned/
+AppsReady all True); `https://stub.demo.peristera.app` → 200 and
+`https://kamara.demo.peristera.app` → 302 /auth/login, both on real per-host
+Let's Encrypt certs; `https://demo.peristera.app/.well-known/openid-configuration`
+→ 200. **The M7 acceptance is met.**
+
+Wrinkle (not an s2 bug, filed): the FIRST cert (tenant issuer) hit a
+DNS-vs-challenge race — cert-manager attempted HTTP-01 before external-dns
+published `demo.peristera.app`; the challenge went `invalid` and cert-manager's
+post-failure backoff is long, so it needed a manual reset (`kubectl delete
+certificate tenant-demo-issuer-tls` → ingress-shim recreates it with no backoff
+→ issued in ~45s). The three app certs issued first try (DNS warm by then). So
+each brand-new tenant's issuer cert may lag on first provision until cert-manager
+retries; runbook workaround = delete the stuck Certificate. Robustness follow-up
+filed.
