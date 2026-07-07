@@ -18,9 +18,15 @@ rules:
   - apiGroups: [""]
     resources: ["namespaces"]
     verbs: ["get", "list", "watch", "create", "delete"]
+  # Secrets: get (per-name reads of CNPG creds + own secrets) and create
+  # (per-tenant secrets). Deliberately NO list/watch — the SA must not be able
+  # to enumerate every secret in the cluster (Zitadel masterkey, system-user
+  # key, kube-system) (#7). The controller caches no Secrets and only Gets them
+  # by name, so list/watch is unnecessary. A namespace-scoped model (per-tenant
+  # Roles) is the fuller MSP-alpha fix.
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["get", "list", "watch", "create"]
+    verbs: ["get", "create"]
   - apiGroups: ["postgresql.cnpg.io"]
     resources: ["clusters", "databases"]
     verbs: ["get", "list", "watch", "create", "delete"]

@@ -6,8 +6,10 @@ package main
 import (
 	"os"
 
+	corev1 "k8s.io/api/core/v1"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	"github.com/peristera-io/peristera/control-plane/apis/v1alpha1"
@@ -40,6 +42,13 @@ func main() {
 		LeaderElection:          true,
 		LeaderElectionID:        "control-plane.peristera.io",
 		LeaderElectionNamespace: env("CP_NAMESPACE", "peristera-system"),
+		// Don't cache Secrets: the informer cache would need cluster-wide
+		// secrets list/watch (the whole point of #7). Reads go direct via the
+		// API (get by name), so the SA needs only get + create, never list all
+		// secrets. The reconciler only ever Gets secrets by name, never Lists.
+		Client: client.Options{Cache: &client.CacheOptions{
+			DisableFor: []client.Object{&corev1.Secret{}},
+		}},
 	})
 	if err != nil {
 		lg.Error(err, "creating manager")
