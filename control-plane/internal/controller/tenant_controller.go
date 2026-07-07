@@ -57,6 +57,15 @@ type TenantReconciler struct {
 	// LoginDomain is the deployment's ExternalDomain — every new
 	// instance must trust it or the shared Login v2 cannot serve it.
 	LoginDomain string
+	// Backups (R85): when BackupBucket is set (cloud), each tenant's CNPG
+	// cluster streams WAL + base backups to this Object Storage bucket at
+	// BackupEndpoint, authenticated with the S3 key/secret. Empty = no backups
+	// (dev). The credentials are copied into a per-tenant Secret the CNPG
+	// cluster references.
+	BackupBucket   string
+	BackupEndpoint string
+	BackupS3KeyID  string
+	BackupS3Secret string
 }
 
 // tenantDomain is the tenant's public base — its OIDC issuer host and the
@@ -334,20 +343,21 @@ func (r *TenantReconciler) ensureNamespace(ctx context.Context, tenant *v1alpha1
 }
 
 func (r *TenantReconciler) ensureDatabase(ctx context.Context, tenant *v1alpha1.Tenant, ns string) error {
+	// The backup credentials must exist before the Cluster that references them
+	// (create-only, like everything else), and the ScheduledBackup after the
+	// Cluster. No-ops when backups are disabled (dev).
+	if err := r.ensureBackupCreds(ctx, tenant, ns); err != nil {
+		return err
+	}
+
 	db := &unstructured.Unstructured{}
 	db.SetGroupVersionKind(cnpgGVK)
 	err := r.Get(ctx, client.ObjectKey{Namespace: ns, Name: "db"}, db)
-	if err == nil {
-		return nil
-	}
-	if !apierrors.IsNotFound(err) {
+	if err != nil && !apierrors.IsNotFound(err) {
 		return err
 	}
-	db = &unstructured.Unstructured{Object: map[string]any{
-		"apiVersion": "postgresql.cnpg.io/v1",
-		"kind":       "Cluster",
-		"metadata":   map[string]any{"name": "db", "namespace": ns},
-		"spec": map[string]any{
+	if apierrors.IsNotFound(err) {
+		spec := map[string]any{
 			// Dev sizing; opinionated production defaults are an M6 concern.
 			"instances": int64(1),
 			"storage":   map[string]any{"size": "1Gi"},
@@ -361,13 +371,28 @@ func (r *TenantReconciler) ensureDatabase(ctx context.Context, tenant *v1alpha1.
 			// HA (M6).
 			"smartShutdownTimeout": int64(10),
 			"stopDelay":            int64(30),
-		},
-	}}
-	db.SetGroupVersionKind(cnpgGVK)
-	if err := controllerutil.SetControllerReference(tenant, db, r.Scheme()); err != nil {
-		return err
+		}
+		// Stream WAL + base backups to Object Storage (R85), so a tenant's data
+		// is recoverable. Cloud-only; nil in dev.
+		if b := r.barmanBackup(tenant.Spec.Slug); b != nil {
+			spec["backup"] = b
+		}
+		db = &unstructured.Unstructured{Object: map[string]any{
+			"apiVersion": "postgresql.cnpg.io/v1",
+			"kind":       "Cluster",
+			"metadata":   map[string]any{"name": "db", "namespace": ns},
+			"spec":       spec,
+		}}
+		db.SetGroupVersionKind(cnpgGVK)
+		if err := controllerutil.SetControllerReference(tenant, db, r.Scheme()); err != nil {
+			return err
+		}
+		if err := r.Create(ctx, db); err != nil {
+			return err
+		}
 	}
-	return r.Create(ctx, db)
+
+	return r.ensureScheduledBackup(ctx, tenant, ns)
 }
 
 func (r *TenantReconciler) databaseReady(ctx context.Context, ns string) (bool, error) {

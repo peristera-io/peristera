@@ -75,6 +75,11 @@ func main() {
 		ImageTag:     env("IMAGE_TAG", "dev"),
 		URLScheme:    env("TENANT_SCHEME", "http"),
 		TLSIssuer:    env("TENANT_TLS_ISSUER", ""),
+		// Backups (R85): empty bucket disables it (dev).
+		BackupBucket:   env("BACKUP_BUCKET", ""),
+		BackupEndpoint: env("BACKUP_ENDPOINT", ""),
+		BackupS3KeyID:  env("BACKUP_S3_KEY_ID", ""),
+		BackupS3Secret: env("BACKUP_S3_SECRET", ""),
 	}
 	// IAM provisioning switches on when the system-user key is provided
 	// (dev: a file path; in-cluster: the mounted admin-client-tls Secret).

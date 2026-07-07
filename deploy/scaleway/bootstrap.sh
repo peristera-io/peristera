@@ -29,16 +29,23 @@ SCW_REGION="${SCW_REGION:-fr-par}"
 # The public marketing/landing apex (s3). Must also be delegated to Scaleway
 # DNS so external-dns can publish it and cert-manager can issue its cert.
 LANDING_DOMAIN="${LANDING_DOMAIN:-peristera.io}"
-export DOMAIN LE_EMAIL IMAGE_TAG SCW_REGION SCW_DEFAULT_PROJECT_ID LANDING_DOMAIN
+# Object Storage bucket CNPG streams Postgres backups to (R85). Defaults to the
+# Tofu output if not set explicitly.
+BACKUPS_BUCKET="${BACKUPS_BUCKET:-$(tofu output -raw backups_bucket 2>/dev/null || true)}"
+: "${BACKUPS_BUCKET:?set BACKUPS_BUCKET (e.g. tofu output -raw backups_bucket)}"
+export DOMAIN LE_EMAIL IMAGE_TAG SCW_REGION SCW_DEFAULT_PROJECT_ID LANDING_DOMAIN BACKUPS_BUCKET
 
 CILIUM_VERSION=${CILIUM_VERSION:-1.19.4}
 CERT_MANAGER_VERSION=${CERT_MANAGER_VERSION:-v1.16.2}
 ESO_VERSION=${ESO_VERSION:-0.10.5}
 EXTERNAL_DNS_VERSION=${EXTERNAL_DNS_VERSION:-1.15.0}
+# Pin CNPG to a 1.30 chart: in-tree barman-cloud backups (what we use) are
+# removed in operator 1.31 (migrate to the barman-cloud plugin — follow-up).
+CNPG_CHART_VERSION=${CNPG_CHART_VERSION:-0.29.0}
 
 # envsubst limited to our named placeholders, so nothing else in the manifests
 # is accidentally expanded.
-SUBST='${DOMAIN} ${LE_EMAIL} ${IMAGE_TAG} ${SCW_REGION} ${SCW_DEFAULT_PROJECT_ID} ${LANDING_DOMAIN}'
+SUBST='${DOMAIN} ${LE_EMAIL} ${IMAGE_TAG} ${SCW_REGION} ${SCW_DEFAULT_PROJECT_ID} ${LANDING_DOMAIN} ${BACKUPS_BUCKET}'
 apply_tmpl() { envsubst "$SUBST" < "$1" | kubectl apply -f - ; }
 
 echo "==> helm repos"
@@ -110,8 +117,9 @@ kubectl rollout restart deploy/coredns -n kube-system >/dev/null
 kubectl rollout status deploy/coredns -n kube-system --timeout=120s
 
 echo "==> cloudnative-pg + zitadel database"
-helm upgrade --install cnpg cnpg/cloudnative-pg -n cnpg-system --create-namespace --wait
-kubectl apply -f manifests/cnpg-zitadel.yaml
+helm upgrade --install cnpg cnpg/cloudnative-pg -n cnpg-system --create-namespace \
+  --version "$CNPG_CHART_VERSION" --wait
+apply_tmpl manifests/cnpg-zitadel.yaml
 kubectl wait --for=condition=Ready cluster/zitadel-db -n "$NS" --timeout=300s
 if ! kubectl get secret zitadel-db-dsn -n "$NS" >/dev/null 2>&1; then
   PW=$(kubectl get secret zitadel-db-app -n "$NS" -o jsonpath='{.data.password}' | base64 -d)
