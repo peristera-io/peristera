@@ -11,6 +11,7 @@ import (
 	"net/http"
 
 	"github.com/oapi-codegen/runtime"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
 const (
@@ -56,6 +57,21 @@ type TenantCreate struct {
 	Slug string `json:"slug"`
 }
 
+// TenantUserCreate defines model for TenantUserCreate.
+type TenantUserCreate struct {
+	// Email Login and contact email of the user to create.
+	Email openapi_types.Email `json:"email"`
+}
+
+// TenantUserCredentials defines model for TenantUserCredentials.
+type TenantUserCredentials struct {
+	// Login The user's login name (their email).
+	Login string `json:"login"`
+
+	// Password Generated one-time password (change required at first login). Returned once and never stored — relay it to the tenant.
+	Password string `json:"password"`
+}
+
 // BadRequest defines model for BadRequest.
 type BadRequest = Error
 
@@ -67,6 +83,9 @@ type Unauthorized = Error
 
 // CreateTenantJSONRequestBody defines body for CreateTenant for application/json ContentType.
 type CreateTenantJSONRequestBody = TenantCreate
+
+// CreateTenantUserJSONRequestBody defines body for CreateTenantUser for application/json ContentType.
+type CreateTenantUserJSONRequestBody = TenantUserCreate
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
@@ -82,6 +101,9 @@ type ServerInterface interface {
 	// Get one tenant
 	// (GET /tenants/{slug})
 	GetTenant(w http.ResponseWriter, r *http.Request, slug string)
+	// Create an admin user in a tenant
+	// (POST /tenants/{slug}/users)
+	CreateTenantUser(w http.ResponseWriter, r *http.Request, slug string)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -186,6 +208,37 @@ func (siw *ServerInterfaceWrapper) GetTenant(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetTenant(w, r, slug)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateTenantUser operation middleware
+func (siw *ServerInterfaceWrapper) CreateTenantUser(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "slug" -------------
+	var slug string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "slug", r.PathValue("slug"), &slug, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "slug", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateTenantUser(w, r, slug)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -319,6 +372,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("POST "+options.BaseURL+"/tenants", wrapper.CreateTenant)
 	m.HandleFunc("DELETE "+options.BaseURL+"/tenants/{slug}", wrapper.DeleteTenant)
 	m.HandleFunc("GET "+options.BaseURL+"/tenants/{slug}", wrapper.GetTenant)
+	m.HandleFunc("POST "+options.BaseURL+"/tenants/{slug}/users", wrapper.CreateTenantUser)
 
 	return m
 }

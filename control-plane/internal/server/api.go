@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sort"
 
@@ -11,6 +12,7 @@ import (
 
 	"github.com/peristera-io/peristera/control-plane/apis/v1alpha1"
 	"github.com/peristera-io/peristera/control-plane/internal/server/gen"
+	"github.com/peristera-io/peristera/control-plane/internal/zitadel"
 )
 
 // api implements gen.ServerInterface (generated from api/openapi.yaml).
@@ -116,4 +118,31 @@ func (a *api) DeleteTenant(w http.ResponseWriter, r *http.Request, slug string) 
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// CreateTenantUser creates an admin user in the tenant's own Zitadel instance
+// and returns a generated one-time password — the operator's handover artifact
+// (no more digging a Secret out with kubectl), and the same path for lost-login
+// recovery. The password is returned once and never stored.
+func (a *api) CreateTenantUser(w http.ResponseWriter, r *http.Request, slug string) {
+	var in gen.TenantUserCreate
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		apiError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	login, password, err := a.s.createTenantUser(r.Context(), slug, string(in.Email))
+	switch {
+	case errors.Is(err, errBadEmail):
+		apiError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, errNoTenant):
+		apiError(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, errNotProvisioned):
+		apiError(w, http.StatusUnprocessableEntity, err.Error())
+	case errors.Is(err, zitadel.ErrUserExists):
+		apiError(w, http.StatusConflict, "a user with this email already exists")
+	case err != nil:
+		apiError(w, http.StatusInternalServerError, err.Error())
+	default:
+		writeJSON(w, http.StatusCreated, gen.TenantUserCredentials{Login: login, Password: password})
+	}
 }

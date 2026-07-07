@@ -2,8 +2,6 @@ package controller
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"fmt"
 	"strings"
 
@@ -403,50 +401,4 @@ func (r *TenantReconciler) createIfAbsent(ctx context.Context, tenant *v1alpha1.
 		return err
 	}
 	return r.Create(ctx, obj)
-}
-
-// ensureInitialAdmin creates the tenant's first human user and hands the
-// generated credentials over as a Secret in the tenant namespace — the
-// MSP's handover artifact. Skipped entirely once the Secret exists.
-func (r *TenantReconciler) ensureInitialAdmin(ctx context.Context, tenant *v1alpha1.Tenant, ns string) error {
-	sec := &corev1.Secret{}
-	err := r.Get(ctx, client.ObjectKey{Namespace: ns, Name: "initial-admin"}, sec)
-	if err == nil {
-		return nil
-	}
-	if !apierrors.IsNotFound(err) {
-		return err
-	}
-
-	password, err := generatePassword()
-	if err != nil {
-		return err
-	}
-	issuer := tenant.Status.Issuer
-	orgID, err := r.IAM.FirstOrgID(ctx, issuer)
-	if err != nil {
-		return err
-	}
-	email := fmt.Sprintf("admin@%s", r.tenantDomain(tenant))
-	if err := r.IAM.EnsureHumanUser(ctx, issuer, orgID, "admin", email, password); err != nil {
-		return err
-	}
-	sec = &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "initial-admin", Namespace: ns},
-		StringData: map[string]string{"username": "admin", "password": password},
-	}
-	if err := controllerutil.SetControllerReference(tenant, sec, r.Scheme()); err != nil {
-		return err
-	}
-	return r.Create(ctx, sec)
-}
-
-// generatePassword returns a random password that satisfies Zitadel's
-// default complexity policy (upper, lower, digit, symbol).
-func generatePassword() (string, error) {
-	raw := make([]byte, 18)
-	if _, err := rand.Read(raw); err != nil {
-		return "", err
-	}
-	return "Aa1!" + base64.RawURLEncoding.EncodeToString(raw), nil
 }
