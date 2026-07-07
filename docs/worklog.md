@@ -811,3 +811,30 @@ Filed #53 (post-M7 tenant dashboard for self-service user management — the
 current gap: a tenant's auto-created `admin` is a plain org member, no native
 surface to add users). **M7 s2 fully verified** (tenant on real per-host TLS,
 hands-off provisioning, clean off-boarding). PR #51.
+
+## 2026-07-07 — Tenant user creation from the control plane
+
+Replaced the silent auto-provisioned `initial-admin` Secret (operator had to
+`kubectl` the credentials out — not sustainable) with an explicit operator
+action, at the founder's request. Branch `m7-tenant-users`.
+
+- **`POST /api/v1/tenants/{slug}/users {email}`** creates a human user
+  (login = email) as `ORG_OWNER` in the tenant's own Zitadel instance and
+  returns a generated **one-time password** — the handover artifact, returned
+  once and never stored. The same endpoint covers the first admin and
+  lost-login recovery. Maps 404 (no tenant) / 422 (not provisioned) / 409
+  (duplicate email).
+- **zitadel**: `CreateHumanUser` (returns id) + `AddOrgMember` (grants
+  `ORG_OWNER`, so the tenant admin can manage its own users in the tenant
+  Zitadel console at `https://<tenant>/ui/console` — the interim before the
+  tenant dashboard #53); `ErrUserExists`.
+- **Reconciler**: no longer creates an admin or the `initial-admin` Secret.
+- **CP UI**: an "Add admin" form on Ready rows renders the one-time password
+  inline (HTMX). Shared `Server.createTenantUser` backs both API and UI.
+- **Tests**: godog tenant-apps scenario rewritten (create a user via the API,
+  assert credentials returned); unit tests for `genPassword` + email validation.
+
+Rationale: user management is an operator surface, not a k8s Secret; a lost
+login is just "create another user." Naturally pairs with the optional-domain
+tenant-creation flow (s4). Verify: build branch image, create a user for `demo`
+via the CP, log into `demo.peristera.app/ui/console` with it.
