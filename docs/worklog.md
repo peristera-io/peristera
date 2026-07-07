@@ -779,3 +779,35 @@ certificate tenant-demo-issuer-tls` → ingress-shim recreates it with no backof
 each brand-new tenant's issuer cert may lag on first provision until cert-manager
 retries; runbook workaround = delete the stuck Certificate. Robustness follow-up
 filed.
+
+## 2026-07-07 — M7 s2 hardening: cert self-heal + metrics-server (verified live)
+
+Two follow-ups surfaced provisioning tenants on the live cloud, both fixed and
+verified end to end:
+
+- **Cert self-heal (#52).** The external-dns/cert-manager first-issue race hit
+  every new tenant's issuer + app certs, needing manual `kubectl delete
+  certificate`. New `healTenantCerts` (control-plane, runs each reconcile,
+  cloud-only): deletes any tenant Certificate that is `Ready=False` with
+  `failedIssuanceAttempts >= 1` (i.e. in cert-manager's long post-failure
+  backoff); ingress-shim recreates it fresh and, DNS now published, it issues.
+  The failure gate means a still-issuing cert (0 failures) is never touched, so
+  Let's Encrypt is never hammered. Adds `cert-manager.io/certificates`
+  get/list/watch/delete to the control-plane ClusterRole (delete only). Unit
+  test `TestCertStuck`. **Verified:** fresh tenant `beta` reached Ready fully
+  hands-off — the reconciler auto-reset `tenant-beta-issuer-tls` 3× (~22s apart)
+  until DNS warmed, then issued; `https://stub.beta.peristera.app` served a real
+  cert. Off-boarding then GC'd the cross-namespace issuer ingress + cert in
+  `peristera-system` with zero leftovers (cluster-scoped-owner GC works).
+- **metrics-server disabled on cloud k3s (#42).** A wedged `tenant-test`
+  namespace (stuck `Terminating` 72 min) traced to the same dev issue: under
+  Cilium, k3s's metrics-server can't scrape the kubelet, its `metrics.k8s.io`
+  aggregated API stays unavailable, and namespace GC (which blocks on
+  aggregated-API discovery) stalls every deletion. The cloud cloud-init missed
+  the `--disable=metrics-server` dev already uses. Fixed in `instance.tf` +
+  disabled on the running node (k3s config).
+
+Filed #53 (post-M7 tenant dashboard for self-service user management — the
+current gap: a tenant's auto-created `admin` is a plain org member, no native
+surface to add users). **M7 s2 fully verified** (tenant on real per-host TLS,
+hands-off provisioning, clean off-boarding). PR #51.
