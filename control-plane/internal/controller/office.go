@@ -24,10 +24,11 @@ import (
 // so its /edit page may embed the editor iframe. Create-only, like the rest
 // of provisioning.
 //
-// Dev-only notes (hardening tracked for the SaaS era): runs plain HTTP behind
-// Traefik (no TLS termination flag); admin console uses a fixed dev password;
-// and the pod carries the Linux capabilities coolwsd needs to build its
-// per-document chroot jails.
+// The engine speaks plain HTTP behind Traefik (which terminates TLS); on TLS
+// it is told termination happens upstream so it advertises https URLs. Dev-only
+// notes (hardening tracked for the SaaS era): the admin console uses a fixed dev
+// password; and the pod carries the Linux capabilities coolwsd needs to build
+// its per-document chroot jails.
 func (r *TenantReconciler) ensureOffice(ctx context.Context, tenant *v1alpha1.Tenant, ns string, app CatalogApp) error {
 	labels := map[string]string{
 		"app.kubernetes.io/name":       app.Name,
@@ -46,8 +47,7 @@ func (r *TenantReconciler) ensureOffice(ctx context.Context, tenant *v1alpha1.Te
 		// WOPI host allow-list: only this tenant's in-cluster Kamara.
 		{Name: "aliasgroup1", Value: kamaraInCluster},
 		// Plain HTTP behind Traefik; allow embedding only from Kamara's origin.
-		{Name: "extra_params", Value: fmt.Sprintf(
-			"--o:ssl.enable=false --o:ssl.termination=false --o:net.frame_ancestors=%s", kamaraOrigin)},
+		{Name: "extra_params", Value: officeExtraParams(r.tlsEnabled(), kamaraOrigin)},
 		{Name: "DONT_GEN_SSL_CERT", Value: "1"},
 		{Name: "username", Value: "admin"},
 		{Name: "password", Value: "admin"},
@@ -128,4 +128,20 @@ func (r *TenantReconciler) ensureOffice(ctx context.Context, tenant *v1alpha1.Te
 		}
 	}
 	return nil
+}
+
+// officeExtraParams builds the coolwsd `extra_params`. The engine always speaks
+// plain HTTP (Traefik terminates TLS), but `ssl.termination` controls the scheme
+// it stamps into the WOPI discovery `urlsrc`: on TLS it must be https, or Kamara's
+// HTTPS /edit page embeds an http:// iframe and the browser blocks it as mixed
+// content. In dev (Kamara is http too) it stays false so the schemes match.
+// frame_ancestors is pinned to Kamara's origin so only Kamara may embed the editor.
+func officeExtraParams(tlsEnabled bool, kamaraOrigin string) string {
+	termination := "false"
+	if tlsEnabled {
+		termination = "true"
+	}
+	return fmt.Sprintf(
+		"--o:ssl.enable=false --o:ssl.termination=%s --o:net.frame_ancestors=%s",
+		termination, kamaraOrigin)
 }
