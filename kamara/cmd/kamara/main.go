@@ -147,6 +147,14 @@ func main() {
 		log.Fatalf("oidc: %v", err)
 	}
 	app := &webApp{svc: svc, rp: rp, instance: instance}
+	// Office editing (ADR-0018): wired only when the control plane injected the
+	// engine's URL (i.e. the tenant enabled the office app).
+	if officeURL := os.Getenv("OFFICE_URL"); officeURL != "" {
+		app.sessions = sessions
+		app.discovery = wopi.NewDiscovery(officeURL)
+		app.office = officeURL
+		app.wopiSrcBase = strings.TrimSuffix(env("WOPI_SRC_BASE", "http://localhost:5580"), "/")
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) })

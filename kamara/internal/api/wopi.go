@@ -95,6 +95,7 @@ func wopiToken(r *http.Request) string {
 // every save (it tracks updated_at), which is how the engine detects an
 // external change.
 func (h *WopiHandler) checkFileInfo(w http.ResponseWriter, r *http.Request, s wopi.Session) {
+	log.Printf("kamara wopi: CheckFileInfo file=%s write=%v", s.ObjectID, s.CanWrite)
 	o, err := h.svc.Get(r.Context(), s.Subject, s.ObjectID)
 	if err != nil {
 		h.failWopi(w, err)
@@ -122,6 +123,7 @@ func (h *WopiHandler) getFile(w http.ResponseWriter, r *http.Request, s wopi.Ses
 		h.failWopi(w, err)
 		return
 	}
+	log.Printf("kamara wopi: GetFile file=%s size=%d type=%s", s.ObjectID, o.Size, o.ContentType)
 	w.Header().Set("Content-Type", ContentType(o.ContentType))
 	if err := h.svc.Download(r.Context(), s.Subject, s.ObjectID, w); err != nil {
 		// Status/bytes may be partly flushed; can only log (like the API download).
@@ -133,7 +135,9 @@ func (h *WopiHandler) getFile(w http.ResponseWriter, r *http.Request, s wopi.Ses
 // only the PUT override (no locks); the file keeps its owner, the acting user
 // is recorded, and the new version ordinal is echoed in X-WOPI-ItemVersion.
 func (h *WopiHandler) putFile(w http.ResponseWriter, r *http.Request, s wopi.Session) {
-	if ov := r.Header.Get("X-WOPI-Override"); ov != "" && ov != "PUT" {
+	ov := r.Header.Get("X-WOPI-Override")
+	log.Printf("kamara wopi: PutFile file=%s override=%q write=%v", s.ObjectID, ov, s.CanWrite)
+	if ov != "" && ov != "PUT" {
 		// Lock/GetLock/etc. — unsupported (SupportsLocks=false).
 		w.WriteHeader(http.StatusNotImplemented)
 		return

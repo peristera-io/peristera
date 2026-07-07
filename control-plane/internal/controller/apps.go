@@ -279,6 +279,19 @@ func (r *TenantReconciler) ensureApps(ctx context.Context, tenant *v1alpha1.Tena
 			mounts = append(mounts, corev1.VolumeMount{Name: "s2s-key", MountPath: s2sKeyMountPath, ReadOnly: true})
 		}
 
+		// Office editing (ADR-0018): Kamara embeds the tenant's Collabora when
+		// the office app is enabled. It needs the engine's public URL (to fetch
+		// WOPI discovery and build the editor iframe) and its own in-cluster
+		// base (the WOPISrc the engine fetches back, intra-namespace). Injected
+		// only into kamara, only when office is on.
+		if app.Name == "kamara" && tenantEnables(tenant, "office") {
+			officeURL := fmt.Sprintf("http://office.%s:%s", r.tenantDomain(tenant), r.ExternalPort)
+			env = append(env,
+				corev1.EnvVar{Name: "OFFICE_URL", Value: officeURL},
+				corev1.EnvVar{Name: "WOPI_SRC_BASE", Value: fmt.Sprintf("http://kamara.%s.svc.cluster.local", ns)},
+			)
+		}
+
 		deploy := &appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: ns, Labels: labels},
 			Spec: appsv1.DeploymentSpec{

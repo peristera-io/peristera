@@ -48,7 +48,8 @@ func view(state string) (web.View, error) {
 	case "browse": // populated folder with the details drawer open
 		v := web.View{Crumbs: []file.Folder{root}, Folders: []file.Folder{sub},
 			Files: []file.Object{report, notes}, AllFolders: all}
-		v.Drawer = &report
+		v.Drawer = &web.DetailView{Object: report, Office: true, Latest: 1,
+			Versions: []file.Version{{Ordinal: 1, Size: 512000, Created: now}, {Ordinal: 0, Size: 480000, Created: now}}}
 		return v, nil
 	case "empty": // an empty folder (the dashed placeholder + its contrast)
 		return web.View{Crumbs: []file.Folder{root}, AllFolders: all}, nil
