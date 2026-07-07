@@ -41,6 +41,10 @@ jobs:
             type=ref,event=tag
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=main-,enable={{is_default_branch}}
+            # Branch-name tag (e.g. via workflow_dispatch on a feature branch),
+            # so a change can be deployed to the cloud for verification before
+            # it merges to main.
+            type=ref,event=branch
       - uses: docker/build-push-action@v6
         with:
           context: .
