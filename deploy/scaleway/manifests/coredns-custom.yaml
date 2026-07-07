@@ -20,3 +20,5 @@ metadata:
 data:
   peristera.override: |
     rewrite name regex (.*)\.${DOMAIN} traefik.kube-system.svc.cluster.local answer auto
+    rewrite name exact ${LANDING_DOMAIN} traefik.kube-system.svc.cluster.local
+    rewrite name regex (.*)\.${LANDING_DOMAIN} traefik.kube-system.svc.cluster.local answer auto

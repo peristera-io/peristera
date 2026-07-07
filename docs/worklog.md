@@ -889,3 +889,17 @@ ownership.
 **Live-verify (gated on `peristera.lu` delegated to Scaleway DNS):** create a
 tenant with `domain=peristera.lu` and confirm its apps serve on
 `https://<app>.peristera.lu`. This completes M7's tenant story.
+
+## 2026-07-07 — M7 s3 live: peristera.io + hairpin confirmed
+
+`peristera.io` delegated to Scaleway DNS (NS → scw.cloud); external-dns
+published the apex + `www` → node. The landing cert then stalled on
+cert-manager's **in-cluster HTTP-01 self-check timing out** — which
+**definitively confirms Scaleway has no NAT hairpin** (the pod can't reach the
+node's own Flexible IP), the exact reason the CoreDNS override exists for
+`.app`. The `coredns-custom` manifest only covered `${DOMAIN}`, so the landing
+apex wasn't routed internally. Fixed: added `${LANDING_DOMAIN}` (apex + a
+subdomain regex) to the override. Applied live → cert issued in ~45s.
+**`https://peristera.io` is live on a real Let's Encrypt cert** (200; `www`
+too). Same lesson applies to custom-domain tenants (#56): each custom apex
+needs a CoreDNS entry, not just DNS + a cert.
