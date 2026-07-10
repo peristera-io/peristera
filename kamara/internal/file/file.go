@@ -117,6 +117,13 @@ func (o Object) Previewable() bool {
 	return strings.HasPrefix(o.ContentType, "image/") && o.ContentType != "image/svg+xml"
 }
 
+// TextEditableName reports whether a to-be-created file with this name will
+// open in the text editor — so "new text file" can refuse a name like
+// photo.png before an empty object is created.
+func TextEditableName(name string) bool {
+	return Object{Name: name, ContentType: contentTypeOf(name)}.TextEditable()
+}
+
 // Version is one revision of an object (the versions table). Save-back from
 // the office engine appends a version (ADR-0018); the drawer lists them.
 type Version struct {
@@ -388,6 +395,23 @@ func (s *Service) ListVersions(ctx context.Context, caller pii.Subject, objectID
 	return s.tx.Reader().Objects.ListVersions(ctx, objectID)
 }
 
+// LatestOrdinal returns the object's newest version ordinal after an
+// authorization check — the text editor's optimistic-concurrency base,
+// without materializing the whole version list.
+func (s *Service) LatestOrdinal(ctx context.Context, caller pii.Subject, objectID string) (int, error) {
+	if err := s.authorize(ctx, caller, objectID); err != nil {
+		return 0, err
+	}
+	ord, ok, err := s.tx.Reader().Objects.MaxOrdinal(ctx, objectID)
+	if err != nil {
+		return 0, err
+	}
+	if !ok {
+		return 0, ErrNotFound
+	}
+	return ord, nil
+}
+
 // List returns the caller's files, permission-filtered through OpenFGA.
 func (s *Service) List(ctx context.Context, caller pii.Subject) ([]Object, error) {
 	ids, err := s.authz.ListObjects(ctx, caller, AccessRelation, Type)
@@ -419,20 +443,11 @@ func (s *Service) Delete(ctx context.Context, caller pii.Subject, objectID strin
 		} else if ok {
 			folderID = o.FolderID
 		}
-		hashes, err := st.Objects.ChunkHashesOf(ctx, objectID)
+		gone, err := reclaimObject(ctx, st, objectID)
 		if err != nil {
 			return err
 		}
-		if err := st.Objects.DeleteObject(ctx, objectID); err != nil {
-			return err
-		}
-		orphans, err = st.Objects.DecRef(ctx, hashes)
-		if err != nil {
-			return err
-		}
-		if err := st.Objects.DeleteChunks(ctx, orphans); err != nil {
-			return err
-		}
+		orphans = gone
 		return st.Search.Remove(ctx, objectID)
 	}); err != nil {
 		return err
@@ -468,6 +483,28 @@ func (s *Service) Get(ctx context.Context, caller pii.Subject, objectID string) 
 		return Object{}, ErrNotFound
 	}
 	return o, nil
+}
+
+// reclaimObject deletes one object's rows (cascading versions + manifest)
+// and decrements its chunk references, returning the hashes that reached
+// zero — their blobs are deletable after the transaction commits. The one
+// chunk-accounting sequence shared by Delete and DeleteFolderTree.
+func reclaimObject(ctx context.Context, st Stores, objectID string) ([]string, error) {
+	hashes, err := st.Objects.ChunkHashesOf(ctx, objectID)
+	if err != nil {
+		return nil, err
+	}
+	if err := st.Objects.DeleteObject(ctx, objectID); err != nil {
+		return nil, err
+	}
+	orphans, err := st.Objects.DecRef(ctx, hashes)
+	if err != nil {
+		return nil, err
+	}
+	if err := st.Objects.DeleteChunks(ctx, orphans); err != nil {
+		return nil, err
+	}
+	return orphans, nil
 }
 
 // contentTypeOf infers a MIME type from a file name's extension (#28). It

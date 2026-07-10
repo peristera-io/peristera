@@ -314,68 +314,61 @@ func (s *Service) DeleteFolder(ctx context.Context, caller pii.Subject, folderID
 // DeleteFolderTree removes a folder and everything under it — subfolders,
 // files, versions, chunk references — the browser's "delete folder" (single-
 // item DeleteFolder stays empty-first for the API's existing contract; the
-// API opts in via ?recursive=true). The subtree is collected outside the
-// transaction (per-owner scope, like the listings); all metadata deletes,
-// audit events, and search removals commit in one transaction, children
-// first so the parent_id/folder_id RESTRICT constraints hold. A child added
-// concurrently between the walk and the commit trips that constraint and
-// surfaces as ErrNotEmpty (retryable), never a partial delete. Blob reclaim,
+// API opts in via ?recursive=true). The subtree walk AND the deletes run in
+// one transaction: audit events, metadata deletes, and search removals
+// commit atomically, children first so the parent_id/folder_id RESTRICT
+// constraints hold. A child added concurrently trips that constraint and
+// surfaces as ErrNotEmpty (retryable), never a partial delete; a concurrent
+// move-out shrinks to the statement-level window the single-item deletes
+// already accept (DeleteFolder's check-then-delete, #36). Blob reclaim,
 // editing-session revocation, and OpenFGA tuple cleanup follow after commit,
 // best-effort, exactly like the single-item deletes.
 func (s *Service) DeleteFolderTree(ctx context.Context, caller pii.Subject, folderID string) error {
 	if err := s.authorizeFolder(ctx, caller, folderID); err != nil {
 		return err
 	}
-	rd := s.tx.Reader()
-	root, ok, err := rd.Objects.GetFolder(ctx, folderID)
+	root, ok, err := s.tx.Reader().Objects.GetFolder(ctx, folderID)
 	if err != nil {
 		return err
 	}
 	if !ok {
 		return ErrNotFound
 	}
-	// Breadth-first collection; the seen-set terminates a malformed cycle.
-	folders := []Folder{root}
+	var folders []Folder
 	var objects []Object
-	seen := map[string]bool{folderID: true}
-	for i := 0; i < len(folders); i++ {
-		fid := folders[i].ID
-		objs, err := rd.Objects.ObjectsInFolder(ctx, caller, &fid)
-		if err != nil {
-			return err
-		}
-		objects = append(objects, objs...)
-		subs, err := rd.Objects.FoldersInParent(ctx, caller, &fid)
-		if err != nil {
-			return err
-		}
-		for _, sub := range subs {
-			if seen[sub.ID] {
-				continue
-			}
-			seen[sub.ID] = true
-			folders = append(folders, sub)
-		}
-	}
 	var orphans []string
 	if err := s.tx.InTx(ctx, func(st Stores) error {
+		// Breadth-first collection (per-owner scope, like the listings);
+		// the seen-set terminates a malformed cycle. Reset on entry so a
+		// re-run transaction never sees a stale walk.
+		folders, objects, orphans = []Folder{root}, nil, nil
+		seen := map[string]bool{folderID: true}
+		for i := 0; i < len(folders); i++ {
+			fid := folders[i].ID
+			objs, err := st.Objects.ObjectsInFolder(ctx, caller, &fid)
+			if err != nil {
+				return err
+			}
+			objects = append(objects, objs...)
+			subs, err := st.Objects.FoldersInParent(ctx, caller, &fid)
+			if err != nil {
+				return err
+			}
+			for _, sub := range subs {
+				if seen[sub.ID] {
+					continue
+				}
+				seen[sub.ID] = true
+				folders = append(folders, sub)
+			}
+		}
 		for _, o := range objects {
 			if err := st.Audit.Emit(ctx, caller, "kamara.file.deleted",
 				audit.Object{Type: Type, ID: o.ID, Permalink: o.Permalink()}, nil); err != nil {
 				return err
 			}
-			hashes, err := st.Objects.ChunkHashesOf(ctx, o.ID)
+			gone, err := reclaimObject(ctx, st, o.ID)
 			if err != nil {
-				return err
-			}
-			if err := st.Objects.DeleteObject(ctx, o.ID); err != nil {
-				return err
-			}
-			gone, err := st.Objects.DecRef(ctx, hashes)
-			if err != nil {
-				return err
-			}
-			if err := st.Objects.DeleteChunks(ctx, gone); err != nil {
 				return err
 			}
 			orphans = append(orphans, gone...)

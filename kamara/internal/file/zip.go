@@ -24,8 +24,14 @@ func (s *Service) DownloadZip(ctx context.Context, caller pii.Subject, folder *s
 			return err
 		}
 	}
+	// Seed the cycle guard with the root itself so a malformed parent edge
+	// back to it cannot re-emit the whole subtree (like DeleteFolderTree).
+	seen := map[string]bool{}
+	if folder != nil {
+		seen[*folder] = true
+	}
 	zw := zip.NewWriter(w)
-	if err := s.zipTree(ctx, caller, folder, "", zw, map[string]bool{}); err != nil {
+	if err := s.zipTree(ctx, caller, folder, "", zw, seen); err != nil {
 		_ = zw.Close()
 		return err
 	}
@@ -34,7 +40,7 @@ func (s *Service) DownloadZip(ctx context.Context, caller pii.Subject, folder *s
 
 func (s *Service) zipTree(ctx context.Context, caller pii.Subject, folder *string, prefix string, zw *zip.Writer, seen map[string]bool) error {
 	rd := s.tx.Reader()
-	used := map[string]int{} // sibling entry names, for collision suffixes
+	used := map[string]bool{} // sibling entry names, for collision suffixes
 	files, err := rd.Objects.ObjectsInFolder(ctx, caller, folder)
 	if err != nil {
 		return err
@@ -78,8 +84,10 @@ func (s *Service) zipTree(ctx context.Context, caller pii.Subject, folder *strin
 // Path separators are flattened and "."/".." neutralized so an extractor
 // can never be steered outside its target directory (zip-slip); a sibling
 // collision (names are not unique per folder) gets a " (n)" suffix before
-// the extension so no entry silently shadows another.
-func entryName(used map[string]int, name string) string {
+// the extension so no entry silently shadows another. Every emitted name —
+// including a generated suffix — is registered in used, so a suffix cannot
+// itself collide with a literal sibling (e.g. "a.txt", "a.txt", "a (2).txt").
+func entryName(used map[string]bool, name string) string {
 	name = strings.Map(func(r rune) rune {
 		if r == '/' || r == '\\' {
 			return '_'
@@ -89,11 +97,12 @@ func entryName(used map[string]int, name string) string {
 	if name == "." || name == ".." {
 		name = "_"
 	}
-	n := used[name]
-	used[name] = n + 1
-	if n == 0 {
-		return name
-	}
 	ext := path.Ext(name)
-	return fmt.Sprintf("%s (%d)%s", strings.TrimSuffix(name, ext), n+1, ext)
+	stem := strings.TrimSuffix(name, ext)
+	candidate := name
+	for n := 2; used[candidate]; n++ {
+		candidate = fmt.Sprintf("%s (%d)%s", stem, n, ext)
+	}
+	used[candidate] = true
+	return candidate
 }

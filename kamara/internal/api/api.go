@@ -12,6 +12,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/peristera-io/peristera/kamara/internal/file"
@@ -278,10 +279,11 @@ func (h *Handler) createFolder(w http.ResponseWriter, r *http.Request, caller pi
 }
 
 // deleteFolder removes a folder — empty-first by default (the original
-// contract), or the whole subtree with ?recursive=true.
+// contract), or the whole subtree with ?recursive=true (any ParseBool
+// spelling; the OpenAPI type is boolean).
 func (h *Handler) deleteFolder(w http.ResponseWriter, r *http.Request, caller pii.Subject) {
 	del := h.svc.DeleteFolder
-	if r.URL.Query().Get("recursive") == "true" {
+	if recursive, _ := strconv.ParseBool(r.URL.Query().Get("recursive")); recursive {
 		del = h.svc.DeleteFolderTree
 	}
 	if err := del(r.Context(), caller, r.PathValue("id")); err != nil {

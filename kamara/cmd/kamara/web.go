@@ -7,7 +7,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -336,7 +335,7 @@ func (a *webApp) textEditor(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not a text file", http.StatusUnsupportedMediaType)
 		return
 	}
-	base, err := a.latestOrdinal(r.Context(), caller, id)
+	base, err := a.svc.LatestOrdinal(r.Context(), caller, id)
 	if err != nil {
 		a.fail(w, err)
 		return
@@ -366,9 +365,21 @@ func (a *webApp) textSave(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not editable as text", http.StatusUnsupportedMediaType)
 		return
 	}
-	// The form carries the whole content — bound like uploads, sized for the
-	// editor cap plus form overhead.
-	r.Body = http.MaxBytesReader(w, r.Body, 2*file.MaxTextEditBytes)
+	// The form carries the whole content, URL-encoded — worst case ~3 bytes
+	// per content byte (%XX), so the cap is 4x the editor's content cap plus
+	// slack for the other fields. ParseForm is checked explicitly: a tripped
+	// MaxBytesReader must be a clear 413, not empty fields that would
+	// silently truncate the user's text or fail the base parse.
+	r.Body = http.MaxBytesReader(w, r.Body, 4*file.MaxTextEditBytes+1024)
+	if err := r.ParseForm(); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			http.Error(w, "content exceeds maximum size", http.StatusRequestEntityTooLarge)
+			return
+		}
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
 	base, err := strconv.Atoi(r.FormValue("base"))
 	if err != nil {
 		http.Error(w, "invalid base version", http.StatusBadRequest)
@@ -378,7 +389,7 @@ func (a *webApp) textSave(w http.ResponseWriter, r *http.Request) {
 	content := strings.ReplaceAll(r.FormValue("content"), "\r\n", "\n")
 	if _, err := a.svc.WriteVersionAt(r.Context(), caller, id, base, strings.NewReader(content)); err != nil {
 		if errors.Is(err, file.ErrModified) {
-			latest, lerr := a.latestOrdinal(r.Context(), caller, id)
+			latest, lerr := a.svc.LatestOrdinal(r.Context(), caller, id)
 			if lerr != nil {
 				a.fail(w, lerr)
 				return
@@ -395,8 +406,8 @@ func (a *webApp) textSave(w http.ResponseWriter, r *http.Request) {
 }
 
 // newTextFile creates an empty file in the current folder and opens it in
-// the text editor (falling back to the folder view for a name the editor
-// cannot open, e.g. "photo.png").
+// the text editor. A name the editor cannot open (e.g. "photo.png") is
+// refused before anything is created — no orphaned empty objects.
 func (a *webApp) newTextFile(w http.ResponseWriter, r *http.Request) {
 	caller, ok := a.authed(w, r)
 	if !ok {
@@ -407,34 +418,16 @@ func (a *webApp) newTextFile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "name is required", http.StatusBadRequest)
 		return
 	}
-	at := r.URL.Query().Get("at")
-	o, err := a.svc.Upload(r.Context(), caller, optStr(at), name, strings.NewReader(""))
+	if !file.TextEditableName(name) {
+		http.Error(w, "not a text file name", http.StatusBadRequest)
+		return
+	}
+	o, err := a.svc.Upload(r.Context(), caller, optStr(r.URL.Query().Get("at")), name, strings.NewReader(""))
 	if err != nil {
 		a.fail(w, err)
 		return
 	}
-	if !o.TextEditable() {
-		back := "/"
-		if at != "" {
-			back = "/?folder=" + url.QueryEscape(at)
-		}
-		http.Redirect(w, r, back, http.StatusSeeOther)
-		return
-	}
 	http.Redirect(w, r, "/text/"+o.ID, http.StatusSeeOther)
-}
-
-// latestOrdinal returns the file's newest version ordinal (0 when it has
-// only its initial version) — the text editor's concurrency base.
-func (a *webApp) latestOrdinal(ctx context.Context, caller pii.Subject, id string) (int, error) {
-	vs, err := a.svc.ListVersions(ctx, caller, id)
-	if err != nil {
-		return 0, err
-	}
-	if len(vs) == 0 { // defensive: every object gets version 0 on upload
-		return 0, nil
-	}
-	return vs[0].Ordinal, nil // newest first
 }
 
 // caller resolves the logged-in browser session to a subject. The relying

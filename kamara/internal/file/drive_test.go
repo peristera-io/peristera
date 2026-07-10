@@ -20,6 +20,9 @@ func readZip(t *testing.T, b []byte) map[string]string {
 	}
 	out := map[string]string{}
 	for _, f := range zr.File {
+		if _, dup := out[f.Name]; dup {
+			t.Errorf("duplicate zip entry %q (one would shadow the other on extraction)", f.Name)
+		}
 		rc, err := f.Open()
 		if err != nil {
 			t.Fatal(err)
@@ -91,9 +94,11 @@ func TestDownloadZipEntryNames(t *testing.T) {
 	svc, _, _, _, _, _, _ := newService(t)
 	alice := pii.Subject{Instance: "demo.example", UserID: "alice"}
 
-	// Sibling name collision: the second entry gets a suffix, none shadowed.
+	// Sibling name collisions get suffixes — including against a LITERAL
+	// sibling that already carries the would-be suffix name.
 	_, _ = svc.Upload(ctx, alice, nil, "dup.txt", strings.NewReader("one"))
 	_, _ = svc.Upload(ctx, alice, nil, "dup.txt", strings.NewReader("two"))
+	_, _ = svc.Upload(ctx, alice, nil, "dup (2).txt", strings.NewReader("literal"))
 	// A separator in a display name must not nest (or, extracted, escape).
 	_, _ = svc.Upload(ctx, alice, nil, "../evil/name.txt", strings.NewReader("sly"))
 
@@ -101,7 +106,7 @@ func TestDownloadZipEntryNames(t *testing.T) {
 	if err := svc.DownloadZip(ctx, alice, nil, &buf); err != nil {
 		t.Fatal(err)
 	}
-	entries := readZip(t, buf.Bytes())
+	entries := readZip(t, buf.Bytes()) // fails on any duplicate entry name
 	got := map[string]bool{}
 	for name := range entries {
 		got[name] = true
@@ -109,11 +114,11 @@ func TestDownloadZipEntryNames(t *testing.T) {
 			t.Errorf("flattening failed, entry has a path: %q", name)
 		}
 	}
-	if !got["dup.txt"] || !got["dup (2).txt"] {
-		t.Errorf("collision suffix missing: %v", keys(entries))
+	if !got["dup.txt"] || !got["dup (2).txt"] || !got["dup (3).txt"] {
+		t.Errorf("collision suffixes wrong: %v", keys(entries))
 	}
-	if len(entries) != 3 {
-		t.Errorf("want 3 entries, got %v", keys(entries))
+	if len(entries) != 4 {
+		t.Errorf("want 4 entries, got %v", keys(entries))
 	}
 }
 
@@ -284,6 +289,15 @@ func TestEditabilityHelpers(t *testing.T) {
 		}
 		if got := tc.o.Previewable(); got != tc.preview {
 			t.Errorf("%s: Previewable = %v, want %v", tc.o.Name, got, tc.preview)
+		}
+	}
+	// TextEditableName gates "new text file" on the name alone (size 0).
+	for name, want := range map[string]bool{
+		"notes.txt": true, "config.json": true, "noext": true,
+		"photo.png": false, "report.pdf": false,
+	} {
+		if got := TextEditableName(name); got != want {
+			t.Errorf("TextEditableName(%q) = %v, want %v", name, got, want)
 		}
 	}
 }

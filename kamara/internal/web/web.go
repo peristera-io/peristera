@@ -75,15 +75,21 @@ var funcs = template.FuncMap{
 	// row bundles the context the per-item rename/move/delete controls need:
 	// the route base ("/files" or "/folders"), the item, the current folder
 	// (to re-render after the mutation), and the move-destination options.
+	// Folders delete recursively, so they get the scarier confirm message.
 	"row": func(base, id, name string, v View) rowCtx {
-		return rowCtx{Base: base, ID: id, Name: name, At: v.Here(), Folders: v.AllFolders}
+		confirm := "confirm_delete"
+		if base == "/folders" {
+			confirm = "confirm_delete_folder"
+		}
+		return rowCtx{Base: base, ID: id, Name: name, At: v.Here(), Confirm: confirm, Folders: v.AllFolders}
 	},
 }
 
-// rowCtx is the template model for one item's action controls.
+// rowCtx is the template model for one item's action controls. Confirm is
+// the string-catalog key of the delete confirmation.
 type rowCtx struct {
-	Base, ID, Name, At string
-	Folders            []file.Folder
+	Base, ID, Name, At, Confirm string
+	Folders                     []file.Folder
 }
 
 // humanBytes renders a size for display (IEC units).
@@ -234,7 +240,7 @@ var pageTmpl = template.Must(template.New("page").Funcs(funcs).Parse(`<!doctype 
   <a href="/zip?at={{.ID}}" class="text-sm text-brand underline" aria-label="{{msg "download_zip"}} {{.Name}}">{{msg "download_zip"}}</a>
   {{template "rename" (row "/folders" .ID .Name $)}}
   {{template "moveto" (row "/folders" .ID .Name $)}}
-  {{template "deletefolder" (row "/folders" .ID .Name $)}}
+  {{template "delete" (row "/folders" .ID .Name $)}}
  </li>
  {{end}}
  {{range .Files}}
@@ -280,13 +286,7 @@ var pageTmpl = template.Must(template.New("page").Funcs(funcs).Parse(`<!doctype 
 {{end}}
 
 {{define "delete"}}
-<form hx-post="{{.Base}}/{{.ID}}/delete?at={{.At}}" hx-target="#browser" hx-swap="innerHTML" hx-confirm="{{msg "confirm_delete"}}">
- <button class="text-sm text-red-700 underline" aria-label="{{msg "delete"}} {{.Name}}">{{msg "delete"}}</button>
-</form>
-{{end}}
-
-{{define "deletefolder"}}
-<form hx-post="{{.Base}}/{{.ID}}/delete?at={{.At}}" hx-target="#browser" hx-swap="innerHTML" hx-confirm="{{msg "confirm_delete_folder"}}">
+<form hx-post="{{.Base}}/{{.ID}}/delete?at={{.At}}" hx-target="#browser" hx-swap="innerHTML" hx-confirm="{{msg .Confirm}}">
  <button class="text-sm text-red-700 underline" aria-label="{{msg "delete"}} {{.Name}}">{{msg "delete"}}</button>
 </form>
 {{end}}
