@@ -1,12 +1,16 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"log"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/peristera-io/peristera/kamara/internal/api"
 	"github.com/peristera-io/peristera/kamara/internal/file"
@@ -45,8 +49,11 @@ func (a *webApp) routes() http.Handler {
 	mux.HandleFunc("GET /{$}", a.page)                     // full page at the root
 	mux.HandleFunc("GET /browse", a.frag)                  // htmx fragment (folder navigation)
 	mux.HandleFunc("GET /files/{id}/download", a.download) // cookie-authed download
+	mux.HandleFunc("GET /files/{id}/preview", a.preview)   // inline image preview (drawer)
 	mux.HandleFunc("GET /files/{id}/details", a.details)   // details drawer fragment
 	mux.HandleFunc("GET /edit/{id}", a.edit)               // office editor page (ADR-0018)
+	mux.HandleFunc("GET /text/{id}", a.textEditor)         // plain-text editor page
+	mux.HandleFunc("GET /zip", a.zip)                      // folder subtree (?at=, empty = root) as a zip
 	// Mutations — POST forms (HTML forms are GET/POST only). CSRF is closed
 	// by the SameSite=Lax session cookie: a cross-site POST omits the cookie,
 	// so the request is unauthenticated and rejected. Each re-renders the
@@ -56,9 +63,11 @@ func (a *webApp) routes() http.Handler {
 	mux.HandleFunc("POST /folders/{id}/move", a.moveFolder)
 	mux.HandleFunc("POST /folders/{id}/delete", a.deleteFolder)
 	mux.HandleFunc("POST /files", a.upload)
+	mux.HandleFunc("POST /files/new", a.newTextFile) // create an empty text file, then open the editor
 	mux.HandleFunc("POST /files/{id}/rename", a.renameFile)
 	mux.HandleFunc("POST /files/{id}/move", a.moveFile)
 	mux.HandleFunc("POST /files/{id}/delete", a.deleteFile)
+	mux.HandleFunc("POST /text/{id}", a.textSave) // text editor save (PRG)
 	return mux
 }
 
@@ -206,12 +215,15 @@ func (a *webApp) moveFolder(w http.ResponseWriter, r *http.Request) {
 	a.renderAt(w, r, caller)
 }
 
+// deleteFolder removes a folder and everything in it — the browser flow is
+// recursive (like OneDrive/Dropbox), guarded by its own scarier hx-confirm;
+// the empty-first contract stays available on the /v1 API.
 func (a *webApp) deleteFolder(w http.ResponseWriter, r *http.Request) {
 	caller, ok := a.authed(w, r)
 	if !ok {
 		return
 	}
-	if err := a.svc.DeleteFolder(r.Context(), caller, r.PathValue("id")); err != nil {
+	if err := a.svc.DeleteFolderTree(r.Context(), caller, r.PathValue("id")); err != nil {
 		a.fail(w, err)
 		return
 	}
@@ -239,6 +251,190 @@ func (a *webApp) download(w http.ResponseWriter, r *http.Request) {
 		// the stream). Integrity errors are rare.
 		log.Printf("kamara web: download %s: %v", id, err)
 	}
+}
+
+// preview streams an image inline for the drawer's thumbnail. Only
+// non-SVG image/* is ever rendered inline: an HTML or SVG document served
+// on this cookie-authed origin could carry script (stored XSS) — everything
+// else stays an attachment via /download.
+func (a *webApp) preview(w http.ResponseWriter, r *http.Request) {
+	caller, ok := a.authed(w, r)
+	if !ok {
+		return
+	}
+	id := r.PathValue("id")
+	o, err := a.svc.Get(r.Context(), caller, id)
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	if !o.Previewable() {
+		http.Error(w, "not previewable", http.StatusUnsupportedMediaType)
+		return
+	}
+	w.Header().Set("Content-Type", o.ContentType)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Disposition", api.ContentDisposition("inline", o.Name))
+	if err := a.svc.Download(r.Context(), caller, id, w); err != nil {
+		log.Printf("kamara web: preview %s: %v", id, err)
+	}
+}
+
+// zip streams the ?at= folder's subtree (empty = the whole root) as a zip
+// archive named after the folder. Mid-stream failures can only be logged —
+// the status and some bytes are already flushed.
+func (a *webApp) zip(w http.ResponseWriter, r *http.Request) {
+	caller, ok := a.caller(r)
+	if !ok {
+		http.Redirect(w, r, "/auth/login", http.StatusFound)
+		return
+	}
+	name := "kamara"
+	var folder *string
+	if at := r.URL.Query().Get("at"); at != "" {
+		f, err := a.svc.GetFolder(r.Context(), caller, at) // authorizes + names the archive
+		if err != nil {
+			a.fail(w, err)
+			return
+		}
+		name = f.Name
+		folder = &at
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", api.ContentDisposition("attachment", name+".zip"))
+	if err := a.svc.DownloadZip(r.Context(), caller, folder, w); err != nil {
+		log.Printf("kamara web: zip %v: %v", r.URL.Query().Get("at"), err)
+	}
+}
+
+// textEditor renders the plain-text editor page: the file's content in a
+// textarea plus the version ordinal it was loaded at (the save's optimistic-
+// concurrency base). Distinct from the office editor (/edit — an iframe on
+// the WOPI engine); this one is Kamara's own and needs no engine.
+func (a *webApp) textEditor(w http.ResponseWriter, r *http.Request) {
+	caller, ok := a.caller(r)
+	if !ok {
+		http.Redirect(w, r, "/auth/login", http.StatusFound)
+		return
+	}
+	id := r.PathValue("id")
+	o, err := a.svc.Get(r.Context(), caller, id)
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	if !o.TextEditable() {
+		http.Error(w, "not editable as text", http.StatusUnsupportedMediaType)
+		return
+	}
+	var buf bytes.Buffer
+	if err := a.svc.Download(r.Context(), caller, id, &buf); err != nil {
+		a.fail(w, err)
+		return
+	}
+	if !utf8.Valid(buf.Bytes()) {
+		http.Error(w, "not a text file", http.StatusUnsupportedMediaType)
+		return
+	}
+	base, err := a.latestOrdinal(r.Context(), caller, id)
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = web.TextEditor(w, web.TextEditorView{Object: o, Content: buf.String(), Base: base,
+		Saved: r.URL.Query().Get("saved") == "1"})
+}
+
+// textSave writes the textarea back as a new version, guarded by the base
+// ordinal the editor was loaded at. Success redirects back to the editor
+// (PRG — a reload never re-saves); a conflict re-renders the editor with the
+// user's content, the new base, and an alert, so saving again is a
+// deliberate overwrite.
+func (a *webApp) textSave(w http.ResponseWriter, r *http.Request) {
+	caller, ok := a.authed(w, r)
+	if !ok {
+		return
+	}
+	id := r.PathValue("id")
+	o, err := a.svc.Get(r.Context(), caller, id)
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	if !o.TextEditable() {
+		http.Error(w, "not editable as text", http.StatusUnsupportedMediaType)
+		return
+	}
+	// The form carries the whole content — bound like uploads, sized for the
+	// editor cap plus form overhead.
+	r.Body = http.MaxBytesReader(w, r.Body, 2*file.MaxTextEditBytes)
+	base, err := strconv.Atoi(r.FormValue("base"))
+	if err != nil {
+		http.Error(w, "invalid base version", http.StatusBadRequest)
+		return
+	}
+	// Textareas submit CRLF line endings; store what the user sees.
+	content := strings.ReplaceAll(r.FormValue("content"), "\r\n", "\n")
+	if _, err := a.svc.WriteVersionAt(r.Context(), caller, id, base, strings.NewReader(content)); err != nil {
+		if errors.Is(err, file.ErrModified) {
+			latest, lerr := a.latestOrdinal(r.Context(), caller, id)
+			if lerr != nil {
+				a.fail(w, lerr)
+				return
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusConflict)
+			_ = web.TextEditor(w, web.TextEditorView{Object: o, Content: content, Base: latest, Conflict: true})
+			return
+		}
+		a.fail(w, err)
+		return
+	}
+	http.Redirect(w, r, "/text/"+id+"?saved=1", http.StatusSeeOther)
+}
+
+// newTextFile creates an empty file in the current folder and opens it in
+// the text editor (falling back to the folder view for a name the editor
+// cannot open, e.g. "photo.png").
+func (a *webApp) newTextFile(w http.ResponseWriter, r *http.Request) {
+	caller, ok := a.authed(w, r)
+	if !ok {
+		return
+	}
+	name := strings.TrimSpace(r.FormValue("name"))
+	if name == "" {
+		http.Error(w, "name is required", http.StatusBadRequest)
+		return
+	}
+	at := r.URL.Query().Get("at")
+	o, err := a.svc.Upload(r.Context(), caller, optStr(at), name, strings.NewReader(""))
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	if !o.TextEditable() {
+		back := "/"
+		if at != "" {
+			back = "/?folder=" + url.QueryEscape(at)
+		}
+		http.Redirect(w, r, back, http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/text/"+o.ID, http.StatusSeeOther)
+}
+
+// latestOrdinal returns the file's newest version ordinal (0 when it has
+// only its initial version) — the text editor's concurrency base.
+func (a *webApp) latestOrdinal(ctx context.Context, caller pii.Subject, id string) (int, error) {
+	vs, err := a.svc.ListVersions(ctx, caller, id)
+	if err != nil {
+		return 0, err
+	}
+	if len(vs) == 0 { // defensive: every object gets version 0 on upload
+		return 0, nil
+	}
+	return vs[0].Ordinal, nil // newest first
 }
 
 // caller resolves the logged-in browser session to a subject. The relying
@@ -407,6 +603,8 @@ func (a *webApp) fail(w http.ResponseWriter, err error) {
 		http.Error(w, "folder not empty", http.StatusConflict)
 	case errors.Is(err, file.ErrCycle):
 		http.Error(w, "move would create a cycle", http.StatusBadRequest)
+	case errors.Is(err, file.ErrModified):
+		http.Error(w, "file was modified since the base version", http.StatusConflict)
 	default:
 		http.Error(w, "internal error", http.StatusInternalServerError)
 	}

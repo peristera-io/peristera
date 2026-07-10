@@ -56,6 +56,11 @@ var ErrForbidden = errors.New("file: not authorized")
 // unique constraint). WriteVersion retries on it; it never reaches the client.
 var ErrVersionConflict = errors.New("file: version ordinal conflict")
 
+// ErrModified is returned by WriteVersionAt when the object's latest version
+// is no longer the one the caller based their edit on — the text editor's
+// lost-update guard. The HTTP layer maps it to 409.
+var ErrModified = errors.New("file: modified since the base version")
+
 // Object is a stored file (identity = UUIDv7, URLs carry it — ADR-0007).
 // FolderID is its location: nil means the owner's root (Kamara ADR-0002).
 type Object struct {
@@ -74,6 +79,43 @@ type Object struct {
 
 // Permalink is the canonical URL (stable across moves — ADR-0007).
 func (o Object) Permalink() string { return "/files/" + o.ID }
+
+// MaxTextEditBytes caps what the browser text editor loads into a textarea.
+// Larger files still download fine; editing them inline is a trap (the whole
+// content round-trips through a form post).
+const MaxTextEditBytes = 1 << 20 // 1 MiB
+
+// textEditableTypes are the non-"text/*" MIME types the text editor accepts.
+var textEditableTypes = map[string]bool{
+	"application/json":       true,
+	"application/javascript": true,
+	"application/xml":        true,
+	"application/yaml":       true,
+	"application/toml":       true,
+	"application/x-sh":       true,
+	"application/sql":        true,
+}
+
+// TextEditable reports whether the browser text editor can open the file:
+// small enough for a textarea, and a text-ish MIME type. An unknown type
+// (no extension) is offered too — the editor separately requires the content
+// to be valid UTF-8 before it renders.
+func (o Object) TextEditable() bool {
+	if o.Size > MaxTextEditBytes {
+		return false
+	}
+	if o.ContentType == "" || strings.HasPrefix(o.ContentType, "text/") {
+		return true
+	}
+	return textEditableTypes[o.ContentType]
+}
+
+// Previewable reports whether the drawer can show the file inline as an
+// image. SVG is deliberately excluded: rendered inline as a document it can
+// carry script, and this origin is cookie-authed.
+func (o Object) Previewable() bool {
+	return strings.HasPrefix(o.ContentType, "image/") && o.ContentType != "image/svg+xml"
+}
 
 // Version is one revision of an object (the versions table). Save-back from
 // the office engine appends a version (ADR-0018); the drawer lists them.
@@ -274,6 +316,18 @@ func (s *Service) Download(ctx context.Context, caller pii.Subject, objectID str
 // the audit event. Blob bytes are written durably first (like Upload), then
 // one transaction commits the version + manifest + the object's new size.
 func (s *Service) WriteVersion(ctx context.Context, caller pii.Subject, objectID string, r io.Reader) (string, error) {
+	return s.writeVersion(ctx, caller, objectID, r, nil)
+}
+
+// WriteVersionAt is WriteVersion with an optimistic-concurrency check: it
+// fails with ErrModified when the object's latest ordinal is no longer base
+// (someone saved since the caller loaded the content). The browser text
+// editor uses it so a stale tab cannot silently overwrite a newer save.
+func (s *Service) WriteVersionAt(ctx context.Context, caller pii.Subject, objectID string, base int, r io.Reader) (string, error) {
+	return s.writeVersion(ctx, caller, objectID, r, &base)
+}
+
+func (s *Service) writeVersion(ctx context.Context, caller pii.Subject, objectID string, r io.Reader, base *int) (string, error) {
 	if err := s.authorize(ctx, caller, objectID); err != nil {
 		return "", err
 	}
@@ -296,6 +350,13 @@ func (s *Service) WriteVersion(ctx context.Context, caller pii.Subject, objectID
 			}
 			if !ok {
 				return ErrNotFound
+			}
+			// The base check runs inside the transaction so it observes the
+			// same state the insert will. A failed check orphans the already-
+			// ingested blobs — harmless and GC-collectable, like a crash
+			// between ingest and commit.
+			if base != nil && maxOrd != *base {
+				return ErrModified
 			}
 			ordinal = maxOrd + 1
 			if err := st.Objects.InsertVersion(ctx, objectID, verID, ordinal, total, refs); err != nil {

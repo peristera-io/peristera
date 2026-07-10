@@ -75,7 +75,7 @@ try {
   step("download the file");
   const [download] = await Promise.all([
     p.waitForEvent("download"),
-    p.getByRole("link", { name: "Download" }).first().click(),
+    p.getByRole("link", { name: "Download", exact: true }).first().click(),
   ]);
   step("downloaded as " + download.suggestedFilename());
 

@@ -17,7 +17,7 @@ func sampleView() View {
 	return View{
 		Crumbs:     []file.Folder{{ID: here, Owner: owner, Name: "Projects"}},
 		Folders:    []file.Folder{{ID: "sub", Owner: owner, Name: "Designs", ParentID: &here}},
-		Files:      []file.Object{{ID: "f1", Owner: owner, Name: "report.pdf", Size: 2048, FolderID: &here, Created: now, Updated: now}},
+		Files:      []file.Object{{ID: "f1", Owner: owner, Name: "report.pdf", Size: 2048, ContentType: "application/pdf", FolderID: &here, Created: now, Updated: now}},
 		AllFolders: []file.Folder{{ID: here, Owner: owner, Name: "Projects"}, {ID: "sub", Owner: owner, Name: "Designs"}},
 	}
 }
@@ -183,5 +183,102 @@ func TestInlineStylesheet(t *testing.T) {
 	html := b.String()
 	if !strings.Contains(html, "<style>") || strings.Contains(html, `href="/style.css"`) {
 		t.Error("inline view should embed <style>, not link the stylesheet")
+	}
+}
+
+func TestDriveMarkup(t *testing.T) {
+	var b bytes.Buffer
+	v := sampleView()
+	// A text-editable file next to the (non-editable) report.pdf.
+	v.Files = append(v.Files, file.Object{ID: "f2", Name: "notes.txt", Size: 12, ContentType: "text/plain"})
+	if err := Listing(&b, v); err != nil {
+		t.Fatal(err)
+	}
+	html := b.String()
+	for _, want := range []string{
+		`href="/zip?at=fid"`,                               // current folder as zip (toolbar)
+		`href="/zip?at=sub"`,                               // per-folder zip link
+		`action="/files/new?at=fid"`,                       // new-text-file form
+		`href="/text/f2"`,                                  // edit link on the text file
+		msg["confirm_delete_folder"],                       // recursive folder delete confirm
+		`aria-label="` + msg["download_zip"] + ` Designs"`, // accessible zip link name
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("drive markup missing %q", want)
+		}
+	}
+	// report.pdf is not text-editable: no edit link for it.
+	if strings.Contains(html, `href="/text/f1"`) {
+		t.Error("edit link rendered for a non-editable file")
+	}
+	// Files still use the plain (non-folder) delete confirm.
+	if !strings.Contains(html, msg["confirm_delete"]) {
+		t.Error("file delete confirm missing")
+	}
+}
+
+func TestDetailsDrawerPreviewAndEdit(t *testing.T) {
+	var b bytes.Buffer
+	img := file.Object{ID: "p1", Name: "photo.png", ContentType: "image/png", Size: 100, Created: time.Unix(0, 0).UTC()}
+	if err := Details(&b, DetailView{Object: img}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), `src="/files/p1/preview"`) {
+		t.Error("image preview missing from the drawer")
+	}
+
+	b.Reset()
+	txt := file.Object{ID: "t1", Name: "notes.txt", ContentType: "text/plain", Size: 12, Created: time.Unix(0, 0).UTC()}
+	if err := Details(&b, DetailView{Object: txt}); err != nil {
+		t.Fatal(err)
+	}
+	html := b.String()
+	if !strings.Contains(html, `href="/text/t1"`) {
+		t.Error("text edit button missing from the drawer")
+	}
+	if strings.Contains(html, "/preview") {
+		t.Error("preview rendered for a non-image")
+	}
+}
+
+func TestTextEditorPage(t *testing.T) {
+	var b bytes.Buffer
+	fid := "folder-1"
+	v := TextEditorView{
+		Object:  file.Object{ID: "t1", Name: "notes.txt", ContentType: "text/plain", Size: 12, FolderID: &fid},
+		Content: "hello <world>",
+		Base:    3,
+	}
+	if err := TextEditor(&b, v); err != nil {
+		t.Fatal(err)
+	}
+	html := b.String()
+	for _, want := range []string{
+		"<!doctype html>", "notes.txt",
+		`action="/text/t1"`,
+		`name="base" value="3"`,    // optimistic-concurrency base
+		"hello &lt;world&gt;",      // content is escaped into the textarea
+		`href="/?folder=folder-1"`, // back to the containing folder
+		msg["save"],
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("text editor missing %q", want)
+		}
+	}
+	if strings.Contains(html, msg["conflict"]) || strings.Contains(html, msg["saved"]) {
+		t.Error("notices rendered without their flags")
+	}
+
+	// Conflict + saved notices render with roles for assistive tech.
+	b.Reset()
+	v.Conflict, v.Saved = true, true
+	if err := TextEditor(&b, v); err != nil {
+		t.Fatal(err)
+	}
+	html = b.String()
+	for _, want := range []string{`role="alert"`, msg["conflict"], `role="status"`, msg["saved"]} {
+		if !strings.Contains(html, want) {
+			t.Errorf("text editor notices missing %q", want)
+		}
 	}
 }

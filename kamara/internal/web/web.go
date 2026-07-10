@@ -50,6 +50,12 @@ var msg = map[string]string{
 	"versions": "Versions", "versions_soon": "Version history is coming soon.",
 	"close": "Close", "edit_office": "Edit in office", "no_versions": "No versions yet.",
 	"version_current": "current", "editor": "Editor", "back_to_files": "Back to files",
+	"download_zip": "Download as zip", "new_text_file": "New text file",
+	"new_file_placeholder": "notes.txt", "edit_text": "Edit", "save": "Save",
+	"saved": "Saved.", "cancel": "Cancel", "text_editor": "Text editor",
+	"preview_of":            "Preview of",
+	"conflict":              "This file changed while you were editing. Saving again will overwrite those changes.",
+	"confirm_delete_folder": "Delete this folder and everything inside it?",
 }
 
 var funcs = template.FuncMap{
@@ -132,6 +138,27 @@ type EditorView struct {
 	AccessTokenTTL int64
 }
 
+// TextEditorView is the /text/{id} page model: the file's content in a
+// textarea and the version ordinal it was loaded at (Base — the save's
+// optimistic-concurrency check). Saved renders the post-save notice;
+// Conflict the someone-else-saved alert. Inline works like View.Inline.
+type TextEditorView struct {
+	Object   file.Object
+	Content  string
+	Base     int
+	Saved    bool
+	Conflict bool
+	Inline   bool
+}
+
+// BackURL is the folder view the editor returns to.
+func (v TextEditorView) BackURL() string {
+	if v.Object.FolderID != nil {
+		return "/?folder=" + *v.Object.FolderID
+	}
+	return "/"
+}
+
 // Here is the id of the folder currently shown ("" = root).
 func (v View) Here() string {
 	if len(v.Crumbs) == 0 {
@@ -186,6 +213,13 @@ var pageTmpl = template.Must(template.New("page").Funcs(funcs).Parse(`<!doctype 
    <button type="submit" class="rounded-base bg-brand px-3 py-1.5 text-sm font-medium text-white hover:opacity-90">{{msg "upload"}}</button>
   </form>
  </kamara-uploader>
+ <form method="post" action="/files/new?at={{.Here}}" class="flex items-end gap-2">
+  <label class="text-sm text-stone-700">{{msg "new_text_file"}}
+   <input name="name" required placeholder="{{msg "new_file_placeholder"}}" class="mt-1 block rounded border border-stone-300 px-2 py-1 text-sm">
+  </label>
+  <button type="submit" class="rounded-base bg-brand px-3 py-1.5 text-sm font-medium text-white hover:opacity-90">{{msg "create"}}</button>
+ </form>
+ <a href="/zip?at={{.Here}}" class="pb-2 text-sm text-brand underline">{{msg "download_zip"}}</a>
 </div>
 {{if and (not .Folders) (not .Files)}}
 <p class="rounded-base border border-dashed border-stone-300 p-8 text-center text-stone-500">{{msg "empty"}}</p>
@@ -197,9 +231,10 @@ var pageTmpl = template.Must(template.New("page").Funcs(funcs).Parse(`<!doctype 
   <a href="/?folder={{.ID}}" hx-get="/browse?folder={{.ID}}" hx-target="#browser" hx-push-url="/?folder={{.ID}}"
      class="grow font-medium text-stone-900 underline-offset-2 hover:underline">{{.Name}}</a>
   <span class="text-xs uppercase tracking-wide text-stone-600">{{msg "folder"}}</span>
+  <a href="/zip?at={{.ID}}" class="text-sm text-brand underline" aria-label="{{msg "download_zip"}} {{.Name}}">{{msg "download_zip"}}</a>
   {{template "rename" (row "/folders" .ID .Name $)}}
   {{template "moveto" (row "/folders" .ID .Name $)}}
-  {{template "delete" (row "/folders" .ID .Name $)}}
+  {{template "deletefolder" (row "/folders" .ID .Name $)}}
  </li>
  {{end}}
  {{range .Files}}
@@ -208,6 +243,7 @@ var pageTmpl = template.Must(template.New("page").Funcs(funcs).Parse(`<!doctype 
   <span class="grow font-medium text-stone-900">{{.Name}}</span>
   <span class="text-sm text-stone-500">{{bytes .Size}}</span>
   <a href="/files/{{.ID}}/download" class="text-sm text-brand underline">{{msg "download"}}</a>
+  {{if .TextEditable}}<a href="/text/{{.ID}}" class="text-sm text-brand underline" aria-label="{{msg "edit_text"}} {{.Name}}">{{msg "edit_text"}}</a>{{end}}
   <button hx-get="/files/{{.ID}}/details" hx-target="#drawer" class="text-sm text-brand underline" aria-label="{{msg "details"}} {{.Name}}">{{msg "details"}}</button>
   {{template "rename" (row "/files" .ID .Name $)}}
   {{template "moveto" (row "/files" .ID .Name $)}}
@@ -249,6 +285,12 @@ var pageTmpl = template.Must(template.New("page").Funcs(funcs).Parse(`<!doctype 
 </form>
 {{end}}
 
+{{define "deletefolder"}}
+<form hx-post="{{.Base}}/{{.ID}}/delete?at={{.At}}" hx-target="#browser" hx-swap="innerHTML" hx-confirm="{{msg "confirm_delete_folder"}}">
+ <button class="text-sm text-red-700 underline" aria-label="{{msg "delete"}} {{.Name}}">{{msg "delete"}}</button>
+</form>
+{{end}}
+
 {{define "details"}}
 {{with .Object}}
 <div role="region" aria-label="{{.Name}}" tabindex="-1" data-drawer class="fixed inset-y-0 right-0 w-80 max-w-full overflow-y-auto border-l border-stone-200 bg-white p-4 shadow-lg">
@@ -256,8 +298,14 @@ var pageTmpl = template.Must(template.New("page").Funcs(funcs).Parse(`<!doctype 
   <h2 class="text-lg font-semibold text-stone-900">{{.Name}}</h2>
   <button type="button" data-close-drawer class="text-sm text-stone-600 underline" aria-label="{{msg "close"}}">✕</button>
  </div>
+ {{if .Previewable}}
+ <img src="/files/{{.ID}}/preview" alt="{{msg "preview_of"}} {{.Name}}" class="mt-4 max-h-48 w-full rounded-base border border-stone-200 bg-stone-50 object-contain">
+ {{end}}
  {{if $.Office}}
  <a href="/edit/{{.ID}}" class="mt-4 inline-block rounded-base bg-brand px-3 py-1.5 text-sm font-medium text-white hover:opacity-90">{{msg "edit_office"}}</a>
+ {{end}}
+ {{if .TextEditable}}
+ <a href="/text/{{.ID}}" class="mt-4 inline-block rounded-base bg-brand px-3 py-1.5 text-sm font-medium text-white hover:opacity-90">{{msg "edit_text"}}</a>
  {{end}}
  <dl class="mt-4 space-y-3 text-sm">
   <div><dt class="text-stone-500">{{msg "size"}}</dt><dd class="text-stone-900">{{bytes .Size}}</dd></div>
@@ -302,6 +350,35 @@ var pageTmpl = template.Must(template.New("page").Funcs(funcs).Parse(`<!doctype 
 </form>
 <iframe id="office_frame" name="office_frame" allow="clipboard-read; clipboard-write"></iframe>
 <script src="/editor.js" defer></script>
+</body></html>{{end}}
+
+{{define "texteditor"}}<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Object.Name}} — {{msg "text_editor"}}</title>
+{{if .Inline}}<style>{{stylesheet}}</style>{{else}}<link rel="stylesheet" href="/style.css">{{end}}
+</head>
+<body class="min-h-screen bg-stone-50 text-stone-900">
+<header class="border-b border-stone-200 bg-white">
+ <div class="mx-auto flex max-w-3xl items-center justify-between px-4 py-3">
+  <a href="{{.BackURL}}" class="text-sm text-stone-600 underline hover:text-stone-900">← {{msg "back_to_files"}}</a>
+  <h1 class="text-lg font-semibold text-stone-900">{{.Object.Name}}</h1>
+ </div>
+</header>
+<main class="mx-auto max-w-3xl px-4 py-6">
+ {{if .Conflict}}<p role="alert" class="mb-4 rounded-base border border-red-300 bg-red-50 p-3 text-sm text-red-900">{{msg "conflict"}}</p>{{end}}
+ {{if .Saved}}<p role="status" class="mb-4 rounded-base border border-stone-300 bg-white p-3 text-sm text-stone-700">{{msg "saved"}}</p>{{end}}
+ <form method="post" action="/text/{{.Object.ID}}">
+  <input type="hidden" name="base" value="{{.Base}}">
+  <label class="sr-only" for="content">{{.Object.Name}}</label>
+  <textarea id="content" name="content" rows="24" spellcheck="false"
+   class="block w-full rounded-base border border-stone-300 bg-white p-3 font-mono text-sm text-stone-900">{{.Content}}</textarea>
+  <div class="mt-3 flex items-center gap-3">
+   <button type="submit" class="rounded-base bg-brand px-4 py-2 text-sm font-medium text-white hover:opacity-90">{{msg "save"}}</button>
+   <a href="{{.BackURL}}" class="text-sm text-stone-600 underline">{{msg "cancel"}}</a>
+  </div>
+ </form>
+</main>
 </body></html>{{end}}`))
 
 // Page renders the whole document for a folder listing.
@@ -316,3 +393,8 @@ func Details(w io.Writer, v DetailView) error { return pageTmpl.ExecuteTemplate(
 // Editor renders the /edit page: an auto-submitting form that embeds the
 // office engine's iframe with a WOPI access token (ADR-0018).
 func Editor(w io.Writer, v EditorView) error { return pageTmpl.ExecuteTemplate(w, "editor", v) }
+
+// TextEditor renders the /text/{id} page — Kamara's own plain-text editor.
+func TextEditor(w io.Writer, v TextEditorView) error {
+	return pageTmpl.ExecuteTemplate(w, "texteditor", v)
+}

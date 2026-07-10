@@ -78,6 +78,21 @@ func (s *Service) CreateFolder(ctx context.Context, owner pii.Subject, parent *s
 	return f, nil
 }
 
+// GetFolder returns a folder's metadata after an access check.
+func (s *Service) GetFolder(ctx context.Context, caller pii.Subject, folderID string) (Folder, error) {
+	if err := s.authorizeFolder(ctx, caller, folderID); err != nil {
+		return Folder{}, err
+	}
+	f, ok, err := s.tx.Reader().Objects.GetFolder(ctx, folderID)
+	if err != nil {
+		return Folder{}, err
+	}
+	if !ok {
+		return Folder{}, ErrNotFound
+	}
+	return f, nil
+}
+
 // ListChildren returns the folders and files directly under folder (nil =
 // the caller's root). A named folder is access-checked; the root is the
 // caller's own. Scoped to the caller as owner (per-owner trees, M4b — when
@@ -294,6 +309,123 @@ func (s *Service) DeleteFolder(ctx context.Context, caller pii.Subject, folderID
 		_ = s.authz.DeleteObjectTuple(ctx, folderObj(*f.ParentID), ParentRelation, folderObj(folderID))
 	}
 	return s.authz.Delete(ctx, caller, Relation, folderObj(folderID))
+}
+
+// DeleteFolderTree removes a folder and everything under it — subfolders,
+// files, versions, chunk references — the browser's "delete folder" (single-
+// item DeleteFolder stays empty-first for the API's existing contract; the
+// API opts in via ?recursive=true). The subtree is collected outside the
+// transaction (per-owner scope, like the listings); all metadata deletes,
+// audit events, and search removals commit in one transaction, children
+// first so the parent_id/folder_id RESTRICT constraints hold. A child added
+// concurrently between the walk and the commit trips that constraint and
+// surfaces as ErrNotEmpty (retryable), never a partial delete. Blob reclaim,
+// editing-session revocation, and OpenFGA tuple cleanup follow after commit,
+// best-effort, exactly like the single-item deletes.
+func (s *Service) DeleteFolderTree(ctx context.Context, caller pii.Subject, folderID string) error {
+	if err := s.authorizeFolder(ctx, caller, folderID); err != nil {
+		return err
+	}
+	rd := s.tx.Reader()
+	root, ok, err := rd.Objects.GetFolder(ctx, folderID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrNotFound
+	}
+	// Breadth-first collection; the seen-set terminates a malformed cycle.
+	folders := []Folder{root}
+	var objects []Object
+	seen := map[string]bool{folderID: true}
+	for i := 0; i < len(folders); i++ {
+		fid := folders[i].ID
+		objs, err := rd.Objects.ObjectsInFolder(ctx, caller, &fid)
+		if err != nil {
+			return err
+		}
+		objects = append(objects, objs...)
+		subs, err := rd.Objects.FoldersInParent(ctx, caller, &fid)
+		if err != nil {
+			return err
+		}
+		for _, sub := range subs {
+			if seen[sub.ID] {
+				continue
+			}
+			seen[sub.ID] = true
+			folders = append(folders, sub)
+		}
+	}
+	var orphans []string
+	if err := s.tx.InTx(ctx, func(st Stores) error {
+		for _, o := range objects {
+			if err := st.Audit.Emit(ctx, caller, "kamara.file.deleted",
+				audit.Object{Type: Type, ID: o.ID, Permalink: o.Permalink()}, nil); err != nil {
+				return err
+			}
+			hashes, err := st.Objects.ChunkHashesOf(ctx, o.ID)
+			if err != nil {
+				return err
+			}
+			if err := st.Objects.DeleteObject(ctx, o.ID); err != nil {
+				return err
+			}
+			gone, err := st.Objects.DecRef(ctx, hashes)
+			if err != nil {
+				return err
+			}
+			if err := st.Objects.DeleteChunks(ctx, gone); err != nil {
+				return err
+			}
+			orphans = append(orphans, gone...)
+			if err := st.Search.Remove(ctx, o.ID); err != nil {
+				return err
+			}
+		}
+		// Folders children-first (reverse of the breadth-first collection).
+		for i := len(folders) - 1; i >= 0; i-- {
+			f := folders[i]
+			if err := st.Audit.Emit(ctx, caller, "kamara.folder.deleted",
+				audit.Object{Type: FolderType, ID: f.ID, Permalink: f.Permalink()}, nil); err != nil {
+				return err
+			}
+			if err := st.Objects.DeleteFolder(ctx, f.ID); err != nil {
+				return err
+			}
+			if err := st.Search.Remove(ctx, f.ID); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	for _, h := range orphans {
+		_ = s.blobs.Delete(ctx, h)
+	}
+	var tupleErr error
+	keep := func(err error) {
+		if err != nil && tupleErr == nil {
+			tupleErr = err
+		}
+	}
+	for _, o := range objects {
+		if s.revoker != nil {
+			_ = s.revoker.Revoke(ctx, o.ID)
+		}
+		if o.FolderID != nil {
+			_ = s.authz.DeleteObjectTuple(ctx, folderObj(*o.FolderID), ParentRelation, obj(o.ID))
+		}
+		keep(s.authz.Delete(ctx, caller, Relation, obj(o.ID)))
+	}
+	for _, f := range folders {
+		if f.ParentID != nil {
+			_ = s.authz.DeleteObjectTuple(ctx, folderObj(*f.ParentID), ParentRelation, folderObj(f.ID))
+		}
+		keep(s.authz.Delete(ctx, caller, Relation, folderObj(f.ID)))
+	}
+	return tupleErr
 }
 
 // reparent updates the containment tuple of child (a fully-qualified object)

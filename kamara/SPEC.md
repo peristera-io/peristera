@@ -162,6 +162,21 @@ thin adapter over the file domain (`internal/api`).
 | `GET` | `/files/{id}/content` | Stream the reassembled bytes |
 | `DELETE` | `/files/{id}` | Delete + reclaim orphaned chunks |
 
+**Drive surface (post-M7 session).** The API grew the missing
+file-manager operations, all documented in `api/openapi.yaml`:
+`PUT /files/{id}/content` (replace content — a new version, identity/URL
+unchanged), `GET /files/{id}/versions`, `GET /folders/{id}` (metadata),
+`GET /folders/{id}/zip` (stream the subtree as a zip archive — entries are
+written as the tree is walked, no temp files; entry names are flattened
+and de-duplicated so an extractor can't be steered outside its target),
+and `DELETE /folders/{id}?recursive=true` (whole-subtree delete in one
+transaction; the empty-first default stays). The browser UI gained the
+matching flows plus two of its own: a plain-text editor (`/text/{id}`,
+optimistic-concurrency save via a base version ordinal → 409 + merge-by-
+hand on conflict; "new text file" creates an empty object and opens it)
+and an inline image preview in the drawer (non-SVG `image/*` only — an
+SVG document on this cookie-authed origin could carry script).
+
 - **Authentication (decided — session 3).** Every call carries a bearer
   token; it is validated against the tenant OIDC provider's **userinfo**
   endpoint (the same cheap validation the control plane uses), and the

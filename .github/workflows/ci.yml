@@ -91,7 +91,7 @@ jobs:
       - name: Run axe-core (WCAG 2.1 AA) across UI states
         working-directory: kamara
         run: |
-          for state in browse empty root long; do
+          for state in browse empty root long texteditor; do
             echo "== a11y: $state =="
             go run ./cmd/a11y-render "$state" > "/tmp/kamara-$state.html"
             node a11y/check.mjs "/tmp/kamara-$state.html"

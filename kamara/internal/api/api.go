@@ -31,14 +31,19 @@ type Service interface {
 	List(ctx context.Context, caller pii.Subject) ([]file.Object, error)
 	Get(ctx context.Context, caller pii.Subject, id string) (file.Object, error)
 	Delete(ctx context.Context, caller pii.Subject, id string) error
+	WriteVersion(ctx context.Context, caller pii.Subject, id string, r io.Reader) (string, error)
+	ListVersions(ctx context.Context, caller pii.Subject, id string) ([]file.Version, error)
 
 	CreateFolder(ctx context.Context, owner pii.Subject, parent *string, name string) (file.Folder, error)
+	GetFolder(ctx context.Context, caller pii.Subject, id string) (file.Folder, error)
 	ListChildren(ctx context.Context, caller pii.Subject, folder *string) (file.Listing, error)
 	RenameFile(ctx context.Context, caller pii.Subject, id, name string) error
 	MoveFile(ctx context.Context, caller pii.Subject, id string, dest *string) error
 	RenameFolder(ctx context.Context, caller pii.Subject, id, name string) error
 	MoveFolder(ctx context.Context, caller pii.Subject, id string, dest *string) error
 	DeleteFolder(ctx context.Context, caller pii.Subject, id string) error
+	DeleteFolderTree(ctx context.Context, caller pii.Subject, id string) error
+	DownloadZip(ctx context.Context, caller pii.Subject, folder *string, w io.Writer) error
 }
 
 // Authenticator resolves a bearer token to the caller's subject. The
@@ -72,11 +77,15 @@ func (h *Handler) Routes() http.Handler {
 	mux.Handle("GET /v1/files/{id}", h.authed(h.get))
 	mux.Handle("DELETE /v1/files/{id}", h.authed(h.delete))
 	mux.Handle("GET /v1/files/{id}/content", h.authed(h.download))
+	mux.Handle("PUT /v1/files/{id}/content", h.authed(h.putContent))
+	mux.Handle("GET /v1/files/{id}/versions", h.authed(h.listVersions))
 	mux.Handle("POST /v1/files/{id}/rename", h.authed(h.renameFile))
 	mux.Handle("POST /v1/files/{id}/move", h.authed(h.moveFile))
 	// Folders (Kamara ADR-0002).
 	mux.Handle("GET /v1/folders", h.authed(h.listChildren))
 	mux.Handle("POST /v1/folders", h.authed(h.createFolder))
+	mux.Handle("GET /v1/folders/{id}", h.authed(h.getFolder))
+	mux.Handle("GET /v1/folders/{id}/zip", h.authed(h.downloadZip))
 	mux.Handle("DELETE /v1/folders/{id}", h.authed(h.deleteFolder))
 	mux.Handle("POST /v1/folders/{id}/rename", h.authed(h.renameFolder))
 	mux.Handle("POST /v1/folders/{id}/move", h.authed(h.moveFolder))
@@ -192,6 +201,41 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request, caller pii.Su
 	}
 }
 
+// putContent replaces a file's content: the raw body becomes a new version
+// (the file keeps its identity, owner, and URL — ADR-0007), same streaming
+// discipline and size cap as upload.
+func (h *Handler) putContent(w http.ResponseWriter, r *http.Request, caller pii.Subject) {
+	body := http.MaxBytesReader(w, r.Body, h.maxUpload)
+	if _, err := h.svc.WriteVersion(r.Context(), caller, r.PathValue("id"), body); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeErr(w, http.StatusRequestEntityTooLarge, "content exceeds maximum upload size")
+			return
+		}
+		h.fail(w, err)
+		return
+	}
+	o, err := h.svc.Get(r.Context(), caller, r.PathValue("id"))
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toFile(o))
+}
+
+func (h *Handler) listVersions(w http.ResponseWriter, r *http.Request, caller pii.Subject) {
+	vs, err := h.svc.ListVersions(r.Context(), caller, r.PathValue("id"))
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	versions := make([]versionDTO, 0, len(vs))
+	for _, v := range vs {
+		versions = append(versions, toVersion(v))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"versions": versions})
+}
+
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request, caller pii.Subject) {
 	if err := h.svc.Delete(r.Context(), caller, r.PathValue("id")); err != nil {
 		h.fail(w, err)
@@ -233,12 +277,44 @@ func (h *Handler) createFolder(w http.ResponseWriter, r *http.Request, caller pi
 	writeJSON(w, http.StatusCreated, toFolder(f))
 }
 
+// deleteFolder removes a folder — empty-first by default (the original
+// contract), or the whole subtree with ?recursive=true.
 func (h *Handler) deleteFolder(w http.ResponseWriter, r *http.Request, caller pii.Subject) {
-	if err := h.svc.DeleteFolder(r.Context(), caller, r.PathValue("id")); err != nil {
+	del := h.svc.DeleteFolder
+	if r.URL.Query().Get("recursive") == "true" {
+		del = h.svc.DeleteFolderTree
+	}
+	if err := del(r.Context(), caller, r.PathValue("id")); err != nil {
 		h.fail(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) getFolder(w http.ResponseWriter, r *http.Request, caller pii.Subject) {
+	f, err := h.svc.GetFolder(r.Context(), caller, r.PathValue("id"))
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toFolder(f))
+}
+
+// downloadZip streams the folder's subtree as a zip archive named after the
+// folder. Like download, a mid-stream failure can only be logged — the
+// status and some bytes are already flushed.
+func (h *Handler) downloadZip(w http.ResponseWriter, r *http.Request, caller pii.Subject) {
+	id := r.PathValue("id")
+	f, err := h.svc.GetFolder(r.Context(), caller, id) // authorizes + names the archive
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", ContentDisposition("attachment", f.Name+".zip"))
+	if err := h.svc.DownloadZip(r.Context(), caller, &id, w); err != nil {
+		log.Printf("kamara: zip %s: %v", id, err)
+	}
 }
 
 func (h *Handler) renameFile(w http.ResponseWriter, r *http.Request, caller pii.Subject) {
@@ -335,6 +411,8 @@ func (h *Handler) fail(w http.ResponseWriter, err error) {
 		writeErr(w, http.StatusConflict, "folder not empty")
 	case errors.Is(err, file.ErrCycle):
 		writeErr(w, http.StatusBadRequest, "move would create a cycle")
+	case errors.Is(err, file.ErrModified):
+		writeErr(w, http.StatusConflict, "file was modified since the base version")
 	default:
 		writeErr(w, http.StatusInternalServerError, "internal error")
 	}
@@ -342,21 +420,36 @@ func (h *Handler) fail(w http.ResponseWriter, err error) {
 
 // fileDTO is the wire shape of components.schemas.File.
 type fileDTO struct {
-	ID        string  `json:"id"`
-	Name      string  `json:"name"`
-	Size      int64   `json:"size"`
-	Folder    *string `json:"folder"`
-	Permalink string  `json:"permalink"`
-	Created   string  `json:"created"`
-	Updated   string  `json:"updated"`
+	ID          string  `json:"id"`
+	Name        string  `json:"name"`
+	Size        int64   `json:"size"`
+	Folder      *string `json:"folder"`
+	ContentType string  `json:"contentType"`
+	Permalink   string  `json:"permalink"`
+	Created     string  `json:"created"`
+	Updated     string  `json:"updated"`
 }
 
 func toFile(o file.Object) fileDTO {
 	return fileDTO{
-		ID: o.ID, Name: o.Name, Size: o.Size, Folder: o.FolderID, Permalink: o.Permalink(),
-		Created: o.Created.UTC().Format("2006-01-02T15:04:05Z07:00"),
-		Updated: o.Updated.UTC().Format("2006-01-02T15:04:05Z07:00"),
+		ID: o.ID, Name: o.Name, Size: o.Size, Folder: o.FolderID, ContentType: o.ContentType,
+		Permalink: o.Permalink(),
+		Created:   o.Created.UTC().Format("2006-01-02T15:04:05Z07:00"),
+		Updated:   o.Updated.UTC().Format("2006-01-02T15:04:05Z07:00"),
 	}
+}
+
+// versionDTO is the wire shape of components.schemas.Version.
+type versionDTO struct {
+	ID      string `json:"id"`
+	Ordinal int    `json:"ordinal"`
+	Size    int64  `json:"size"`
+	Created string `json:"created"`
+}
+
+func toVersion(v file.Version) versionDTO {
+	return versionDTO{ID: v.ID, Ordinal: v.Ordinal, Size: v.Size,
+		Created: v.Created.UTC().Format("2006-01-02T15:04:05Z07:00")}
 }
 
 // folderDTO is the wire shape of a folder.
