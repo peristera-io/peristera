@@ -970,3 +970,22 @@ tenants on real TLS (default and custom domains) + tenant users + backups, all
 live on Scaleway. Remaining follow-ups are tracked issues (#56 stable-CNAME
 target + ownership verification, #59 blob backup + barman plugin, #53 tenant
 dashboard).
+
+## 2026-07-11 — Post-M7 batch kickoff: decisions of record (R90–R96)
+
+A five-perspective audit (security, architecture, code quality, ops, UX/DX) ran
+after M7 and filed 25 issues (#65–#89, security individually, the rest grouped +
+cross-linked). Q&A Round 14 (R90–R96) then settled the fix batch; answers are in
+`Q&A.md`, the plan in `docs/post-m7-plan.md`. Headline decisions: one DNS-01
+wildcard cert story for platform *and* custom domains (custom via
+`_acme-challenge` CNAME delegation), issuer/vanity-domain decoupling (making
+`spec.domain` a reversible routing attribute), operator-initiated domain
+ownership verification, a scoped optional-app reconcile that deletes on disable,
+and office hardening.
+
+First PR of the batch (this one) records the decisions and **accepts + documents
+the shared-ingress host-header bounce** (R92): no L7 fix now, revisit with the
+zero-trust/token layer. Recorded as an ADR-0016 amendment; #43 closed. The code
+PRs follow per `docs/post-m7-plan.md` (office hardening → optional-app lifecycle
+→ cert model + custom domains), each with security + code review, cloud-infra
+verified live per the R96 sequence.
