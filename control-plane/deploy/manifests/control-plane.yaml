@@ -104,10 +104,26 @@ spec:
       labels: {app.kubernetes.io/name: control-plane}
     spec:
       serviceAccountName: control-plane
+      # Non-root, least-privilege posture (#91). The image already runs as
+      # uid 65532 (distroless nonroot); this asserts and enforces it, drops all
+      # capabilities, and locks the root filesystem read-only. fsGroup keeps any
+      # future mounted volume writable by the app group.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: control-plane
           image: peristera-control-plane:dev
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           ports:
             - containerPort: 8090
           env:
@@ -129,12 +145,15 @@ spec:
             - {name: OPERATOR_SUBJECTS, value: ""}
           volumeMounts:
             - {name: admin-client, mountPath: /secrets/admin-client, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
           readinessProbe:
             httpGet: {path: /healthz, port: 8090}
       volumes:
         - name: admin-client
           secret:
             secretName: admin-client-tls
+        - name: tmp
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
