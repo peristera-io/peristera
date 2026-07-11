@@ -154,3 +154,23 @@ follow-up.
   it for a dev cluster.
 - **`CiliumNetworkPolicy` everywhere** — ties manifests to Cilium with no
   present benefit; use portable `NetworkPolicy` until L7 is actually needed.
+
+## Amendment (2026-07-11, Q&A Round 14 R92, closes #43)
+
+The **shared-ingress Host-header bounce** described under *Policy shape → Known
+limit* is **accepted, not fixed** for now (#43 closed as such). The exposure is
+"one tenant's compromised app can reach another tenant's *public* app endpoints
+by bouncing an HTTP request off the shared ingress" — i.e. the same reach any
+internet client already has, gated by each endpoint's own per-request
+authentication. Internal surfaces (OpenFGA, Postgres, any port without an
+Ingress) remain network-isolated and are unaffected.
+
+The only real fix is L7/FQDN egress (`CiliumNetworkPolicy`) restricting each
+app's issuer-path egress to its own issuer host, which would abandon this ADR's
+deliberate "portable `NetworkPolicy` only" stance (§*Cilium is the CNI*) for
+marginal gain over the authentication that already guards those endpoints.
+**Decision:** keep the portable-policy stance; **revisit when the zero-trust /
+token layer (ADR-0017 s2/s3) lands**, at which point per-service identity makes
+an L7 egress rule cheap and principled rather than a Cilium-specific one-off.
+Until then, treating public app endpoints as internet-reachable is the honest
+threat model.
