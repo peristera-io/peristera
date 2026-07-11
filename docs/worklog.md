@@ -970,3 +970,33 @@ tenants on real TLS (default and custom domains) + tenant users + backups, all
 live on Scaleway. Remaining follow-ups are tracked issues (#56 stable-CNAME
 target + ownership verification, #59 blob backup + barman plugin, #53 tenant
 dashboard).
+
+## 2026-07-11 — Non-root securityContext for our apps (#91) + Podman dev cluster
+
+Two threads, from bringing the dev cluster up on **k3d + rootful Podman** (the
+tooling assumes Docker).
+
+**Enforced non-root, least-privilege posture (#91).** The four app images already
+run as uid 65532 (distroless `nonroot`) — the original issue premise ("uid 0")
+was wrong and was corrected on the issue. The real gap: the posture was
+incidental to the base image, not asserted or enforced by the pod spec. Added a
+hardened `securityContext` to our own workloads: pod `runAsNonRoot: true`,
+`runAsUser/Group/fsGroup: 65532`, `seccompProfile: RuntimeDefault`; container
+`allowPrivilegeEscalation: false`, `readOnlyRootFilesystem: true`,
+`capabilities.drop: [ALL]`, plus a writable `/tmp` emptyDir. Two places: the
+static control-plane manifest, and the catalog builder (`apps.go`) which covers
+stub/ergonomos/kamara. **Collabora is deliberately excluded** — it is `External`,
+provisioned by `ensureOffice`, and needs root + `SYS_ADMIN`/chroot caps (its own
+hardening is #48/#66). `fsGroup` keeps Kamara's blob PVC writable under the
+read-only rootfs. Verified live: control-plane and a fresh tenant's
+stub/ergonomos/kamara all come up Ready with the context enforced; Kamara (the
+read-only-rootfs + PVC case) runs clean; controller unit tests pass. Closes #91.
+
+**Podman-aware `hack/dev-cluster.sh`.** Podman names local builds
+`localhost/<name>`, so `k3d image import` by bare name fails ("no valid images
+specified") and `set -e` aborted the deploy before the CRD/OpenFGA/control-plane
+step. The script now detects Podman and retags to `docker.io/library/<name>` +
+imports via tarballs (Docker path unchanged). Background and the full
+build/import/socket story are in `docs/deployment/podman.md` (that doc still
+describes the manual workaround and should be trimmed once its PR lands — the
+script now does it automatically).
