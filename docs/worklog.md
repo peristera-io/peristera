@@ -989,3 +989,31 @@ zero-trust/token layer. Recorded as an ADR-0016 amendment; #43 closed. The code
 PRs follow per `docs/post-m7-plan.md` (office hardening → optional-app lifecycle
 → cert model + custom domains), each with security + code review, cloud-infra
 verified live per the R96 sequence.
+
+## 2026-07-11 — Office hardening (R95, #48 + #66)
+
+Hardened the Collabora engine per R95's four calls. The admin console is
+**disabled** (`--o:admin_console.enable=false`) and the hardcoded `admin/admin`
+env is dropped — closes the exposure filed as #66 (admin console reachable on
+the prod path with default creds). Prod-shaped `ssl.termination` is now **gated
+on `tlsEnabled()`** (the single dev/prod switch): on the cloud coolwsd runs
+behind TLS-terminating Traefik and emits https URLs; dev stays plain http. Added
+a pod-level **RuntimeDefault seccomp** profile; the jailing capabilities
+(incl. `SYS_ADMIN`) are retained since the moby default profile still permits
+mount/chroot/mknod for a capability holder — accepted within the per-tenant
+namespace (dropping them disables jailing, which is worse). The WOPI-token /
+Traefik-accesslog stance is documented (no code; accesslog is off by default).
+
+Refactored the Deployment into a pure `officeDeployment` builder (mirroring
+`issuerIngress`) with a unit test (`office_test.go`) asserting the hardening —
+first unit coverage for the office path. **Needs a live smoke test:** open a
+document against a running office to confirm RuntimeDefault seccomp doesn't
+break coolwsd's jailing (the R96 cloud-infra verification step).
+
+Security + code-quality review (two agents): sound, no new vuln — confirmed that
+`admin_console.enable=false` is what actually closes the console (removing creds
+alone would not have) and that RuntimeDefault permits the cap-gated jailing
+syscalls. Folded in the review nits (assert the WOPI allow-list and the full cap
+set; `strconv.FormatBool`). Dropping the container's default cap set
+(`Drop: ["ALL"]`) is a pre-existing least-privilege miss, out of R95 scope and
+needing the same coolwsd smoke test — tracked as #95.
