@@ -66,6 +66,7 @@ retired (it stays the auth/issuer host), but it can be dropped as a user-facing
 app host.
 
 Code shape: split today's overloaded `tenantDomain()` into
+
 - `issuerHost(t)` — always `<slug>.<base>` (permanent); feeds `status.issuer`,
   the Zitadel instance domain, and the issuer ingress;
 - `appDomain(t)` — the custom domain when set, else `<slug>.<base>`; feeds app
