@@ -42,8 +42,8 @@ node. `#43` (host-header bounce) is accepted and documented rather than fixed
 - **R93/R94 — optional-app lifecycle (#63, #47).** **Scoped reconcile for
   optional apps only:** converge the tenant's app resources to `spec.apps` —
   create on enable, **delete** on disable (label-selected
-  Deployment/Service/Ingress/Certificate/NetworkPolicy), and rewire Kamara's env
-  + `np-kamara` caller set on toggle. Does **not** reopen general
+  Deployment/Service/Ingress/Certificate/NetworkPolicy), and rewire Kamara's
+  env + `np-kamara` caller set on toggle. Does **not** reopen general
   drift-correction. API: **`PUT /tenants/{slug}/apps`** taking the full desired
   set (idempotent, validated against the catalog's Optional dimension); UI is a
   toggle on the tenant view. Toggling office rolls Kamara (a few-second blip).
