@@ -46,10 +46,14 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *v1
 		// step). If a future CNI/kube-proxy change collapses that to the
 		// host identity, this match breaks and browser access is denied —
 		// so treat the source-identity assumption as load-bearing.
+		// Only apps actually provisioned for this tenant are admitted as
+		// callers (enabledCallersOf, not callersOf): a disabled optional app
+		// like office is not in np-kamara's From until it is enabled, and the
+		// optional-app reconcile updates this set on a toggle (R93, #47).
 		from := []networkingv1.NetworkPolicyPeer{
 			{NamespaceSelector: kubeSystemSelector(), PodSelector: nameSelector("traefik")},
 		}
-		for _, caller := range callersOf(app.Name) {
+		for _, caller := range enabledCallersOf(tenant, app.Name) {
 			from = append(from, networkingv1.NetworkPolicyPeer{PodSelector: nameSelector(caller)})
 		}
 		policies = append(policies, &networkingv1.NetworkPolicy{

@@ -11,6 +11,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/peristera-io/peristera/control-plane/apis/v1alpha1"
+	"github.com/peristera-io/peristera/control-plane/internal/controller"
 	"github.com/peristera-io/peristera/control-plane/internal/zitadel"
 )
 
@@ -37,6 +38,7 @@ var messages = map[string]string{
 	"login_label":     "Login",
 	"password_label":  "Password",
 	"creds_note":      "Copy the password now — it is shown once and not stored.",
+	"apps_label":      "Apps",
 }
 
 var funcs = template.FuncMap{
@@ -108,6 +110,16 @@ var pageTmpl = template.Must(template.New("page").Funcs(funcs).Parse(`<!doctype 
       <button type="submit">{{msg "add_admin"}}</button>
     </form>
     <div id="creds-{{.Slug}}"></div>
+    {{if .OptionalApps}}
+    <form hx-put="/ui/tenants/{{.Slug}}/apps" hx-trigger="change" hx-swap="none"
+          style="display:inline; margin-left:.5rem">
+      <span>{{msg "apps_label"}}:</span>
+      {{range .OptionalApps}}
+      <label style="margin-left:.25rem"><input type="checkbox" name="apps"
+        value="{{.Name}}"{{if .Enabled}} checked{{end}}> {{.Name}}</label>
+      {{end}}
+    </form>
+    {{end}}
     {{end}}
   </td>
 </tr>
@@ -119,15 +131,35 @@ var pageTmpl = template.Must(template.New("page").Funcs(funcs).Parse(`<!doctype 
 <p><em>{{msg "creds_note"}}</em></p>
 {{end}}{{end}}`))
 
+type appToggle struct {
+	Name    string
+	Enabled bool
+}
+
 type rowData struct {
 	Slug, DisplayName, Phase, Issuer string
+	OptionalApps                     []appToggle
 }
 
 func toRow(t *v1alpha1.Tenant) rowData {
+	var apps []appToggle
+	for _, name := range controller.OptionalApps() {
+		apps = append(apps, appToggle{Name: name, Enabled: tenantHasApp(t, name)})
+	}
 	return rowData{
 		Slug: t.Spec.Slug, DisplayName: t.Spec.DisplayName,
 		Phase: string(t.Status.Phase), Issuer: t.Status.Issuer,
+		OptionalApps: apps,
 	}
+}
+
+func tenantHasApp(t *v1alpha1.Tenant, name string) bool {
+	for _, a := range t.Spec.Apps {
+		if a == name {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) uiMux() http.Handler {
@@ -137,7 +169,40 @@ func (s *Server) uiMux() http.Handler {
 	mux.HandleFunc("DELETE /ui/tenants/{slug}", s.uiDelete)
 	mux.HandleFunc("GET /ui/tenants/{slug}/row", s.uiRow)
 	mux.HandleFunc("POST /ui/tenants/{slug}/users", s.uiCreateUser)
+	mux.HandleFunc("PUT /ui/tenants/{slug}/apps", s.uiSetApps)
 	return mux
+}
+
+// uiSetApps toggles a tenant's optional apps from the browser. The checkbox
+// form submits the checked apps (the desired set) on change; unchecked apps are
+// omitted and thus disabled. Validated against the catalog's optional dimension,
+// then written to spec.apps for the reconciler to converge (R94, #63/#47).
+func (s *Server) uiSetApps(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	apps, err := validateOptionalApps(r.Form["apps"])
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	t := &v1alpha1.Tenant{}
+	if err := s.K8s.Get(r.Context(), client.ObjectKey{Name: r.PathValue("slug")}, t); err != nil {
+		if apierrors.IsNotFound(err) {
+			http.Error(w, "no such tenant", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	t.Spec.Apps = apps
+	if err := s.K8s.Update(r.Context(), t); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("HX-Refresh", "true")
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // uiCreateUser creates a tenant admin from the browser and renders the
