@@ -1082,3 +1082,23 @@ imports via tarballs (Docker path unchanged). Background and the full
 build/import/socket story are in `docs/deployment/podman.md` (that doc still
 describes the manual workaround and should be trimmed once its PR lands — the
 script now does it automatically).
+
+## 2026-07-11 — Cert model + custom domains: design of record (ADR-0021, R90/R91)
+
+Wrote ADR-0021, the design for the last batch cluster (#52, #56). Decisions:
+one **DNS-01 wildcard** cert story for platform *and* custom domains (custom via
+`_acme-challenge` CNAME delegation into a zone we control, so we never need
+write access to the customer's DNS); **decouple the OIDC issuer** (permanent, on
+the `<slug>.<base>` host) from the **vanity domain** (a mutable, reversible
+app-routing attribute), which makes `spec.domain` mutable; **operator-initiated
+domain-ownership verification** (TXT challenge gating custom-domain
+ingress/cert); BYO cert as a later premium tier. Retire the HTTP-01 per-host
+self-heal.
+
+Migration is non-breaking: `status.issuer` is immutable per tenant, so the live
+`peristera.lu` tenant (issuer = its custom apex, provisioned under the s4 model)
+keeps its issuer; the decoupling applies to newly provisioned tenants, leaving a
+documented two-model coexistence with a reconciler guard against changing a
+legacy tenant's domain. The code lands in three staged slices (issuer decouple +
+mutable domain; DNS-01 wildcard; custom-domain CNAME + verification), the last
+two **verified live** against the warm node per R96.
