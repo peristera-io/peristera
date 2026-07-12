@@ -45,7 +45,10 @@ func (r *TenantReconciler) ingressTLS(host, secretName string) []networkingv1.In
 // instance — but for this one tenant host. Pure builder (no client), so the
 // routing/TLS shape is unit-testable.
 func (r *TenantReconciler) issuerIngress(tenant *v1alpha1.Tenant) *networkingv1.Ingress {
-	host := r.tenantDomain(tenant)
+	// The issuer is served on the permanent issuer host (ADR-0021), which is
+	// decoupled from the app domain; for legacy tenants instanceDomain resolves
+	// to their original custom apex via the status.Issuer override.
+	host := r.instanceDomain(tenant)
 	pathType := networkingv1.PathTypePrefix
 	ingressClass := "traefik"
 	backend := func(svc string, port int32) networkingv1.IngressBackend {

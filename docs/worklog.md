@@ -1138,3 +1138,39 @@ markup, and a new `texteditor` a11y state (axe green across all five states,
 run locally). Not verified live against a cluster — the Playwright demo/e2e
 flows are unchanged except an `exact: true` on the demo's Download selector
 (the new zip links substring-matched it).
+
+## 2026-07-11 — Cert model slice 1: issuer/vanity decouple + mutable domain (ADR-0021)
+
+First code slice of the cert model. Decoupled the OIDC issuer from the custom
+domain: the issuer now lives permanently on the `<slug>.<base>` host
+(`issuerHost`), and `spec.domain` is the mutable, reversible *app-host* base.
+`tenantIssuer` returns `status.issuer` once set, else `publicURL(issuerHost)`;
+`instanceDomain` (the Zitadel virtual-instance host) follows the same rule. So a
+newly created custom-domain tenant gets a slug-host issuer with app hosts under
+the custom apex, while the CRD immutability rule on `domain` is lifted.
+
+Non-breaking by construction: because `status.issuer` is the source of truth for
+provisioned tenants, the live `peristera.lu` tenant (issuer = its custom apex)
+is unchanged — the decoupling only affects tenants provisioned from now on. A
+reconciler migration guard pins a legacy tenant's app hosts to its issuer host,
+so an accidental `spec.domain` edit can't split it across two domains. Updated
+`provisionIAM` (instance domain), `deleteInstance` (instance domain + issuer via
+status), and the issuer ingress to use the issuer host; app hosts still follow
+`tenantDomain`. CRD regenerated (controller-gen), OpenAPI domain doc updated.
+
+Tests: `issuerHost`/`tenantIssuer`/`instanceDomain`/`tenantDomain` across default,
+new-custom, and legacy tenants (incl. the migration-guard pin) + `hostOf`.
+`go build`/`vet`/`test` green. **Live-verify (R96):** provision a *new*
+custom-domain tenant and confirm Zitadel serves the issuer at the slug host and
+apps resolve under the custom apex. Slices 2 (DNS-01 wildcard) and 3
+(custom-domain CNAME + ownership verification) follow, both live-verified.
+
+Reviewed (agent): passes the non-breaking-for-`peristera.lu` property with a
+byte-identical trace of every changed function for the legacy tenant, and
+confirms `status.issuer` is never recomputed for a provisioned tenant. Three
+non-blocking follow-ups, all deferred to slice 3 (where a domain swap becomes
+first-class): the stub OIDC client's redirect URIs go stale on a swap (#103,
+must-fix for slice 3); the migration guard silently pins rather than surfacing a
+condition (ADR wording aligned to the pin mechanism); and `spec.domain` has no
+collision/reservation check yet (fine while operator-only, closed before
+self-serve). ADR-0021 updated to record all three.

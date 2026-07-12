@@ -108,8 +108,21 @@ The `peristera.lu` tenant may be left as-is (it works) or re-provisioned once
 under the new model during a maintenance window if a single consistent model is
 wanted before self-serve. The CRD relaxes the immutability rule for everyone;
 legacy tenants simply should not have their domain changed (their issuer still
-derives from it) — enforced by a reconciler guard that refuses to change the
-domain of a tenant whose `status.issuer` host equals its current domain.
+derives from it). This is enforced by a reconciler **migration guard**: a tenant
+whose `status.issuer` host differs from its slug `issuerHost` (i.e. the issuer
+sits on a custom apex — the legacy shape) has its **app hosts pinned to that
+issuer host**, so a later `spec.domain` edit is ignored for routing rather than
+splitting the tenant across two domains. Surfacing that no-op to the operator (a
+`DomainPinned` condition / event) is a follow-up.
+
+Two known follow-ups on the now-mutable `spec.domain`, both fine while
+provisioning stays operator-only (R80) and closed before self-serve (#53): the
+tenant's **primary (stub) OIDC client** redirect URIs are frozen at first
+provision (only the catalog apps' clients re-converge each reconcile), so a
+domain *swap* must also re-assert them — folded into the slice-3 attach flow;
+and there is **no collision/reservation check** yet (a `spec.domain` under the
+platform base would shadow another tenant's default hosts), which the slice-3
+ownership verification + a platform-zone reservation will cover.
 
 ## Consequences
 

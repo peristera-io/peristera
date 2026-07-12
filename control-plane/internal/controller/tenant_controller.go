@@ -7,6 +7,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"net/url"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -68,13 +69,22 @@ type TenantReconciler struct {
 	BackupS3Secret string
 }
 
-// tenantDomain is the tenant's public base — its OIDC issuer host and the
-// parent of its app hosts. A BYO custom apex (Spec.Domain, e.g. peristera.lu)
-// wins; otherwise the default <slug>.<platform base> (s4). Everything
-// public-facing (issuer, app/office hosts, ingresses, the Zitadel instance's
-// custom domain) derives from this, so the custom-domain flavour flows through
-// unchanged.
+// tenantDomain is the parent of the tenant's *app* hosts (<app>.<domain>): a
+// BYO custom apex (Spec.Domain, e.g. peristera.lu) when set, else the default
+// <slug>.<platform base>. It is the mutable, reversible vanity attribute
+// (ADR-0021) — no longer the issuer. The OIDC issuer lives on the permanent
+// issuerHost, decoupled so a custom domain can be attached/detached without
+// re-identifying the tenant.
 func (r *TenantReconciler) tenantDomain(t *v1alpha1.Tenant) string {
+	// Migration guard (ADR-0021): a legacy tenant is one whose issuer sits on a
+	// custom apex (issuer host != issuerHost) — pre-decoupling, its app hosts
+	// and OIDC clients were registered there. Pin its app hosts to that issuer
+	// host and ignore later spec.domain edits; changing it would split the
+	// tenant across two domains. (For new tenants the issuer is on the slug
+	// host, so this never triggers and spec.domain is freely mutable.)
+	if h := hostOf(t.Status.Issuer); h != "" && h != r.issuerHost(t) {
+		return h
+	}
 	if t.Spec.Domain != "" {
 		return t.Spec.Domain
 	}
@@ -97,8 +107,49 @@ func (r *TenantReconciler) publicURL(host string) string {
 	return scheme + "://" + host + ":" + port
 }
 
+// issuerHost is the tenant's permanent OIDC issuer host — always
+// <slug>.<platform base>, independent of any custom domain (ADR-0021). This is
+// the identity: it feeds the issuer URL, the Zitadel virtual-instance domain,
+// and the issuer ingress, and it never changes for a tenant.
+func (r *TenantReconciler) issuerHost(t *v1alpha1.Tenant) string {
+	return t.Spec.Slug + "." + r.BaseDomain
+}
+
+// tenantIssuer is the tenant's OIDC issuer URL. Once provisioned, status.Issuer
+// is the immutable source of truth (so tenants provisioned under the pre-ADR-0021
+// model — where the custom apex was the issuer, e.g. peristera.lu — keep their
+// issuer unchanged). Before provisioning, it derives from the permanent
+// issuerHost, so newly created tenants get a slug-host issuer regardless of a
+// custom domain.
 func (r *TenantReconciler) tenantIssuer(t *v1alpha1.Tenant) string {
-	return r.publicURL(r.tenantDomain(t))
+	if t.Status.Issuer != "" {
+		return t.Status.Issuer
+	}
+	return r.publicURL(r.issuerHost(t))
+}
+
+// instanceDomain is the host the tenant's Zitadel virtual instance is served
+// on — the host of the issuer. It equals issuerHost for new tenants and, via
+// the status.Issuer override in tenantIssuer, the legacy custom apex for
+// pre-ADR-0021 tenants. Used for CreateInstance / InstanceIDByDomain.
+func (r *TenantReconciler) instanceDomain(t *v1alpha1.Tenant) string {
+	if h := hostOf(t.Status.Issuer); h != "" {
+		return h
+	}
+	return r.issuerHost(t)
+}
+
+// hostOf returns the hostname of a URL (no scheme, no port), or "" if raw is
+// empty or unparseable.
+func hostOf(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
 }
 
 func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -221,7 +272,9 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 // records. Returns done, requeue-hint, error.
 func (r *TenantReconciler) provisionIAM(ctx context.Context, tenant *v1alpha1.Tenant) (bool, time.Duration, error) {
 	lg := log.FromContext(ctx)
-	domain, issuer := r.tenantDomain(tenant), r.tenantIssuer(tenant)
+	// The Zitadel instance is created on and the issuer served from the
+	// permanent issuer host (ADR-0021), decoupled from any custom app domain.
+	domain, issuer := r.instanceDomain(tenant), r.tenantIssuer(tenant)
 
 	// Publish the issuer host over real TLS (cloud) before anything tries to
 	// reach it: DiscoveryAlive below polls https://<issuer>, which only answers
@@ -258,7 +311,9 @@ func (r *TenantReconciler) provisionIAM(ctx context.Context, tenant *v1alpha1.Te
 	if err != nil {
 		return false, 0, err
 	}
-	appBase := r.publicURL("stub." + domain)
+	// The stub app is served under the app domain (custom apex when set), which
+	// may differ from the issuer host.
+	appBase := r.publicURL("stub." + r.tenantDomain(tenant))
 	clientID, err := r.IAM.EnsureStubApp(ctx, issuer, orgID,
 		[]string{appBase + "/auth/callback"}, []string{appBase + "/"})
 	if err != nil {
@@ -286,7 +341,7 @@ func (r *TenantReconciler) provisionIAM(ctx context.Context, tenant *v1alpha1.Te
 func (r *TenantReconciler) deleteInstance(ctx context.Context, tenant *v1alpha1.Tenant) (gone bool, err error) {
 	id := tenant.Status.InstanceID
 	if id == "" {
-		id, err = r.IAM.InstanceIDByDomain(ctx, r.tenantDomain(tenant))
+		id, err = r.IAM.InstanceIDByDomain(ctx, r.instanceDomain(tenant))
 		if errors.Is(err, zitadel.ErrNotFound) {
 			return true, nil // never created, or already deleted
 		}

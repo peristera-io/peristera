@@ -24,12 +24,18 @@ type TenantSpec struct {
 	// DisplayName may change freely; it never appears in URLs or domains.
 	DisplayName string `json:"displayName,omitempty"`
 	// Domain, when set, is the tenant's custom apex (BYO domain, e.g.
-	// "peristera.lu"): the public base for its OIDC issuer and app hosts
-	// (<app>.<domain>) instead of the default <slug>.<platform-base-domain>.
-	// Immutable, because it is the issuer. The domain must resolve to the
-	// platform (delegated to its DNS, or its records pointed at the node) so
-	// per-host certs can be issued. Empty = the default <slug>.<base> host.
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="domain is immutable"
+	// "peristera.lu"): the public base for its *app* hosts (<app>.<domain>)
+	// instead of the default <slug>.<platform-base-domain>. It is the mutable,
+	// reversible vanity attribute (ADR-0021) — attaching, detaching, or swapping
+	// it does not change the OIDC issuer, which lives permanently on the
+	// <slug>.<base> host. The domain must resolve to the platform (its records
+	// pointed at the node) so certs can issue. Empty = app hosts on the default
+	// <slug>.<base>.
+	//
+	// No longer immutable (ADR-0021). Tenants provisioned under the pre-ADR-0021
+	// model, where the custom apex *was* the issuer, keep that issuer via
+	// status.issuer and must not have their domain changed — enforced in the
+	// reconciler, not here, since it depends on status.
 	// +kubebuilder:validation:Pattern=`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$`
 	Domain string `json:"domain,omitempty"`
 	// Apps is the set of optional catalog apps this tenant has enabled

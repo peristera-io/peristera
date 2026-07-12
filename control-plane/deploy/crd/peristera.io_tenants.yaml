@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.21.0
+    controller-gen.kubebuilder.io/version: v0.16.5
   name: tenants.peristera.io
 spec:
   group: peristera.io
@@ -71,16 +71,20 @@ spec:
               domain:
                 description: |-
                   Domain, when set, is the tenant's custom apex (BYO domain, e.g.
-                  "peristera.lu"): the public base for its OIDC issuer and app hosts
-                  (<app>.<domain>) instead of the default <slug>.<platform-base-domain>.
-                  Immutable, because it is the issuer. The domain must resolve to the
-                  platform (delegated to its DNS, or its records pointed at the node) so
-                  per-host certs can be issued. Empty = the default <slug>.<base> host.
+                  "peristera.lu"): the public base for its *app* hosts (<app>.<domain>)
+                  instead of the default <slug>.<platform-base-domain>. It is the mutable,
+                  reversible vanity attribute (ADR-0021) — attaching, detaching, or swapping
+                  it does not change the OIDC issuer, which lives permanently on the
+                  <slug>.<base> host. The domain must resolve to the platform (its records
+                  pointed at the node) so certs can issue. Empty = app hosts on the default
+                  <slug>.<base>.
+
+                  No longer immutable (ADR-0021). Tenants provisioned under the pre-ADR-0021
+                  model, where the custom apex *was* the issuer, keep that issuer via
+                  status.issuer and must not have their domain changed — enforced in the
+                  reconciler, not here, since it depends on status.
                 pattern: ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$
                 type: string
-                x-kubernetes-validations:
-                - message: domain is immutable
-                  rule: self == oldSelf
               slug:
                 description: |-
                   Slug is a DNS label: the permanent, human-chosen tenant identifier.
