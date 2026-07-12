@@ -172,3 +172,15 @@ Beyond this ADR (the design of record):
   dissolves the cross-namespace-secret question, since issuer ingresses
   (platform ns) and app ingresses (tenant ns) each reference a wildcard secret
   in their own namespace.
+- **Slice 3 shipped HTTP-01 for custom domains, not DNS-01-via-CNAME
+  (2026-07-12).** Slice 2's DNS-01 switch would break renewal for custom-domain
+  tenants (their zone isn't in Scaleway), so the control plane now selects the
+  issuer per host: platform-base hosts → DNS-01 (`letsencrypt-prod`),
+  custom-domain hosts → HTTP-01 (`letsencrypt-http01`). HTTP-01 is safe here
+  because the customer's A record is already live before provisioning (no
+  first-issue race). This is R90's original custom-domains-HTTP-01; the
+  DNS-01-via-CNAME wildcard (Decision §1) is a later upgrade that needs the
+  customer to set the `_acme-challenge.<domain>` CNAME. HTTP-01 also proves host
+  control at issuance, so the `_peristera-verify` TXT ownership gate (§3) is now
+  defense-in-depth for the self-serve era (#53) rather than load-bearing.
+  Verified live: peristera.lu re-issued via HTTP-01; demo unchanged on DNS-01.

@@ -1129,3 +1129,30 @@ per-tenant `*.<slug>.peristera.app` for app hosts — distinct challenge names, 
 clobber (both verified to issue live). Per-host DNS-01 already fixes #52, which
 was the actual problem. Slice 3 (custom-domain CNAME delegation + ownership
 verification) is next, also live-verified.
+
+## 2026-07-12 — Cert model slice 3: custom-domain certs via HTTP-01 (verified live)
+
+Slice 2 converted letsencrypt-prod to DNS-01, which would break renewal for the
+custom-domain tenant peristera.lu — its DNS lives at EuroDNS, not Scaleway, so
+we can't write its _acme-challenge records. Fix: **per-host issuer selection**
+(`issuerForHost`): hosts under the platform base use DNS-01 (Scaleway zone),
+custom-domain hosts use HTTP-01. HTTP-01 is safe for custom domains because the
+customer points their A record at us before provisioning, so there is no
+first-issue race (#52 was specifically the external-dns platform-record race).
+This is R90's original "custom domains stay HTTP-01"; the DNS-01-via-CNAME
+wildcard (R90's extension) is a later upgrade needing the customer's
+`_acme-challenge.<domain>` CNAME.
+
+Added a `letsencrypt-http01` ClusterIssuer + `TENANT_TLS_ISSUER_HTTP01` env; the
+controller threads the host into `ingressAnnotations(host)` and picks the issuer.
+Note: HTTP-01 proves host control at issuance (the customer must point DNS at
+us), so the explicit `_peristera-verify` TXT ownership gate (R91) becomes
+defense-in-depth for the self-serve era (#53) rather than load-bearing now.
+
+Verified live: created `letsencrypt-http01` (Ready), repointed peristera.lu's
+four ingresses to it, force-re-issued `kamara.peristera.lu` via HTTP-01 →
+Ready in ~45s, real LE cert `CN=kamara.peristera.lu` serving; all peristera.lu
+certs now on HTTP-01, and demo (platform) unchanged on DNS-01. New custom-domain
+tenants get the selection once the new controller image deploys; peristera.lu's
+existing ingresses were patched live (create-only, so the reconciler leaves
+them).

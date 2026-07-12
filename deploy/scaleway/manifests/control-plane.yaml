@@ -122,6 +122,7 @@ spec:
             # Per-host tenant certs (s2): the reconciler annotates tenant issuer
             # + app ingresses for this cert-manager ClusterIssuer.
             - { name: TENANT_TLS_ISSUER, value: "letsencrypt-prod" }
+            - { name: TENANT_TLS_ISSUER_HTTP01, value: "letsencrypt-http01" }
             # Our own app images are pulled from ghcr on the cloud (imageFor).
             - { name: IMAGE_PREFIX, value: "ghcr.io/peristera-io/" }
             - { name: IMAGE_TAG, value: "${IMAGE_TAG}" }

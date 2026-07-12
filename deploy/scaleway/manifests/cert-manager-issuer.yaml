@@ -34,3 +34,25 @@ spec:
               secretKeySecretRef:
                 name: scaleway-secret
                 key: SCW_SECRET_KEY
+---
+# HTTP-01 issuer for custom-domain hosts (ADR-0021 slice 3). A custom domain's
+# DNS lives in a zone we don't control, so DNS-01 there needs _acme-challenge
+# CNAME delegation; until that's set up, custom-domain app hosts validate over
+# HTTP-01 — safe because the customer points their A record at us before
+# provisioning, so there is no external-dns first-issue race (#52). The control
+# plane selects this issuer for hosts not under the platform base
+# (TENANT_TLS_ISSUER_HTTP01), and letsencrypt-prod (DNS-01) for platform hosts.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-http01
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: ${LE_EMAIL}
+    privateKeySecretRef:
+      name: letsencrypt-http01-account
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: traefik

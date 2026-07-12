@@ -54,6 +54,11 @@ type TenantReconciler struct {
 	// When set, tenant issuer + app ingresses get a cert-manager annotation +
 	// TLS block, and the tenant issuer host gets its own ingress.
 	TLSIssuer string
+	// HTTP01Issuer is the cert-manager ClusterIssuer used for hosts NOT under
+	// BaseDomain — i.e. custom-domain app hosts, which live in a DNS zone we
+	// don't control and so can't solve DNS-01 without CNAME delegation
+	// (ADR-0021). Empty = use TLSIssuer for every host.
+	HTTP01Issuer string
 	// LoginDomain is the deployment's ExternalDomain — every new
 	// instance must trust it or the shared Login v2 cannot serve it.
 	LoginDomain string

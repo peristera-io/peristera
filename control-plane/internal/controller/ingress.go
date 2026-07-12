@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"strings"
 
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -20,14 +21,28 @@ const platformNamespace = "peristera-system"
 // no per-tenant ingress/cert is needed (and HTTP-01 can't issue a wildcard).
 func (r *TenantReconciler) tlsEnabled() bool { return r.TLSIssuer != "" }
 
+// issuerForHost picks the cert-manager ClusterIssuer for a host (ADR-0021).
+// Hosts under the platform base resolve in our Scaleway DNS zone, so they use
+// the DNS-01 issuer (no external-dns first-issue race, #52). Custom-domain
+// hosts live in a zone we don't control and can't solve DNS-01 without CNAME
+// delegation, so they use HTTP-01 — safe because the customer's A record is
+// already live (they point it at us before provisioning), so there is no race.
+// Falls back to the DNS-01 issuer when no separate HTTP-01 issuer is set.
+func (r *TenantReconciler) issuerForHost(host string) string {
+	if r.HTTP01Issuer == "" || host == r.BaseDomain || strings.HasSuffix(host, "."+r.BaseDomain) {
+		return r.TLSIssuer
+	}
+	return r.HTTP01Issuer
+}
+
 // ingressAnnotations returns the cert-manager cluster-issuer annotation so
-// cert-manager issues a per-host Let's Encrypt cert for the ingress (ADR-0020);
-// nil in dev.
-func (r *TenantReconciler) ingressAnnotations() map[string]string {
+// cert-manager issues a per-host Let's Encrypt cert for the ingress (ADR-0020),
+// choosing the issuer by host (issuerForHost); nil in dev.
+func (r *TenantReconciler) ingressAnnotations(host string) map[string]string {
 	if !r.tlsEnabled() {
 		return nil
 	}
-	return map[string]string{"cert-manager.io/cluster-issuer": r.TLSIssuer}
+	return map[string]string{"cert-manager.io/cluster-issuer": r.issuerForHost(host)}
 }
 
 // ingressTLS returns the per-host TLS block (cert stored in secretName) when
@@ -61,7 +76,7 @@ func (r *TenantReconciler) issuerIngress(tenant *v1alpha1.Tenant) *networkingv1.
 				"app.kubernetes.io/managed-by": "peristera-control-plane",
 				"peristera.io/tenant":          tenant.Name,
 			},
-			Annotations: r.ingressAnnotations(),
+			Annotations: r.ingressAnnotations(host),
 		},
 		Spec: networkingv1.IngressSpec{
 			IngressClassName: &ingressClass,
