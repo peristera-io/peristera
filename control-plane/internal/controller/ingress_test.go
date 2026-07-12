@@ -14,7 +14,7 @@ func TestIngressTLSGating(t *testing.T) {
 	if dev.tlsEnabled() {
 		t.Error("dev must not enable TLS")
 	}
-	if dev.ingressAnnotations() != nil {
+	if dev.ingressAnnotations("h.example") != nil {
 		t.Error("dev ingress must carry no cert-manager annotation")
 	}
 	if dev.ingressTLS("h.example", "h-tls") != nil {
@@ -22,13 +22,36 @@ func TestIngressTLSGating(t *testing.T) {
 	}
 
 	cloud := &TenantReconciler{TLSIssuer: "letsencrypt-prod"}
-	if got := cloud.ingressAnnotations()["cert-manager.io/cluster-issuer"]; got != "letsencrypt-prod" {
+	if got := cloud.ingressAnnotations("kamara.demo.peristera.app")["cert-manager.io/cluster-issuer"]; got != "letsencrypt-prod" {
 		t.Errorf("cloud annotation = %q, want letsencrypt-prod", got)
 	}
 	tls := cloud.ingressTLS("kamara.demo.peristera.app", "kamara-tls")
 	if len(tls) != 1 || tls[0].SecretName != "kamara-tls" ||
 		len(tls[0].Hosts) != 1 || tls[0].Hosts[0] != "kamara.demo.peristera.app" {
 		t.Errorf("cloud TLS block wrong: %+v", tls)
+	}
+}
+
+// Hosts under the platform base use DNS-01; custom-domain hosts use HTTP-01
+// (ADR-0021 slice 3). With no HTTP-01 issuer set, every host uses DNS-01.
+func TestIssuerForHost(t *testing.T) {
+	r := &TenantReconciler{BaseDomain: "peristera.app", TLSIssuer: "letsencrypt-prod", HTTP01Issuer: "letsencrypt-http01"}
+	cases := map[string]string{
+		"kamara.demo.peristera.app": "letsencrypt-prod",   // platform app host → DNS-01
+		"demo.peristera.app":        "letsencrypt-prod",   // platform issuer host → DNS-01
+		"peristera.app":             "letsencrypt-prod",   // the base itself → DNS-01
+		"kamara.peristera.lu":       "letsencrypt-http01", // custom app host → HTTP-01
+		"peristera.lu":              "letsencrypt-http01", // custom issuer host (legacy) → HTTP-01
+	}
+	for host, want := range cases {
+		if got := r.issuerForHost(host); got != want {
+			t.Errorf("issuerForHost(%q) = %q, want %q", host, got, want)
+		}
+	}
+	// No HTTP-01 issuer configured → everything falls back to the DNS-01 issuer.
+	noHTTP := &TenantReconciler{BaseDomain: "peristera.app", TLSIssuer: "letsencrypt-prod"}
+	if got := noHTTP.issuerForHost("kamara.peristera.lu"); got != "letsencrypt-prod" {
+		t.Errorf("fallback issuerForHost = %q, want letsencrypt-prod", got)
 	}
 }
 

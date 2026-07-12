@@ -55,6 +55,7 @@ helm repo add zitadel https://charts.zitadel.com >/dev/null 2>&1 || true
 helm repo add jetstack https://charts.jetstack.io >/dev/null 2>&1 || true
 helm repo add external-secrets https://charts.external-secrets.io >/dev/null 2>&1 || true
 helm repo add external-dns https://kubernetes-sigs.github.io/external-dns/ >/dev/null 2>&1 || true
+helm repo add scaleway https://helm.scw.cloud/ >/dev/null 2>&1 || true
 helm repo update >/dev/null
 
 echo "==> cilium CNI"
@@ -95,10 +96,17 @@ for es in zitadel-masterkey admin-client-tls cp-openfga-authn-key; do
   kubectl wait --for=condition=Ready "externalsecret/$es" -n "$NS" --timeout=180s
 done
 
-echo "==> cert-manager + Let's Encrypt issuer"
+echo "==> cert-manager + Scaleway DNS-01 webhook + Let's Encrypt issuer"
 helm upgrade --install cert-manager jetstack/cert-manager -n cert-manager \
   --create-namespace --version "$CERT_MANAGER_VERSION" \
   --set crds.enabled=true --wait --timeout 5m
+# DNS-01 solver (ADR-0021, #52): the Scaleway webhook + the API creds in the
+# cert-manager namespace, where cert-manager resolves ClusterIssuer DNS-01
+# secret refs. DNS-01 needs no HTTP reachability, so there is no external-dns
+# first-issue race and no healTenantCerts self-heal.
+helm upgrade --install scaleway-certmanager-webhook scaleway/scaleway-certmanager-webhook \
+  -n cert-manager --wait --timeout 5m
+scaleway_secret_in cert-manager
 apply_tmpl manifests/cert-manager-issuer.yaml
 
 echo "==> external-dns (Scaleway zone for $DOMAIN)"

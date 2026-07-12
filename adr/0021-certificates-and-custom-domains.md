@@ -168,3 +168,32 @@ Beyond this ADR (the design of record):
   reversibility R90 requires.
 - **`_acme-challenge` served from our own resolver / DNAT tricks** — verified
   unnecessary (public resolution + hairpin already works; R91).
+
+## Implementation notes
+
+- **Slice 2 shipped per-host DNS-01, not wildcard consolidation (2026-07-12).**
+  The DNS-01 switch alone fixes #52 (the actual problem); consolidating to
+  wildcards is a cert-count optimization, deferred. A live finding drove this: a
+  single Certificate carrying both the apex `<slug>.peristera.app` and
+  `*.<slug>.peristera.app` **clobbers** — both SANs validate via the *same*
+  `_acme-challenge.<slug>.peristera.app` TXT name with different values, and the
+  Scaleway webhook keeps only one, so one SAN never propagates. Single-dnsName
+  certs issue cleanly. The consolidation path (when taken) is therefore a
+  **split**: one platform `*.peristera.app` covering all tenant *issuer* hosts +
+  a per-tenant `*.<slug>.peristera.app` covering app hosts — distinct
+  `_acme-challenge` names, no clobber (both verified to issue live). This also
+  dissolves the cross-namespace-secret question, since issuer ingresses
+  (platform ns) and app ingresses (tenant ns) each reference a wildcard secret
+  in their own namespace.
+- **Slice 3 shipped HTTP-01 for custom domains, not DNS-01-via-CNAME
+  (2026-07-12).** Slice 2's DNS-01 switch would break renewal for custom-domain
+  tenants (their zone isn't in Scaleway), so the control plane now selects the
+  issuer per host: platform-base hosts → DNS-01 (`letsencrypt-prod`),
+  custom-domain hosts → HTTP-01 (`letsencrypt-http01`). HTTP-01 is safe here
+  because the customer's A record is already live before provisioning (no
+  first-issue race). This is R90's original custom-domains-HTTP-01; the
+  DNS-01-via-CNAME wildcard (Decision §1) is a later upgrade that needs the
+  customer to set the `_acme-challenge.<domain>` CNAME. HTTP-01 also proves host
+  control at issuance, so the `_peristera-verify` TXT ownership gate (§3) is now
+  defense-in-depth for the self-serve era (#53) rather than load-bearing.
+  Verified live: peristera.lu re-issued via HTTP-01; demo unchanged on DNS-01.

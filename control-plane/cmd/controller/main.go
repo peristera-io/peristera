@@ -75,6 +75,7 @@ func main() {
 		ImageTag:     env("IMAGE_TAG", "dev"),
 		URLScheme:    env("TENANT_SCHEME", "http"),
 		TLSIssuer:    env("TENANT_TLS_ISSUER", ""),
+		HTTP01Issuer: env("TENANT_TLS_ISSUER_HTTP01", ""),
 		// Backups (R85): empty bucket disables it (dev).
 		BackupBucket:   env("BACKUP_BUCKET", ""),
 		BackupEndpoint: env("BACKUP_ENDPOINT", ""),

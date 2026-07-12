@@ -433,7 +433,7 @@ func (r *TenantReconciler) ensureApps(ctx context.Context, tenant *v1alpha1.Tena
 		pathType := networkingv1.PathTypePrefix
 		ingressClass := "traefik"
 		ing := &networkingv1.Ingress{
-			ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: ns, Labels: labels, Annotations: r.ingressAnnotations()},
+			ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: ns, Labels: labels, Annotations: r.ingressAnnotations(host)},
 			Spec: networkingv1.IngressSpec{
 				IngressClassName: &ingressClass,
 				TLS:              r.ingressTLS(host, app.Name+"-tls"),

@@ -49,11 +49,8 @@ rules:
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingresses"]
     verbs: ["get", "list", "watch", "create", "delete"]
-  # Reset per-host tenant certs stuck in cert-manager backoff (#52); cloud-only
-  # in practice (no-op when TLS is off, as in dev), kept here for parity.
-  - apiGroups: ["cert-manager.io"]
-    resources: ["certificates"]
-    verbs: ["get", "list", "watch", "delete"]
+  # (No cert-manager RBAC: DNS-01 issuance (ADR-0021) retired the healTenantCerts
+  # self-heal that swept stuck certs; cert-manager's ingress-shim owns them.)
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
