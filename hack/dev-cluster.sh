@@ -98,8 +98,25 @@ docker build -q -f iam/Dockerfile -t peristera-stub:dev .
 docker build -q -f control-plane/Dockerfile -t peristera-control-plane:dev .
 docker build -q -f ergonomos/Dockerfile -t peristera-ergonomos:dev .
 docker build -q -f kamara/Dockerfile -t peristera-kamara:dev .
-k3d image import -c "$CLUSTER" peristera-stub:dev peristera-control-plane:dev \
-  peristera-ergonomos:dev peristera-kamara:dev
+IMAGES="peristera-stub peristera-control-plane peristera-ergonomos peristera-kamara"
+if docker version 2>/dev/null | grep -qiE 'podman'; then
+  # Podman names local builds `localhost/<name>`, so `k3d image import` by the
+  # bare name fails ("no valid images specified"). Retag to the fully qualified
+  # docker.io/library/<name> the manifests resolve to (imagePullPolicy:
+  # IfNotPresent), then import via tarballs — which sidesteps the by-name
+  # runtime lookup that breaks on Podman. See docs/deployment/podman.md.
+  TARD=$(mktemp -d)
+  tars=()
+  for n in $IMAGES; do
+    docker tag "$n:dev" "docker.io/library/$n:dev"
+    docker save --format docker-archive -o "$TARD/$n.tar" "docker.io/library/$n:dev"
+    tars+=("$TARD/$n.tar")
+  done
+  k3d image import -c "$CLUSTER" "${tars[@]}"
+  rm -rf "$TARD"
+else
+  k3d image import -c "$CLUSTER" $(for n in $IMAGES; do printf '%s:dev ' "$n"; done)
+fi
 kubectl apply -f control-plane/deploy/crd/peristera.io_tenants.yaml >/dev/null
 kubectl apply -f control-plane/deploy/manifests/cp-openfga.yaml >/dev/null
 kubectl apply -f control-plane/deploy/manifests/control-plane.yaml >/dev/null

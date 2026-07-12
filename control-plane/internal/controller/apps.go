@@ -369,6 +369,20 @@ func (r *TenantReconciler) ensureApps(ctx context.Context, tenant *v1alpha1.Tena
 		// so it either wedges on multi-attach or (same node) two writers race
 		// the chunk store. Recreate (stop-then-start) + a single replica keeps
 		// exactly one writer. Stateless apps keep the default rolling update.
+		// Non-root, least-privilege posture for our own apps (#91). Our images
+		// already run as uid 65532 (distroless nonroot); enforce it, drop all
+		// capabilities, and lock the root filesystem read-only (with a writable
+		// /tmp emptyDir). fsGroup keeps the Kamara blob PVC writable by the app
+		// group. External engines (Collabora) take the ensureOffice path above
+		// and keep their own context, so this never touches them.
+		volumes = append(volumes, corev1.Volume{
+			Name:         "tmp",
+			VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+		})
+		mounts = append(mounts, corev1.VolumeMount{Name: "tmp", MountPath: "/tmp"})
+		runAsNonRoot, noPrivEsc, readOnlyRoot := true, false, true
+		appUID := int64(65532)
+
 		replicas := int32(1)
 		deploySpec := appsv1.DeploymentSpec{
 			Replicas: &replicas,
@@ -376,6 +390,13 @@ func (r *TenantReconciler) ensureApps(ctx context.Context, tenant *v1alpha1.Tena
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
+					SecurityContext: &corev1.PodSecurityContext{
+						RunAsNonRoot:   &runAsNonRoot,
+						RunAsUser:      &appUID,
+						RunAsGroup:     &appUID,
+						FSGroup:        &appUID,
+						SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+					},
 					Containers: []corev1.Container{{
 						Name:            app.Name,
 						Image:           r.imageFor(app),
@@ -383,6 +404,11 @@ func (r *TenantReconciler) ensureApps(ctx context.Context, tenant *v1alpha1.Tena
 						Ports:           []corev1.ContainerPort{{ContainerPort: app.Port}},
 						Env:             env,
 						VolumeMounts:    mounts,
+						SecurityContext: &corev1.SecurityContext{
+							AllowPrivilegeEscalation: &noPrivEsc,
+							ReadOnlyRootFilesystem:   &readOnlyRoot,
+							Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+						},
 					}},
 					Volumes: volumes,
 				},
