@@ -24,5 +24,9 @@ jobs:
         with:
           path-to-signatures: signatures/cla.json
           path-to-document: https://github.com/peristera-io/peristera/blob/main/CLA.md
-          branch: main
+          # Signatures are committed by the bot, so this branch must NOT be
+          # protected — `main` is (PRs + required checks), which made every run
+          # fail with "Could not create file: Changes must be made through a
+          # pull request". `cla-signatures` is a dedicated unprotected branch.
+          branch: cla-signatures
           allowlist: jlspielmann,*[bot]

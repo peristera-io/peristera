@@ -122,6 +122,64 @@ func callersOf(target string) []string {
 	return out
 }
 
+// enabledCallersOf is callersOf filtered by per-tenant enablement (ADR-0018):
+// every always-on caller plus the optional callers the tenant has turned on.
+// A disabled optional app (e.g. office) is therefore not admitted to its
+// callee's NetworkPolicy until it is enabled — the caller-set that the
+// optional-app reconcile keeps in sync on a toggle (R93, #47).
+func enabledCallersOf(tenant *v1alpha1.Tenant, target string) []string {
+	var out []string
+	for _, a := range catalog {
+		if a.Optional && !tenantEnables(tenant, a.Name) {
+			continue
+		}
+		for _, c := range a.Calls {
+			if c == target {
+				out = append(out, a.Name)
+			}
+		}
+	}
+	return out
+}
+
+// OptionalApps returns the names of the catalog's optional (opt-in per tenant)
+// apps — the set the control-plane apps toggle may enable or disable (ADR-0018).
+func OptionalApps() []string {
+	var out []string
+	for _, a := range catalog {
+		if a.Optional {
+			out = append(out, a.Name)
+		}
+	}
+	return out
+}
+
+// IsOptionalApp reports whether name is a known optional catalog app.
+func IsOptionalApp(name string) bool {
+	for _, a := range catalog {
+		if a.Optional && a.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// officeEnv returns the env vars Kamara needs to embed the tenant's Collabora
+// editor — present only when the office app is enabled (ADR-0018). Shared by
+// the create path (ensureApps) and the optional-app reconcile so the two never
+// drift. It needs the engine's public URL (to fetch WOPI discovery and build
+// the editor iframe) and Kamara's own in-cluster base (the WOPISrc the engine
+// fetches back, intra-namespace).
+func (r *TenantReconciler) officeEnv(tenant *v1alpha1.Tenant, ns string) []corev1.EnvVar {
+	if !tenantEnables(tenant, "office") {
+		return nil
+	}
+	return []corev1.EnvVar{
+		{Name: "OFFICE_URL", Value: r.publicURL("office." + r.tenantDomain(tenant))},
+		{Name: "WOPI_SRC_BASE", Value: fmt.Sprintf("http://kamara.%s.svc.cluster.local", ns)},
+	}
+}
+
 // Blob and DEK mount points inside the app pod; the app reads these paths
 // from KAMARA_BLOB_DIR / KAMARA_DEK_FILE.
 const (
@@ -300,16 +358,10 @@ func (r *TenantReconciler) ensureApps(ctx context.Context, tenant *v1alpha1.Tena
 		}
 
 		// Office editing (ADR-0018): Kamara embeds the tenant's Collabora when
-		// the office app is enabled. It needs the engine's public URL (to fetch
-		// WOPI discovery and build the editor iframe) and its own in-cluster
-		// base (the WOPISrc the engine fetches back, intra-namespace). Injected
-		// only into kamara, only when office is on.
-		if app.Name == "kamara" && tenantEnables(tenant, "office") {
-			officeURL := r.publicURL("office." + r.tenantDomain(tenant))
-			env = append(env,
-				corev1.EnvVar{Name: "OFFICE_URL", Value: officeURL},
-				corev1.EnvVar{Name: "WOPI_SRC_BASE", Value: fmt.Sprintf("http://kamara.%s.svc.cluster.local", ns)},
-			)
+		// the office app is enabled. The env is shared with the optional-app
+		// reconcile (which updates it on a toggle) so the two never drift.
+		if app.Name == "kamara" {
+			env = append(env, r.officeEnv(tenant, ns)...)
 		}
 
 		// A blob-backed app owns a ReadWriteOnce PVC (#30): the default rolling
@@ -317,6 +369,20 @@ func (r *TenantReconciler) ensureApps(ctx context.Context, tenant *v1alpha1.Tena
 		// so it either wedges on multi-attach or (same node) two writers race
 		// the chunk store. Recreate (stop-then-start) + a single replica keeps
 		// exactly one writer. Stateless apps keep the default rolling update.
+		// Non-root, least-privilege posture for our own apps (#91). Our images
+		// already run as uid 65532 (distroless nonroot); enforce it, drop all
+		// capabilities, and lock the root filesystem read-only (with a writable
+		// /tmp emptyDir). fsGroup keeps the Kamara blob PVC writable by the app
+		// group. External engines (Collabora) take the ensureOffice path above
+		// and keep their own context, so this never touches them.
+		volumes = append(volumes, corev1.Volume{
+			Name:         "tmp",
+			VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+		})
+		mounts = append(mounts, corev1.VolumeMount{Name: "tmp", MountPath: "/tmp"})
+		runAsNonRoot, noPrivEsc, readOnlyRoot := true, false, true
+		appUID := int64(65532)
+
 		replicas := int32(1)
 		deploySpec := appsv1.DeploymentSpec{
 			Replicas: &replicas,
@@ -324,6 +390,13 @@ func (r *TenantReconciler) ensureApps(ctx context.Context, tenant *v1alpha1.Tena
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
+					SecurityContext: &corev1.PodSecurityContext{
+						RunAsNonRoot:   &runAsNonRoot,
+						RunAsUser:      &appUID,
+						RunAsGroup:     &appUID,
+						FSGroup:        &appUID,
+						SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+					},
 					Containers: []corev1.Container{{
 						Name:            app.Name,
 						Image:           r.imageFor(app),
@@ -331,6 +404,11 @@ func (r *TenantReconciler) ensureApps(ctx context.Context, tenant *v1alpha1.Tena
 						Ports:           []corev1.ContainerPort{{ContainerPort: app.Port}},
 						Env:             env,
 						VolumeMounts:    mounts,
+						SecurityContext: &corev1.SecurityContext{
+							AllowPrivilegeEscalation: &noPrivEsc,
+							ReadOnlyRootFilesystem:   &readOnlyRoot,
+							Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+						},
 					}},
 					Volumes: volumes,
 				},

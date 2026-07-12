@@ -971,6 +971,138 @@ live on Scaleway. Remaining follow-ups are tracked issues (#56 stable-CNAME
 target + ownership verification, #59 blob backup + barman plugin, #53 tenant
 dashboard).
 
+## 2026-07-11 — Post-M7 batch kickoff: decisions of record (R90–R96)
+
+A five-perspective audit (security, architecture, code quality, ops, UX/DX) ran
+after M7 and filed 25 issues (#65–#89, security individually, the rest grouped +
+cross-linked). Q&A Round 14 (R90–R96) then settled the fix batch; answers are in
+`Q&A.md`, the plan in `docs/post-m7-plan.md`. Headline decisions: one DNS-01
+wildcard cert story for platform *and* custom domains (custom via
+`_acme-challenge` CNAME delegation), issuer/vanity-domain decoupling (making
+`spec.domain` a reversible routing attribute), operator-initiated domain
+ownership verification, a scoped optional-app reconcile that deletes on disable,
+and office hardening.
+
+First PR of the batch (this one) records the decisions and **accepts + documents
+the shared-ingress host-header bounce** (R92): no L7 fix now, revisit with the
+zero-trust/token layer. Recorded as an ADR-0016 amendment; #43 closed. The code
+PRs follow per `docs/post-m7-plan.md` (office hardening → optional-app lifecycle
+→ cert model + custom domains), each with security + code review, cloud-infra
+verified live per the R96 sequence.
+
+## 2026-07-11 — Office hardening (R95, #48 + #66)
+
+Hardened the Collabora engine per R95's four calls. The admin console is
+**disabled** (`--o:admin_console.enable=false`) and the hardcoded `admin/admin`
+env is dropped — closes the exposure filed as #66 (admin console reachable on
+the prod path with default creds). Prod-shaped `ssl.termination` is now **gated
+on `tlsEnabled()`** (the single dev/prod switch): on the cloud coolwsd runs
+behind TLS-terminating Traefik and emits https URLs; dev stays plain http. Added
+a pod-level **RuntimeDefault seccomp** profile; the jailing capabilities
+(incl. `SYS_ADMIN`) are retained since the moby default profile still permits
+mount/chroot/mknod for a capability holder — accepted within the per-tenant
+namespace (dropping them disables jailing, which is worse). The WOPI-token /
+Traefik-accesslog stance is documented (no code; accesslog is off by default).
+
+Refactored the Deployment into a pure `officeDeployment` builder (mirroring
+`issuerIngress`) with a unit test (`office_test.go`) asserting the hardening —
+first unit coverage for the office path. **Needs a live smoke test:** open a
+document against a running office to confirm RuntimeDefault seccomp doesn't
+break coolwsd's jailing (the R96 cloud-infra verification step).
+
+Security + code-quality review (two agents): sound, no new vuln — confirmed that
+`admin_console.enable=false` is what actually closes the console (removing creds
+alone would not have) and that RuntimeDefault permits the cap-gated jailing
+syscalls. Folded in the review nits (assert the WOPI allow-list and the full cap
+set; `strconv.FormatBool`). Dropping the container's default cap set
+(`Drop: ["ALL"]`) is a pre-existing least-privilege miss, out of R95 scope and
+needing the same coolwsd smoke test — tracked as #95.
+
+## 2026-07-11 — Optional-app lifecycle: enable *and* disable (R93/R94, #63 + #47)
+
+Broke create-only for the optional dimension only (ADR-0013 amendment). A new
+`reconcileOptionalApps` (controller) converges optional apps to `spec.apps`:
+it **tears down** a disabled app's Deployment/Service/Ingress/NetworkPolicy
+(the Ingress-owned cert is GC'd with it) and **rewires** the always-on config
+that depends on enablement — Kamara's `OFFICE_URL`/`WOPI_SRC_BASE` env (rolls
+the pod so it re-reads WOPI discovery) and `np-kamara`'s admitted callers.
+NetworkPolicy generation now uses `enabledCallersOf` (not `callersOf`), so a
+disabled optional app is not admitted to its callee's policy until enabled —
+fixing the netpol caller drift in #47. General drift-correction stays deferred.
+
+Operator surface (R94): `PUT /tenants/{slug}/apps` (OpenAPI + regenerated
+handler), validated against the catalog's optional dimension (rejects always-on
+and unknown names), plus a checkbox toggle on the tenant UI row. Both write
+`spec.apps` for the reconciler to converge. RBAC gains `update` on
+deployments/networkpolicies (both cloud + dev manifests).
+
+Tests: pure `enabledCallersOf` + `validateOptionalApps`, and fake-client
+coverage of the reconcile both directions (disable tears down + unwires Kamara;
+enable rewires np-kamara + env) plus a steady-state idempotency test (a second
+reconcile writes nothing — no pod churn) — the package's first reconcile-level
+tests (a step toward #10). `go build`/`vet`/`test` green.
+
+Security + code-quality review (two agents): no new vulnerabilities — the
+`callersOf`→`enabledCallersOf` switch closes a NetworkPolicy over-admission
+(a disabled optional app was still listed as an allowed caller). Folded in:
+tightened the RBAC delta (ingresses stay create/delete-only, `update` only
+where the code actually updates, dropped `patch`), robust set comparison, the
+idempotency test, and always emit `apps` in the API response. Noted follow-up
+(not blocking): the catalog is imported into the server layer for validation —
+a future `internal/catalog` leaf package would clean that coupling. **Live
+check for the R96 sequence:** toggle office on `demo` and confirm teardown +
+the Kamara roll.
+
+## 2026-07-11 — Non-root securityContext for our apps (#91) + Podman dev cluster
+
+Two threads, from bringing the dev cluster up on **k3d + rootful Podman** (the
+tooling assumes Docker).
+
+**Enforced non-root, least-privilege posture (#91).** The four app images already
+run as uid 65532 (distroless `nonroot`) — the original issue premise ("uid 0")
+was wrong and was corrected on the issue. The real gap: the posture was
+incidental to the base image, not asserted or enforced by the pod spec. Added a
+hardened `securityContext` to our own workloads: pod `runAsNonRoot: true`,
+`runAsUser/Group/fsGroup: 65532`, `seccompProfile: RuntimeDefault`; container
+`allowPrivilegeEscalation: false`, `readOnlyRootFilesystem: true`,
+`capabilities.drop: [ALL]`, plus a writable `/tmp` emptyDir. Two places: the
+static control-plane manifest, and the catalog builder (`apps.go`) which covers
+stub/ergonomos/kamara. **Collabora is deliberately excluded** — it is `External`,
+provisioned by `ensureOffice`, and needs root + `SYS_ADMIN`/chroot caps (its own
+hardening is #48/#66). `fsGroup` keeps Kamara's blob PVC writable under the
+read-only rootfs. Verified live: control-plane and a fresh tenant's
+stub/ergonomos/kamara all come up Ready with the context enforced; Kamara (the
+read-only-rootfs + PVC case) runs clean; controller unit tests pass. Closes #91.
+
+**Podman-aware `hack/dev-cluster.sh`.** Podman names local builds
+`localhost/<name>`, so `k3d image import` by bare name fails ("no valid images
+specified") and `set -e` aborted the deploy before the CRD/OpenFGA/control-plane
+step. The script now detects Podman and retags to `docker.io/library/<name>` +
+imports via tarballs (Docker path unchanged). Background and the full
+build/import/socket story are in `docs/deployment/podman.md` (that doc still
+describes the manual workaround and should be trimmed once its PR lands — the
+script now does it automatically).
+
+## 2026-07-11 — Cert model + custom domains: design of record (ADR-0021, R90/R91)
+
+Wrote ADR-0021, the design for the last batch cluster (#52, #56). Decisions:
+one **DNS-01 wildcard** cert story for platform *and* custom domains (custom via
+`_acme-challenge` CNAME delegation into a zone we control, so we never need
+write access to the customer's DNS); **decouple the OIDC issuer** (permanent, on
+the `<slug>.<base>` host) from the **vanity domain** (a mutable, reversible
+app-routing attribute), which makes `spec.domain` mutable; **operator-initiated
+domain-ownership verification** (TXT challenge gating custom-domain
+ingress/cert); BYO cert as a later premium tier. Retire the HTTP-01 per-host
+self-heal.
+
+Migration is non-breaking: `status.issuer` is immutable per tenant, so the live
+`peristera.lu` tenant (issuer = its custom apex, provisioned under the s4 model)
+keeps its issuer; the decoupling applies to newly provisioned tenants, leaving a
+documented two-model coexistence with a reconciler guard against changing a
+legacy tenant's domain. The code lands in three staged slices (issuer decouple +
+mutable domain; DNS-01 wildcard; custom-domain CNAME + verification), the last
+two **verified live** against the warm node per R96.
+
 ## 2026-07-10 — Kamara drive surface: folder zip, text editor, recursive delete (PR)
 
 Kamara grew the file-manager operations that separated it from a

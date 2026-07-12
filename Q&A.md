@@ -940,3 +940,177 @@ smallest end-to-end slice: one Tofu-provisioned Scaleway cluster + the platform
 + a single tenant on `*.peristera.app` with **real TLS**, to nail the
 domain/cert/https-scheme trio (the riskiest, most-coupled part). Then write
 `docs/m7-plan.md` from what the spike teaches. >yes
+
+## Round 14 — Post-M7 reliability & optional-app lifecycle
+
+Planning the fix batch for #52, #56, #43 (cloud-infra reliability) and #63, #47,
+#48 (optional-app lifecycle). Answers here feed `docs/post-m7-plan.md`. Several
+facts were verified live on the running node (2026-07-08); noted inline.
+
+### Certificates & DNS (#52, #56)
+
+**R90. The cert-issuance model — the hub decision.** In R77 you chose **(A)
+per-tenant wildcard via Scaleway DNS-01**, but M7 actually shipped **HTTP-01
+per-host** (simpler to get the spike green). That divergence *is* the root of
+#52: HTTP-01 needs the public A record live before the ACME challenge, so it
+races external-dns and NXDOMAIN's, then cert-manager's backoff wedges it for
+~15 min. I hit it twice on 2026-07-08 (tenant issuer cert *and* the office
+cert). Two ways forward:
+- **(A) Finish R77 — switch platform-domain issuance to Scaleway DNS-01 +
+  per-tenant wildcard** (`*.<slug>.peristera.app`). Structurally eliminates #52
+  (no HTTP reachability, no external-dns race), cuts Let's Encrypt rate-limit
+  pressure (one cert/tenant, not one/host), and retires the cert self-heal
+  reconciler. Cost: add the cert-manager Scaleway DNS-01 solver/webhook + give
+  cert-manager DNS-write creds (external-dns already has them). Custom domains
+  (#56) stay HTTP-01 — we don't control the tenant's zone to write TXT.
+- **(B) Keep HTTP-01 per-host, just make the self-heal robust** — extend it to
+  the issuer cert and retry promptly once DNS resolves. ~1h of work, no new
+  dependency, but keeps the race, the backoff, the per-host cert sprawl, and the
+  self-heal as permanent machinery.
+Rec: **(A)** — it's what you already decided, and it removes a whole class of
+first-provision flakiness instead of papering over it. Honest pushback on
+myself: (B) is much less work and the self-heal already works; if SaaS is far
+off, (A) is arguably premature. But (A) also simplifies every future tenant, so
+I'd pay it now.
+> **(A), and extend the same DNS-01 wildcard model to custom domains** — one cert
+> story everywhere, not the platform-DNS-01 / custom-HTTP-01 split the rec
+> assumed. Platform domain: Scaleway DNS-01 + per-tenant wildcard
+> `*.<slug>.peristera.app`; retire the HTTP-01 self-heal reconciler. Custom
+> domains: give them a DNS-01 wildcard too, via **`_acme-challenge` CNAME
+> delegation** — the customer sets a one-time `_acme-challenge.<their-domain>`
+> CNAME into a zone we control (e.g. `<slug>.acme.peristera.app`), cert-manager
+> solves DNS-01 in *our* Scaleway zone and Let's Encrypt follows the CNAME. No
+> HTTP reachability, no external-dns write access to the customer's zone, no
+> per-host cert sprawl. The customer only ever sets two one-time records in their
+> own DNS: the wildcard A/CNAME at their apex, and the `_acme-challenge` CNAME.
+>
+> **Decouple the OIDC issuer from the vanity domain.** The issuer is the permanent
+> identity and stays on the platform host (`<slug>.peristera.app`, or a dedicated
+> `auth.` host); the custom domain becomes an *additional, reversible*
+> app-routing host, never the issuer. Consequence for the CRD: `Domain` stops
+> being "immutable because it is the issuer" and becomes a mutable routing
+> attribute (attach / detach / swap freely, tokens and sessions untouched); the
+> issuer field stays immutable. This is what makes "keep or drop the slug, fully
+> reversible" work without re-identifying the tenant. (It also means the slug can
+> never be fully retired *as the issuer* — it stays the auth host — but it can be
+> dropped as a user-facing app host.)
+>
+> **Provisioning stays operator-only (R80) — but build the mechanism
+> self-serve-shaped.** The attach flow (verify ownership → point records → issue
+> cert → optional cutover, reversible) is a real state machine now, triggered by
+> the operator; exposing it to tenants later (#53) is a UI addition, not a
+> redesign. Premium **BYO cert** is a later paid tier: customer uploads cert+key
+> into a per-tenant Secret referenced as the Ingress `tls.secretName` instead of
+> the cert-manager-issued one — no architectural blocker, just renewal/expiry
+> nagging on them.
+
+**R91. #56 custom-domain automation — scope.** Three sub-parts; I'd cut two:
+- *Dynamic external-dns zones* (real work): custom apexes currently need a manual
+  `domainFilters` + `helm upgrade`. Options: **(a)** drop `domainFilters`
+  entirely so external-dns manages every zone in the Scaleway DNS project (works
+  cleanly *if* that project holds only Peristera domains — blast radius = all
+  records in it); **(b)** a reconciler step that appends the custom apex to the
+  external-dns config and rolls it when a custom-domain tenant is created.
+  Rec: **(a)** if the DNS project is Peristera-dedicated (confirm?), else (b).
+- *In-cluster resolution for the custom apex (coredns-custom)* — **verified
+  unnecessary**: `peristera.lu` is absent from `coredns-custom` yet provisioned
+  fine (it resolves publicly to our IP and hairpins). Rec: **drop this sub-part.**
+- *Domain-ownership verification* — only matters for self-serve, and R80 said
+  **operator-provisioned only**. Rec: **defer to the self-serve era (#53).**
+So #56 shrinks to just the external-dns zone automation. Agree?
+> Rescoped by R90's decision — and it shrinks *further* than "just external-dns
+> automation."
+> - **Dynamic external-dns zones — dropped, not needed.** In the R90 model the
+>   *customer* owns their DNS: they point the wildcard A/CNAME at our IP and set
+>   the `_acme-challenge` CNAME themselves. cert-manager writes challenges only
+>   into our own Scaleway zone (via the delegation), so external-dns never
+>   manages a customer zone — it keeps static `domainFilters` for Peristera-owned
+>   zones only, and the per-apex `helm upgrade` problem disappears. The
+>   "is the DNS project Peristera-dedicated?" question becomes moot. (This also
+>   matches the live `peristera.lu` "no delegation" setup.)
+> - **coredns-custom — dropped** (verified unnecessary; public resolution +
+>   hairpin already works).
+> - **Domain-ownership verification — build it now, operator-initiated.** *Not*
+>   deferred to #53 anymore: the TXT challenge is the gate for attaching any
+>   custom domain, exercised by the operator today. It's the security control
+>   self-serve will require, and standing it up now (a verification token + a
+>   verified-state on the tenant, activation gated on it) is exactly the "point
+>   toward self-serve without building it" move. What genuinely stays in #53 is
+>   only the tenant-facing UI plus the abuse controls that matter once tenants
+>   claim domains unattended (rate-limiting, duplicate-claim rejection,
+>   dangling-DNS / takeover guards).
+> So #56 becomes: (1) the CNAME-delegation cert path (folds into R90), (2) the
+> ownership-verification mechanism, (3) making `Domain` a reversible routing
+> attribute. The external-dns automation and coredns-custom sub-parts are cut.
+
+### Network isolation (#43)
+
+**R92. Host-header bounce — fix or accept?** A compromised app in tenant A can
+bounce a request off the shared Traefik with `Host: kamara.<tenantB>` and reach
+tenant B's *public* kamara — but only endpoints any internet client can already
+reach, each of which authenticates every request; internal surfaces (OpenFGA,
+Postgres) have no Ingress and stay isolated. The issue's own conclusion is "the
+network layer's real job holds." There is **no L3/L4 fix** (standard
+NetworkPolicy can't match Host); the real options are:
+- **(A) CiliumNetworkPolicy L7/FQDN egress** restricting each app's issuer-path
+  egress to its own issuer host. We already run Cilium, so this is feasible —
+  but it abandons ADR-0016's deliberate "portable NetworkPolicy only" stance
+  (an ADR amendment).
+- **(B) Keep accepted + documented**, revisit with the zero-trust/token layer.
+Rec: **(B)** — honestly this is the weakest ROI of the six. The exposure is
+"authenticated public endpoint reachable from inside," which per-endpoint auth
+already covers, and (A) commits us to Cilium-specific policy for marginal gain.
+You flagged it to fix, so I'm pushing back: I'd spend the batch's budget on #52
+and the app-lifecycle cluster instead. If you still want it closed, I'll do (A).
+Your call. > B and document.
+
+### Optional-app lifecycle (#63 + #47)
+
+**R93. Break "create-only" for optional apps?** The reconciler is deliberately
+create-only (drift-correction deferred to the 2027 CP alpha). But an enable→
+disable today leaves Collabora running and **billable**, and enabling office on
+an existing tenant doesn't wire Kamara (I hand-patched `demo` on 2026-07-08).
+Fork:
+- **(A) A scoped reconcile just for optional apps**: converge the tenant's app
+  resources to `spec.apps` — create on enable, **delete** on disable (label-
+  selected: Deployment/Service/Ingress/Certificate/NetworkPolicy), update
+  Kamara's env + recompute `np-kamara`'s caller set on toggle. A bounded, well-
+  tested exception; does *not* reopen general drift-correction.
+- **(B) Hold the line**: CP can enable but not disable; disable stays a
+  documented `kubectl` cleanup until the 2027 alpha.
+Rec: **(A)** — the billing leak and the cross-app wiring gap are real product
+bugs, and office is the only optional app, so the blast radius is tiny. This
+folds #47 and #63 into one workstream. > A
+
+**R94. CP toggle — API shape + the Kamara restart.** Rec: **`PUT
+/tenants/{slug}/apps`** taking the full desired set (idempotent, mirrors
+`spec.apps`), validated against the catalog's Optional dimension; UI is a toggle
+on the tenant view. Toggling office rolls Kamara (env change → pod restart →
+re-reads WOPI discovery) — a few-second blip for that one tenant. Acceptable? > yes
+
+### Office hardening (#48)
+
+**R95. Prod-hardening the engine — four calls.**
+1. *`SYS_ADMIN` capability*: coolwsd needs it for per-document chroot jails;
+   dropping it means disabling jailing (worse). Rec: **accept within the
+   per-tenant namespace + add a seccomp profile + document** — don't chase a
+   rootless Collabora rabbit hole.
+2. *Admin console `admin/admin`*: we never use it. Rec: **disable the admin
+   console** rather than mint per-tenant creds.
+3. *Env gate*: gate the prod-shaped settings on the existing `tlsEnabled()`
+   signal (already used for `ssl.termination` in #64) — one dev/prod switch.
+4. *WOPI token in `?access_token=` → ingress logs*: **verified a non-issue
+   today** — Traefik access logging is off by default, so the token never lands
+   in ingress logs. Rec: **document "keep Traefik accesslog off / redact
+   `/wopi` if ever enabled"**; no code needed now.
+Agree on all four? > good for all four.
+
+### Sequencing & the node
+
+**R96. Order + node lifetime.** Rec: keep the node up and do the **cloud-infra
+cluster first while it's warm** — #52 (verify DNS-01 issuance live), then #56's
+external-dns automation — since those *need* the live node; then the
+**app-lifecycle cluster** (#63/#47/#48), which is dev-cluster-testable but whose
+teardown/toggle I'd verify against the live `demo` (office is already enabled
+there). #43 only if you overrule R92. Destroy the node after the cloud-infra
+part is verified; do the app-lifecycle code on dev. Good sequence? > sounds good

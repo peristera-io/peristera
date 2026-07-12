@@ -34,8 +34,10 @@ type Error struct {
 
 // Tenant defines model for Tenant.
 type Tenant struct {
-	ClientId    *string `json:"clientId,omitempty"`
-	DisplayName *string `json:"displayName,omitempty"`
+	// Apps The tenant's enabled optional apps (ADR-0018).
+	Apps        *[]string `json:"apps,omitempty"`
+	ClientId    *string   `json:"clientId,omitempty"`
+	DisplayName *string   `json:"displayName,omitempty"`
 
 	// Issuer The tenant's OIDC issuer URL (permanent).
 	Issuer *string `json:"issuer,omitempty"`
@@ -48,6 +50,12 @@ type Tenant struct {
 
 // TenantPhase defines model for Tenant.Phase.
 type TenantPhase string
+
+// TenantApps defines model for TenantApps.
+type TenantApps struct {
+	// Apps The complete desired set of enabled optional apps. Only optional catalog apps may be named.
+	Apps []string `json:"apps"`
+}
 
 // TenantCreate defines model for TenantCreate.
 type TenantCreate struct {
@@ -87,6 +95,9 @@ type Unauthorized = Error
 // CreateTenantJSONRequestBody defines body for CreateTenant for application/json ContentType.
 type CreateTenantJSONRequestBody = TenantCreate
 
+// SetTenantAppsJSONRequestBody defines body for SetTenantApps for application/json ContentType.
+type SetTenantAppsJSONRequestBody = TenantApps
+
 // CreateTenantUserJSONRequestBody defines body for CreateTenantUser for application/json ContentType.
 type CreateTenantUserJSONRequestBody = TenantUserCreate
 
@@ -104,6 +115,9 @@ type ServerInterface interface {
 	// Get one tenant
 	// (GET /tenants/{slug})
 	GetTenant(w http.ResponseWriter, r *http.Request, slug string)
+	// Set the tenant's enabled optional apps
+	// (PUT /tenants/{slug}/apps)
+	SetTenantApps(w http.ResponseWriter, r *http.Request, slug string)
 	// Create an admin user in a tenant
 	// (POST /tenants/{slug}/users)
 	CreateTenantUser(w http.ResponseWriter, r *http.Request, slug string)
@@ -211,6 +225,37 @@ func (siw *ServerInterfaceWrapper) GetTenant(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetTenant(w, r, slug)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetTenantApps operation middleware
+func (siw *ServerInterfaceWrapper) SetTenantApps(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "slug" -------------
+	var slug string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "slug", r.PathValue("slug"), &slug, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "slug", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetTenantApps(w, r, slug)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -375,6 +420,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("POST "+options.BaseURL+"/tenants", wrapper.CreateTenant)
 	m.HandleFunc("DELETE "+options.BaseURL+"/tenants/{slug}", wrapper.DeleteTenant)
 	m.HandleFunc("GET "+options.BaseURL+"/tenants/{slug}", wrapper.GetTenant)
+	m.HandleFunc("PUT "+options.BaseURL+"/tenants/{slug}/apps", wrapper.SetTenantApps)
 	m.HandleFunc("POST "+options.BaseURL+"/tenants/{slug}/users", wrapper.CreateTenantUser)
 
 	return m
