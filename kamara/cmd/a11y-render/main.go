@@ -23,6 +23,14 @@ func main() {
 	if len(os.Args) > 1 {
 		state = os.Args[1]
 	}
+	if state == "texteditor" { // its own template, not a folder listing
+		v := textEditorView()
+		v.Inline = true
+		if err := web.TextEditor(os.Stdout, v); err != nil {
+			panic(err)
+		}
+		return
+	}
 	v, err := view(state)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -34,14 +42,28 @@ func main() {
 	}
 }
 
+// textEditorView renders the plain-text editor with the conflict alert and
+// saved notice both visible, so axe checks their contrast and roles too.
+func textEditorView() web.TextEditorView {
+	owner := pii.Subject{Instance: "demo.example", UserID: "sample"}
+	now := time.Unix(0, 0).UTC()
+	return web.TextEditorView{
+		Object:   file.Object{ID: "019f2", Owner: owner, Name: "notes.txt", Size: 900, ContentType: "text/plain", Created: now, Updated: now},
+		Content:  "Meeting notes\n=============\n\n- ship the file manager\n- review the zip download\n",
+		Base:     1,
+		Saved:    true,
+		Conflict: true,
+	}
+}
+
 func view(state string) (web.View, error) {
 	owner := pii.Subject{Instance: "demo.example", UserID: "sample"}
 	now := time.Unix(0, 0).UTC()
 	here := "019sample-folder"
 	root := file.Folder{ID: here, Owner: owner, Name: "Projects"}
 	sub := file.Folder{ID: "019sub", Owner: owner, Name: "Designs", ParentID: &here, Created: now, Updated: now}
-	report := file.Object{ID: "019f1", Owner: owner, Name: "report.pdf", Size: 512000, FolderID: &here, Created: now, Updated: now}
-	notes := file.Object{ID: "019f2", Owner: owner, Name: "notes.txt", Size: 900, FolderID: &here, Created: now, Updated: now}
+	report := file.Object{ID: "019f1", Owner: owner, Name: "report.pdf", Size: 512000, ContentType: "application/pdf", FolderID: &here, Created: now, Updated: now}
+	notes := file.Object{ID: "019f2", Owner: owner, Name: "notes.txt", Size: 900, ContentType: "text/plain", FolderID: &here, Created: now, Updated: now}
 	all := []file.Folder{root, sub}
 
 	switch state {
@@ -64,6 +86,6 @@ func view(state string) (web.View, error) {
 			AllFolders: []file.Folder{longFolder},
 		}, nil
 	default:
-		return web.View{}, fmt.Errorf("unknown state %q (browse|empty|root|long)", state)
+		return web.View{}, fmt.Errorf("unknown state %q (browse|empty|root|long|texteditor)", state)
 	}
 }

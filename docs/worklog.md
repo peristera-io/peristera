@@ -1102,3 +1102,39 @@ documented two-model coexistence with a reconciler guard against changing a
 legacy tenant's domain. The code lands in three staged slices (issuer decouple +
 mutable domain; DNS-01 wildcard; custom-domain CNAME + verification), the last
 two **verified live** against the warm node per R96.
+
+## 2026-07-10 — Kamara drive surface: folder zip, text editor, recursive delete (PR)
+
+Kamara grew the file-manager operations that separated it from a
+OneDrive/Dropbox-style drive; agent-built in a worktree for async review.
+API (`api/openapi.yaml`, all additive): `PUT /files/{id}/content` (replace
+content = new version, identity/URL unchanged — until now content could only
+be *re*written via WOPI), `GET /files/{id}/versions`, `GET /folders/{id}`,
+`GET /folders/{id}/zip` (subtree streamed as a zip — entries written as the
+tree is walked, no temp files; names flattened + de-duplicated against
+zip-slip), `DELETE /folders/{id}?recursive=true` (one-transaction subtree
+delete, children-first so the FK RESTRICT race surfaces as 409, never a
+partial delete; the empty-first default is unchanged). The `File` DTO now
+carries `contentType`.
+
+Browser UI: per-folder "Download as zip" + current-folder zip in the toolbar;
+"New text file" (empty upload → editor); a plain-text editor at `/text/{id}`
+(no engine needed — distinct from the WOPI office editor) with an
+optimistic-concurrency base ordinal — a stale tab's save is a 409 that
+re-renders with a `role="alert"` conflict notice, never a silent overwrite
+(`file.ErrModified`, `WriteVersionAt`); inline image preview in the drawer
+(non-SVG `image/*` only — inline SVG on the cookie-authed origin could carry
+script); folder delete is now recursive with its own scarier confirm.
+
+Domain: `DownloadZip`/`zipTree`, `DeleteFolderTree`, `WriteVersionAt` (shares
+the WriteVersion retry loop; base checked inside the transaction),
+`GetFolder`, `Object.TextEditable`/`Previewable` (1 MiB textarea cap; the
+editor additionally requires valid UTF-8). No schema migration, no FGA model
+change. Tests: zip round-trip through the real chunk/crypto/blob engine
+(subtree scoping, empty-dir entries, collision suffixes, separator
+flattening, authz), tree delete (audit per item, chunk reclaim, stranger
+403), stale-save conflicts, HTTP contract for every new endpoint, template
+markup, and a new `texteditor` a11y state (axe green across all five states,
+run locally). Not verified live against a cluster — the Playwright demo/e2e
+flows are unchanged except an `exact: true` on the demo's Download selector
+(the new zip links substring-matched it).

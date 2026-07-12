@@ -108,6 +108,44 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: updateFileContent
+      summary: >
+        Replace a file's content. The raw request body becomes a new version;
+        the file keeps its identity, owner, and URL (ADR-0007), and prior
+        versions remain listed under /files/{id}/versions.
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        "200":
+          description: The file's metadata after the write.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/File" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+  /files/{id}/versions:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: listFileVersions
+      summary: List a file's versions, newest first.
+      responses:
+        "200":
+          description: The file's versions.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VersionList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
   /files/{id}/rename:
     parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
     post:
@@ -169,14 +207,51 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
   /folders/{id}:
     parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    get:
+      operationId: getFolder
+      summary: Get a folder's metadata.
+      responses:
+        "200":
+          description: Folder metadata.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Folder" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
     delete:
       operationId: deleteFolder
-      summary: Delete an empty folder (empty-first — Kamara ADR-0002).
+      summary: >
+        Delete a folder — empty-first by default (Kamara ADR-0002); with
+        recursive=true the whole subtree (subfolders, files, versions) is
+        removed in one transaction.
+      parameters:
+        - name: recursive
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
       responses:
         "204": { description: Deleted. }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
+  /folders/{id}/zip:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    get:
+      operationId: downloadFolderZip
+      summary: >
+        Stream the folder's subtree as a zip archive. Entries are written as
+        the tree is walked — the download starts immediately, with no size
+        precomputation; empty folders survive as directory entries.
+      responses:
+        "200":
+          description: The zip archive, named after the folder.
+          content:
+            application/zip:
+              schema: { type: string, format: binary }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /folders/{id}/rename:
     parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
     post:
@@ -265,15 +340,31 @@ components:
   schemas:
     File:
       type: object
-      required: [id, name, size, folder, permalink, created, updated]
+      required: [id, name, size, folder, contentType, permalink, created, updated]
       properties:
         id: { type: string, description: UUIDv7 identity. }
         name: { type: string }
         size: { type: integer, format: int64, description: Bytes. }
         folder: { type: [string, "null"], description: Containing folder id; null = root. }
+        contentType: { type: string, description: MIME type inferred from the name; empty when unknown. }
         permalink: { type: string, description: Canonical URL path. }
         created: { type: string, format: date-time }
         updated: { type: string, format: date-time }
+    Version:
+      type: object
+      required: [id, ordinal, size, created]
+      properties:
+        id: { type: string, description: UUIDv7 identity. }
+        ordinal: { type: integer, description: Monotonic revision number (0 = the initial upload). }
+        size: { type: integer, format: int64, description: Bytes. }
+        created: { type: string, format: date-time }
+    VersionList:
+      type: object
+      required: [versions]
+      properties:
+        versions:
+          type: array
+          items: { $ref: "#/components/schemas/Version" }
     Folder:
       type: object
       required: [id, name, parent, permalink, created, updated]
