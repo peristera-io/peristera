@@ -1174,6 +1174,7 @@ must-fix for slice 3); the migration guard silently pins rather than surfacing a
 condition (ADR wording aligned to the pin mechanism); and `spec.domain` has no
 collision/reservation check yet (fine while operator-only, closed before
 self-serve). ADR-0021 updated to record all three.
+
 ## 2026-07-12 — Cert model slice 2: DNS-01 issuance, #52 fixed (verified live)
 
 Switched cloud cert issuance from HTTP-01 per-host to **DNS-01** via the Scaleway
