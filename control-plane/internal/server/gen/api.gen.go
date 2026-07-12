@@ -61,7 +61,7 @@ type TenantApps struct {
 type TenantCreate struct {
 	DisplayName *string `json:"displayName,omitempty"`
 
-	// Domain Optional custom apex (BYO domain, e.g. peristera.lu). When set, the tenant's issuer and apps live under it (<app>.<domain>) instead of the default <slug>.<platform-base>. Immutable. The domain must resolve to the platform so certs can issue.
+	// Domain Optional custom apex (BYO domain, e.g. peristera.lu). When set, the tenant's *app* hosts live under it (<app>.<domain>) instead of the default <slug>.<platform-base>; the OIDC issuer stays permanently on the <slug>.<platform-base> host (ADR-0021). A mutable, reversible vanity attribute. The domain must resolve to the platform so certs can issue.
 	Domain *string `json:"domain,omitempty"`
 
 	// Slug Permanent identifier; forms the tenant domain (immutable).

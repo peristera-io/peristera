@@ -201,9 +201,11 @@ components:
           pattern: '^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$'
           description: >
             Optional custom apex (BYO domain, e.g. peristera.lu). When set, the
-            tenant's issuer and apps live under it (<app>.<domain>) instead of
-            the default <slug>.<platform-base>. Immutable. The domain must
-            resolve to the platform so certs can issue.
+            tenant's *app* hosts live under it (<app>.<domain>) instead of the
+            default <slug>.<platform-base>; the OIDC issuer stays permanently on
+            the <slug>.<platform-base> host (ADR-0021). A mutable, reversible
+            vanity attribute. The domain must resolve to the platform so certs
+            can issue.
     Tenant:
       type: object
       required: [slug, phase, permalink]

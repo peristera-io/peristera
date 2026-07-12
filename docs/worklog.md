@@ -1138,3 +1138,93 @@ markup, and a new `texteditor` a11y state (axe green across all five states,
 run locally). Not verified live against a cluster — the Playwright demo/e2e
 flows are unchanged except an `exact: true` on the demo's Download selector
 (the new zip links substring-matched it).
+
+## 2026-07-11 — Cert model slice 1: issuer/vanity decouple + mutable domain (ADR-0021)
+
+First code slice of the cert model. Decoupled the OIDC issuer from the custom
+domain: the issuer now lives permanently on the `<slug>.<base>` host
+(`issuerHost`), and `spec.domain` is the mutable, reversible *app-host* base.
+`tenantIssuer` returns `status.issuer` once set, else `publicURL(issuerHost)`;
+`instanceDomain` (the Zitadel virtual-instance host) follows the same rule. So a
+newly created custom-domain tenant gets a slug-host issuer with app hosts under
+the custom apex, while the CRD immutability rule on `domain` is lifted.
+
+Non-breaking by construction: because `status.issuer` is the source of truth for
+provisioned tenants, the live `peristera.lu` tenant (issuer = its custom apex)
+is unchanged — the decoupling only affects tenants provisioned from now on. A
+reconciler migration guard pins a legacy tenant's app hosts to its issuer host,
+so an accidental `spec.domain` edit can't split it across two domains. Updated
+`provisionIAM` (instance domain), `deleteInstance` (instance domain + issuer via
+status), and the issuer ingress to use the issuer host; app hosts still follow
+`tenantDomain`. CRD regenerated (controller-gen), OpenAPI domain doc updated.
+
+Tests: `issuerHost`/`tenantIssuer`/`instanceDomain`/`tenantDomain` across default,
+new-custom, and legacy tenants (incl. the migration-guard pin) + `hostOf`.
+`go build`/`vet`/`test` green. **Live-verify (R96):** provision a *new*
+custom-domain tenant and confirm Zitadel serves the issuer at the slug host and
+apps resolve under the custom apex. Slices 2 (DNS-01 wildcard) and 3
+(custom-domain CNAME + ownership verification) follow, both live-verified.
+
+Reviewed (agent): passes the non-breaking-for-`peristera.lu` property with a
+byte-identical trace of every changed function for the legacy tenant, and
+confirms `status.issuer` is never recomputed for a provisioned tenant. Three
+non-blocking follow-ups, all deferred to slice 3 (where a domain swap becomes
+first-class): the stub OIDC client's redirect URIs go stale on a swap (#103,
+must-fix for slice 3); the migration guard silently pins rather than surfacing a
+condition (ADR wording aligned to the pin mechanism); and `spec.domain` has no
+collision/reservation check yet (fine while operator-only, closed before
+self-serve). ADR-0021 updated to record all three.
+
+## 2026-07-12 — Cert model slice 2: DNS-01 issuance, #52 fixed (verified live)
+
+Switched cloud cert issuance from HTTP-01 per-host to **DNS-01** via the Scaleway
+cert-manager webhook (ADR-0021, R90). DNS-01 needs no public A record or HTTP
+reachability at challenge time, so the external-dns first-issue race (#52) is
+structurally gone — and the `healTenantCerts` self-heal (certs.go) is deleted
+along with its cert-manager RBAC. bootstrap.sh installs the webhook
+(`scaleway/scaleway-certmanager-webhook`) + the Scaleway creds in the
+cert-manager namespace; `cert-manager-issuer.yaml` is now a DNS-01 ClusterIssuer.
+
+Verified live on the node: installed the webhook, converted `letsencrypt-prod`
+to the DNS-01 solver, provisioned a fresh `certtest` tenant — issuer cert + all
+3 app certs issued via DNS-01 with `failedIssuanceAttempts=0` (no race, no
+stuck certs), real LE certs served (`https://kamara.certtest.peristera.app` 302,
+`https://certtest.peristera.app/.well-known/openid-configuration` 200). Torn down.
+
+Design finding (why per-host, not wildcard yet): a single Certificate with both
+the apex `<slug>.peristera.app` and `*.<slug>.peristera.app` **clobbers** — both
+challenge the *same* `_acme-challenge.<slug>` TXT name with different values and
+the webhook keeps only one, so one SAN never validates. Single-dnsName certs
+issue cleanly. Wildcard *consolidation* (fewer certs) is therefore deferred to
+an optimization: a platform `*.peristera.app` for all issuer hosts +
+per-tenant `*.<slug>.peristera.app` for app hosts — distinct challenge names, no
+clobber (both verified to issue live). Per-host DNS-01 already fixes #52, which
+was the actual problem. Slice 3 (custom-domain CNAME delegation + ownership
+verification) is next, also live-verified.
+
+## 2026-07-12 — Cert model slice 3: custom-domain certs via HTTP-01 (verified live)
+
+Slice 2 converted letsencrypt-prod to DNS-01, which would break renewal for the
+custom-domain tenant peristera.lu — its DNS lives at EuroDNS, not Scaleway, so
+we can't write its _acme-challenge records. Fix: **per-host issuer selection**
+(`issuerForHost`): hosts under the platform base use DNS-01 (Scaleway zone),
+custom-domain hosts use HTTP-01. HTTP-01 is safe for custom domains because the
+customer points their A record at us before provisioning, so there is no
+first-issue race (#52 was specifically the external-dns platform-record race).
+This is R90's original "custom domains stay HTTP-01"; the DNS-01-via-CNAME
+wildcard (R90's extension) is a later upgrade needing the customer's
+`_acme-challenge.<domain>` CNAME.
+
+Added a `letsencrypt-http01` ClusterIssuer + `TENANT_TLS_ISSUER_HTTP01` env; the
+controller threads the host into `ingressAnnotations(host)` and picks the issuer.
+Note: HTTP-01 proves host control at issuance (the customer must point DNS at
+us), so the explicit `_peristera-verify` TXT ownership gate (R91) becomes
+defense-in-depth for the self-serve era (#53) rather than load-bearing now.
+
+Verified live: created `letsencrypt-http01` (Ready), repointed peristera.lu's
+four ingresses to it, force-re-issued `kamara.peristera.lu` via HTTP-01 →
+Ready in ~45s, real LE cert `CN=kamara.peristera.lu` serving; all peristera.lu
+certs now on HTTP-01, and demo (platform) unchanged on DNS-01. New custom-domain
+tenants get the selection once the new controller image deploys; peristera.lu's
+existing ingresses were patched live (create-only, so the reconciler leaves
+them).
