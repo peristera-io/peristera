@@ -123,6 +123,43 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+  /tenants/{slug}/apps:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
+    put:
+      operationId: setTenantApps
+      summary: Set the tenant's enabled optional apps
+      description: >
+        Replaces the tenant's set of enabled optional apps (ADR-0018) with the
+        given list — idempotent, mirrors spec.apps. Only optional catalog apps
+        may be named (always-on apps are always provisioned; unknown or non-
+        optional names are rejected). The reconciler converges: newly named
+        apps are provisioned, newly omitted ones are torn down.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TenantApps"
+      responses:
+        "200":
+          description: The updated tenant.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tenant"
+        "400":
+          description: An app is not a known optional app.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
 components:
   securitySchemes:
     bearer:
@@ -180,9 +217,23 @@ components:
           type: string
           description: The tenant's OIDC issuer URL (permanent).
         clientId: { type: string }
+        apps:
+          type: array
+          items: { type: string }
+          description: The tenant's enabled optional apps (ADR-0018).
         permalink:
           type: string
           description: Canonical URL of this resource (ADR-0007).
+    TenantApps:
+      type: object
+      required: [apps]
+      properties:
+        apps:
+          type: array
+          items: { type: string }
+          description: >
+            The complete desired set of enabled optional apps. Only optional
+            catalog apps may be named.
     TenantUserCreate:
       type: object
       required: [email]
