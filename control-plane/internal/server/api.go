@@ -11,6 +11,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/peristera-io/peristera/control-plane/apis/v1alpha1"
+	"github.com/peristera-io/peristera/control-plane/internal/controller"
 	"github.com/peristera-io/peristera/control-plane/internal/server/gen"
 	"github.com/peristera-io/peristera/control-plane/internal/zitadel"
 )
@@ -44,6 +45,10 @@ func (a *api) toAPITenant(t *v1alpha1.Tenant) gen.Tenant {
 	if t.Status.ClientID != "" {
 		out.ClientId = &t.Status.ClientID
 	}
+	// Always emit apps (possibly []) so the response mirrors spec.apps exactly,
+	// including after every optional app is disabled.
+	apps := append([]string{}, t.Spec.Apps...)
+	out.Apps = &apps
 	return out
 }
 
@@ -125,6 +130,56 @@ func (a *api) DeleteTenant(w http.ResponseWriter, r *http.Request, slug string) 
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// SetTenantApps replaces the tenant's enabled optional-app set (ADR-0018,
+// R94). Only optional catalog apps may be named; the reconciler then converges
+// (provision newly named, tear down newly omitted). Idempotent — mirrors
+// spec.apps.
+func (a *api) SetTenantApps(w http.ResponseWriter, r *http.Request, slug string) {
+	var in gen.TenantApps
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		apiError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	apps, err := validateOptionalApps(in.Apps)
+	if err != nil {
+		apiError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	t := &v1alpha1.Tenant{}
+	switch err := a.s.K8s.Get(r.Context(), client.ObjectKey{Name: slug}, t); {
+	case apierrors.IsNotFound(err):
+		apiError(w, http.StatusNotFound, "no such tenant")
+		return
+	case err != nil:
+		apiError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	t.Spec.Apps = apps
+	if err := a.s.K8s.Update(r.Context(), t); err != nil {
+		apiError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, a.toAPITenant(t))
+}
+
+// validateOptionalApps rejects any name that is not a known optional catalog
+// app and returns the deduplicated set (order-preserving). An empty list is
+// valid — it disables every optional app.
+func validateOptionalApps(names []string) ([]string, error) {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, n := range names {
+		if !controller.IsOptionalApp(n) {
+			return nil, errors.New("not an optional app: " + n)
+		}
+		if !seen[n] {
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	return out, nil
 }
 
 // CreateTenantUser creates an admin user in the tenant's own Zitadel instance

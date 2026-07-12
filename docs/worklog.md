@@ -1017,3 +1017,38 @@ syscalls. Folded in the review nits (assert the WOPI allow-list and the full cap
 set; `strconv.FormatBool`). Dropping the container's default cap set
 (`Drop: ["ALL"]`) is a pre-existing least-privilege miss, out of R95 scope and
 needing the same coolwsd smoke test — tracked as #95.
+
+## 2026-07-11 — Optional-app lifecycle: enable *and* disable (R93/R94, #63 + #47)
+
+Broke create-only for the optional dimension only (ADR-0013 amendment). A new
+`reconcileOptionalApps` (controller) converges optional apps to `spec.apps`:
+it **tears down** a disabled app's Deployment/Service/Ingress/NetworkPolicy
+(the Ingress-owned cert is GC'd with it) and **rewires** the always-on config
+that depends on enablement — Kamara's `OFFICE_URL`/`WOPI_SRC_BASE` env (rolls
+the pod so it re-reads WOPI discovery) and `np-kamara`'s admitted callers.
+NetworkPolicy generation now uses `enabledCallersOf` (not `callersOf`), so a
+disabled optional app is not admitted to its callee's policy until enabled —
+fixing the netpol caller drift in #47. General drift-correction stays deferred.
+
+Operator surface (R94): `PUT /tenants/{slug}/apps` (OpenAPI + regenerated
+handler), validated against the catalog's optional dimension (rejects always-on
+and unknown names), plus a checkbox toggle on the tenant UI row. Both write
+`spec.apps` for the reconciler to converge. RBAC gains `update` on
+deployments/networkpolicies (both cloud + dev manifests).
+
+Tests: pure `enabledCallersOf` + `validateOptionalApps`, and fake-client
+coverage of the reconcile both directions (disable tears down + unwires Kamara;
+enable rewires np-kamara + env) plus a steady-state idempotency test (a second
+reconcile writes nothing — no pod churn) — the package's first reconcile-level
+tests (a step toward #10). `go build`/`vet`/`test` green.
+
+Security + code-quality review (two agents): no new vulnerabilities — the
+`callersOf`→`enabledCallersOf` switch closes a NetworkPolicy over-admission
+(a disabled optional app was still listed as an allowed caller). Folded in:
+tightened the RBAC delta (ingresses stay create/delete-only, `update` only
+where the code actually updates, dropped `patch`), robust set comparison, the
+idempotency test, and always emit `apps` in the API response. Noted follow-up
+(not blocking): the catalog is imported into the server layer for validation —
+a future `internal/catalog` leaf package would clean that coupling. **Live
+check for the R96 sequence:** toggle office on `demo` and confirm teardown +
+the Kamara roll.
