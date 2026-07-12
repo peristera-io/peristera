@@ -165,6 +165,13 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 			if err := r.ensureApps(ctx, tenant, nsName); err != nil {
 				return ctrl.Result{}, err
 			}
+			// Converge the optional-app dimension to spec.apps: tear down
+			// disabled apps and rewire Kamara's office env + np-kamara callers
+			// on a toggle (R93/R94, #63/#47). A bounded exception to the
+			// create-only path above.
+			if err := r.reconcileOptionalApps(ctx, tenant, nsName); err != nil {
+				return ctrl.Result{}, err
+			}
 			// No admin user is created here: the operator provisions tenant
 			// users explicitly via the control-plane API (POST
 			// /tenants/{slug}/users), which returns the one-time password —
