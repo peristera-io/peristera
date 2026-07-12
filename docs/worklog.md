@@ -1102,3 +1102,30 @@ documented two-model coexistence with a reconciler guard against changing a
 legacy tenant's domain. The code lands in three staged slices (issuer decouple +
 mutable domain; DNS-01 wildcard; custom-domain CNAME + verification), the last
 two **verified live** against the warm node per R96.
+
+## 2026-07-12 — Cert model slice 2: DNS-01 issuance, #52 fixed (verified live)
+
+Switched cloud cert issuance from HTTP-01 per-host to **DNS-01** via the Scaleway
+cert-manager webhook (ADR-0021, R90). DNS-01 needs no public A record or HTTP
+reachability at challenge time, so the external-dns first-issue race (#52) is
+structurally gone — and the `healTenantCerts` self-heal (certs.go) is deleted
+along with its cert-manager RBAC. bootstrap.sh installs the webhook
+(`scaleway/scaleway-certmanager-webhook`) + the Scaleway creds in the
+cert-manager namespace; `cert-manager-issuer.yaml` is now a DNS-01 ClusterIssuer.
+
+Verified live on the node: installed the webhook, converted `letsencrypt-prod`
+to the DNS-01 solver, provisioned a fresh `certtest` tenant — issuer cert + all
+3 app certs issued via DNS-01 with `failedIssuanceAttempts=0` (no race, no
+stuck certs), real LE certs served (`https://kamara.certtest.peristera.app` 302,
+`https://certtest.peristera.app/.well-known/openid-configuration` 200). Torn down.
+
+Design finding (why per-host, not wildcard yet): a single Certificate with both
+the apex `<slug>.peristera.app` and `*.<slug>.peristera.app` **clobbers** — both
+challenge the *same* `_acme-challenge.<slug>` TXT name with different values and
+the webhook keeps only one, so one SAN never validates. Single-dnsName certs
+issue cleanly. Wildcard *consolidation* (fewer certs) is therefore deferred to
+an optimization: a platform `*.peristera.app` for all issuer hosts +
+per-tenant `*.<slug>.peristera.app` for app hosts — distinct challenge names, no
+clobber (both verified to issue live). Per-host DNS-01 already fixes #52, which
+was the actual problem. Slice 3 (custom-domain CNAME delegation + ownership
+verification) is next, also live-verified.

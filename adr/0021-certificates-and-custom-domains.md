@@ -155,3 +155,20 @@ Beyond this ADR (the design of record):
   reversibility R90 requires.
 - **`_acme-challenge` served from our own resolver / DNAT tricks** — verified
   unnecessary (public resolution + hairpin already works; R91).
+
+## Implementation notes
+
+- **Slice 2 shipped per-host DNS-01, not wildcard consolidation (2026-07-12).**
+  The DNS-01 switch alone fixes #52 (the actual problem); consolidating to
+  wildcards is a cert-count optimization, deferred. A live finding drove this: a
+  single Certificate carrying both the apex `<slug>.peristera.app` and
+  `*.<slug>.peristera.app` **clobbers** — both SANs validate via the *same*
+  `_acme-challenge.<slug>.peristera.app` TXT name with different values, and the
+  Scaleway webhook keeps only one, so one SAN never propagates. Single-dnsName
+  certs issue cleanly. The consolidation path (when taken) is therefore a
+  **split**: one platform `*.peristera.app` covering all tenant *issuer* hosts +
+  a per-tenant `*.<slug>.peristera.app` covering app hosts — distinct
+  `_acme-challenge` names, no clobber (both verified to issue live). This also
+  dissolves the cross-namespace-secret question, since issuer ingresses
+  (platform ns) and app ingresses (tenant ns) each reference a wildcard secret
+  in their own namespace.

@@ -45,12 +45,9 @@ rules:
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingresses"]
     verbs: ["get", "list", "watch", "create", "delete"]
-  # Reset per-host tenant certs stuck in cert-manager backoff after the
-  # external-dns first-issue race (#52). No create — cert-manager's
-  # ingress-shim creates them from the ingress; we only delete to force a retry.
-  - apiGroups: ["cert-manager.io"]
-    resources: ["certificates"]
-    verbs: ["get", "list", "watch", "delete"]
+  # (No cert-manager RBAC: DNS-01 issuance (ADR-0021) retired the healTenantCerts
+  # self-heal; cert-manager's ingress-shim owns the per-host certs, now solved
+  # via the Scaleway DNS-01 webhook — no external-dns race, so no sweep needed.)
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
