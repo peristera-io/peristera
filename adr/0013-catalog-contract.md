@@ -60,3 +60,23 @@ app exists"; R31 revisited that.
   boundary than database-per-app; rejected (R30).
 - **A CNPG cluster per app** — an operator and failover surface per app,
   against "one Postgres per tenant"; rejected (R30).
+
+## Amendment (2026-07-11, Q&A Round 14 R93/R94, #63/#47)
+
+Provisioning is create-only (§3), but the **optional dimension** (opt-in apps
+named in `spec.apps`, ADR-0018) gets a **bounded reconcile exception**: the
+control plane may now *disable* an optional app, not just enable it. On each
+reconcile, `reconcileOptionalApps` converges the optional apps to `spec.apps` —
+it **deletes** the resources of a disabled optional app (Deployment, Service,
+Ingress, NetworkPolicy; the Ingress-owned cert-manager Certificate is GC'd with
+it) and rewires the always-on config that depends on an optional app's
+enablement (Kamara's office env + `np-kamara`'s admitted caller set, via
+`enabledCallersOf`). The operator drives it through `PUT /tenants/{slug}/apps`
+(validated against the optional dimension) or the UI toggle.
+
+This is deliberately **scoped to the optional dimension** and does **not**
+reopen general drift-correction (still the 2027 control-plane alpha): always-on
+apps, images, and env stay create-only. It closes the billing leak (a disabled
+office kept running) and the cross-app wiring gap (enabling office on a live
+tenant left Kamara unwired) — #63 and #47. RBAC gains `update` on
+deployments/networkpolicies for the Kamara rewire.

@@ -26,17 +26,24 @@ rules:
   - apiGroups: ["postgresql.cnpg.io"]
     resources: ["clusters", "databases", "scheduledbackups"]
     verbs: ["get", "list", "watch", "create", "delete"]
+  # update: the optional-app reconcile rolls Kamara's Deployment env on an
+  # office toggle (R93/#47); create/delete cover provisioning + teardown.
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    verbs: ["get", "list", "watch", "create", "delete"]
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
   - apiGroups: [""]
     resources: ["services"]
     verbs: ["get", "list", "watch", "create", "delete"]
   - apiGroups: [""]
     resources: ["persistentvolumeclaims"]
     verbs: ["get", "list", "watch", "create", "delete"]
+  # networkpolicies also update: the office toggle rewrites np-kamara's caller
+  # set (R93/#47). ingresses are only ever created or deleted.
   - apiGroups: ["networking.k8s.io"]
-    resources: ["ingresses", "networkpolicies"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
     verbs: ["get", "list", "watch", "create", "delete"]
   # Reset per-host tenant certs stuck in cert-manager backoff after the
   # external-dns first-issue race (#52). No create — cert-manager's
