@@ -1233,10 +1233,14 @@ them).
 
 Pre-customer audit of the backup story found the gap that matters: Postgres is
 backed up (M7), but Kamara's file bytes live only on a node-local PVC, and the
-per-tenant DEK + platform bootstrap secrets (zitadel-masterkey,
-admin-client-tls) exist only in the cluster — so node loss meant unrecoverable
-customer files even with perfect DB restores. Restoring files needs all three
-in lockstep: DB (had it), blobs (new), keys (new).
+per-tenant DEK exists nowhere outside the cluster — so node loss meant
+unrecoverable customer files even with perfect DB restores. Restoring files
+needs all three in lockstep: DB (had it), blobs (new), keys (new).
+(Correction while implementing: the platform secrets — zitadel-masterkey,
+admin-client-tls, cp-openfga-authn-key — are Terraform-generated and already
+survive node loss in Scaleway Secret Manager (ESO-synced); their escrow is a
+second custody chain against tofu-state/Secret-Manager loss, not the primary.
+The DEKs are the load-bearing escrow.)
 
 Shipped the interim (until #21 moves blobs into S3 natively):
 
@@ -1265,4 +1269,16 @@ BACKUP_HEARTBEAT_URL dead-man's-switch env wired for later healthchecks.io
 adoption (#78 interim) — single URL, all jobs.
 
 Also: #65 fixed (PR #108) — OIDC app create branch hardcoded devMode:true,
-regressing the #5 gate; now `c.DevMode` + regression test.
+regressing the #5 gate; now `c.DevMode` + regression test, plus a drift-heal
+in the reconcile path so already-provisioned apps get devMode corrected on
+the next reconcile (zero-context security review's finding — existing cloud
+apps would otherwise keep relaxed redirect-URI validation forever).
+
+Zero-context security review of both PRs led to two more hardenings:
+`rclone copy --immutable` (a changed content-addressed chunk is tampering —
+fail loudly, never overwrite the good bucket copy) and **versioning on the
+backups bucket** (tamper/overwrite backstop for chunks and the nightly escrow
+object). Known accepted trade-offs, documented: chunk object keys are
+BLAKE3(plaintext) (ADR-0001 trade-off, confirmation-of-content possible with
+bucket read); one shared SCW key guards backups+DNS+storage (#77 follow-up:
+scoped backup key); single shared heartbeat URL (#78).

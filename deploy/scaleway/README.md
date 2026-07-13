@@ -155,7 +155,15 @@ what a restore actually needs to give files back:
 - **Key custody**: everything is encrypted to `BACKUP_AGE_RECIPIENT` (an age
   public key, required by `bootstrap.sh`); the matching **private key must
   live outside the cluster** — password manager, not the repo, not a Secret.
-  Optional `BACKUP_HEARTBEAT_URL` is pinged after each successful job.
+  Optional `BACKUP_HEARTBEAT_URL` is pinged after each successful job (one
+  URL for all jobs — a per-job dead-man's switch is a #78 follow-up).
+- **Tamper posture**: the copy runs `--immutable` (a changed content-addressed
+  chunk is corruption/tampering — the job fails loudly rather than overwrite
+  the good copy) and the backups bucket is **versioned** (storage.tf), so an
+  attacker with the in-cluster S3 key can only add bad newest versions, not
+  destroy history. Known trade-off (ADR-0001): chunk object keys are
+  BLAKE3(plaintext) — bucket read access allows confirmation-of-content
+  probes even though chunk contents are encrypted.
 
 Restore: see `docs/dr-runbook.md` — Postgres via a `Cluster` with
 `bootstrap.recovery` pointing at the same object store, then blobs + decrypted

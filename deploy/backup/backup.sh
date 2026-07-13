@@ -29,7 +29,12 @@ export RCLONE_S3_SECRET_ACCESS_KEY="${ACCESS_SECRET_KEY:?}"
 DEST=":s3:${BACKUP_BUCKET:?}/${BACKUP_PREFIX:?}"
 
 if [ -n "${BLOB_DIR:-}" ]; then
-  rclone copy --s3-no-check-bucket --exclude '.tmp-*' \
+  # --immutable: a content-addressed chunk never legitimately changes, so a
+  # source file that differs from its bucket copy is corruption or tampering
+  # (e.g. ransomware rewriting the PVC) — refuse to overwrite the good copy
+  # and fail the job loudly instead of poisoning the only off-node backup.
+  # New chunks still upload; the bucket also has versioning as backstop.
+  rclone copy --s3-no-check-bucket --immutable --exclude '.tmp-*' \
     "$BLOB_DIR" "${DEST}/blobs"
   echo "backup: blobs copied to ${DEST}/blobs"
 fi
