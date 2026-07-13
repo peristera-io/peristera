@@ -49,6 +49,12 @@ rules:
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingresses"]
     verbs: ["get", "list", "watch", "create", "delete"]
+  # cronjobs: the per-tenant blob-backup job (#59/#77), create-only like the
+  # rest of provisioning (delete comes with the owner-ref GC on off-boarding).
+  # Unused in dev (no backup bucket) but RBAC stays identical to the cloud.
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    verbs: ["get", "list", "watch", "create", "delete"]
   # (No cert-manager RBAC: DNS-01 issuance (ADR-0021) retired the healTenantCerts
   # self-heal that swept stuck certs; cert-manager's ingress-shim owns them.)
 ---

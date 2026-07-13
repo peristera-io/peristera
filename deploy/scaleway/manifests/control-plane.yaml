@@ -45,6 +45,11 @@ rules:
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingresses"]
     verbs: ["get", "list", "watch", "create", "delete"]
+  # cronjobs: the per-tenant blob-backup job (#59/#77), create-only like the
+  # rest of provisioning (delete comes with the owner-ref GC on off-boarding).
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    verbs: ["get", "list", "watch", "create", "delete"]
   # (No cert-manager RBAC: DNS-01 issuance (ADR-0021) retired the healTenantCerts
   # self-heal; cert-manager's ingress-shim owns the per-host certs, now solved
   # via the Scaleway DNS-01 webhook — no external-dns race, so no sweep needed.)
@@ -136,6 +141,13 @@ spec:
             # are the SCW keys from scaleway-secret.
             - { name: BACKUP_BUCKET, value: "${BACKUPS_BUCKET}" }
             - { name: BACKUP_ENDPOINT, value: "https://s3.${SCW_REGION}.scw.cloud" }
+            - { name: BACKUP_REGION, value: "${SCW_REGION}" }
+            # Blob backup + DEK escrow (#59/#77): the age public key tenant
+            # Secrets are escrowed to; the private key lives OUTSIDE the
+            # cluster (operator's password manager). Optional heartbeat URL is
+            # pinged after each successful backup job (dead-man's switch).
+            - { name: BACKUP_AGE_RECIPIENT, value: "${BACKUP_AGE_RECIPIENT}" }
+            - { name: BACKUP_HEARTBEAT_URL, value: "${BACKUP_HEARTBEAT_URL}" }
             - name: BACKUP_S3_KEY_ID
               valueFrom:
                 secretKeyRef: { name: scaleway-secret, key: SCW_ACCESS_KEY }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -108,4 +109,129 @@ func (r *TenantReconciler) ensureScheduledBackup(ctx context.Context, tenant *v1
 		return err
 	}
 	return r.Create(ctx, sb)
+}
+
+// blobBackupsEnabled reports whether the per-tenant blob-backup CronJob is
+// provisioned: it needs somewhere to stream (the bucket) AND an age recipient
+// to escrow the DEK to — blobs restored without their DEK are undecryptable,
+// so shipping one half is not a backup.
+func (r *TenantReconciler) blobBackupsEnabled() bool {
+	return r.backupsEnabled() && r.BackupAgeRecipient != ""
+}
+
+// ensureBlobBackup provisions the nightly CronJob that copies a blob-backed
+// app's chunk store to Object Storage and escrows its DEK (interim until #21
+// moves blobs into S3 natively — then durability is by construction and this
+// job retires). Create-only, tenant-owned, like the rest of provisioning.
+func (r *TenantReconciler) ensureBlobBackup(ctx context.Context, tenant *v1alpha1.Tenant, ns string, app CatalogApp) error {
+	if !r.blobBackupsEnabled() {
+		return nil
+	}
+	return r.createIfAbsent(ctx, tenant, r.blobBackupCronJob(tenant, ns, app))
+}
+
+// blobBackupCronJob builds the backup CronJob: the backup image (rclone+age)
+// with the app's blob PVC mounted read-only and, when the app has a DEK, the
+// DEK Secret mounted under the escrow dir. Runs at 03:30, after the 03:00
+// CNPG base backup, so a same-night restore pairs a DB with a blob superset
+// (chunks are content-addressed and copied without --delete, so blobs can
+// only be a superset of what any earlier DB backup references).
+//
+// The pod mounts its inputs directly instead of reading the API — no
+// ServiceAccount token, no RBAC. It carries no app label, so no tenant
+// NetworkPolicy selects it and egress to Object Storage is open (the same
+// posture as the tenant's CNPG pods, which stream WAL from this namespace
+// already). Same non-root/read-only posture as the app pods; uid 65532
+// matches the blob PVC's fsGroup.
+func (r *TenantReconciler) blobBackupCronJob(tenant *v1alpha1.Tenant, ns string, app CatalogApp) *batchv1.CronJob {
+	runAsNonRoot, noPrivEsc, readOnlyRoot, noToken := true, false, true, false
+	uid := int64(65532)
+	backoff := int32(2)
+
+	env := []corev1.EnvVar{
+		{Name: "BACKUP_BUCKET", Value: r.BackupBucket},
+		{Name: "BACKUP_PREFIX", Value: "tenants/" + tenant.Spec.Slug},
+		{Name: "BACKUP_ENDPOINT", Value: r.BackupEndpoint},
+		{Name: "BACKUP_REGION", Value: r.BackupRegion},
+		{Name: "AGE_RECIPIENT", Value: r.BackupAgeRecipient},
+		{Name: "BLOB_DIR", Value: "/mnt/blob"},
+		// rclone wants a HOME to (not) find its config file in; the root
+		// filesystem is read-only, so point it at the tmp emptyDir.
+		{Name: "HOME", Value: "/tmp"},
+		{Name: "ACCESS_KEY_ID", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+			LocalObjectReference: corev1.LocalObjectReference{Name: backupCredsSecret}, Key: "ACCESS_KEY_ID"}}},
+		{Name: "ACCESS_SECRET_KEY", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+			LocalObjectReference: corev1.LocalObjectReference{Name: backupCredsSecret}, Key: "ACCESS_SECRET_KEY"}}},
+	}
+	if r.BackupHeartbeat != "" {
+		env = append(env, corev1.EnvVar{Name: "HEARTBEAT_URL", Value: r.BackupHeartbeat})
+	}
+	volumes := []corev1.Volume{
+		{Name: "blob", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+			ClaimName: app.Name + "-blob", ReadOnly: true}}},
+		{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+	}
+	mounts := []corev1.VolumeMount{
+		{Name: "blob", MountPath: "/mnt/blob", ReadOnly: true},
+		{Name: "tmp", MountPath: "/tmp"},
+	}
+	if app.NeedsDEK {
+		env = append(env, corev1.EnvVar{Name: "ESCROW_DIR", Value: "/mnt/escrow"})
+		volumes = append(volumes, corev1.Volume{Name: "dek", VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{SecretName: app.Name + "-dek"}}})
+		mounts = append(mounts, corev1.VolumeMount{Name: "dek", MountPath: "/mnt/escrow/" + app.Name + "-dek", ReadOnly: true})
+	}
+
+	return &batchv1.CronJob{
+		ObjectMeta: metav1.ObjectMeta{Name: app.Name + "-blob-backup", Namespace: ns},
+		Spec: batchv1.CronJobSpec{
+			// Standard 5-field cron (unlike CNPG's 6-field): 03:30 daily.
+			Schedule:          "30 3 * * *",
+			ConcurrencyPolicy: batchv1.ForbidConcurrent,
+			JobTemplate: batchv1.JobTemplateSpec{
+				Spec: batchv1.JobSpec{
+					BackoffLimit: &backoff,
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{
+							RestartPolicy:                corev1.RestartPolicyOnFailure,
+							AutomountServiceAccountToken: &noToken,
+							SecurityContext: &corev1.PodSecurityContext{
+								RunAsNonRoot:   &runAsNonRoot,
+								RunAsUser:      &uid,
+								RunAsGroup:     &uid,
+								FSGroup:        &uid,
+								SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+							},
+							Containers: []corev1.Container{{
+								Name:            "backup",
+								Image:           r.backupImage(),
+								ImagePullPolicy: corev1.PullIfNotPresent,
+								Env:             env,
+								VolumeMounts:    mounts,
+								SecurityContext: &corev1.SecurityContext{
+									AllowPrivilegeEscalation: &noPrivEsc,
+									ReadOnlyRootFilesystem:   &readOnlyRoot,
+									Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+								},
+							}},
+							Volumes: volumes,
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+// backupImage resolves the backup job image with imageFor's defaulting — the
+// backup job is infrastructure, not a catalog app, so it has no CatalogApp.
+func (r *TenantReconciler) backupImage() string {
+	prefix, tag := r.ImagePrefix, r.ImageTag
+	if prefix == "" {
+		prefix = "peristera-"
+	}
+	if tag == "" {
+		tag = "dev"
+	}
+	return prefix + "backup:" + tag
 }
