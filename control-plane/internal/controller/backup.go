@@ -142,11 +142,19 @@ func (r *TenantReconciler) ensureBlobBackup(ctx context.Context, tenant *v1alpha
 // NetworkPolicy selects it and egress to Object Storage is open (the same
 // posture as the tenant's CNPG pods, which stream WAL from this namespace
 // already). Same non-root/read-only posture as the app pods; uid 65532
-// matches the blob PVC's fsGroup.
+// matches the app pod's runAsUser — chunk files are 0600 owner-only, and
+// fsGroup wouldn't help (kubelet skips ownership management on read-only
+// mounts, and local-path volumes are hostPath-backed), so owner identity is
+// the access mechanism.
 func (r *TenantReconciler) blobBackupCronJob(tenant *v1alpha1.Tenant, ns string, app CatalogApp) *batchv1.CronJob {
 	runAsNonRoot, noPrivEsc, readOnlyRoot, noToken := true, false, true, false
 	uid := int64(65532)
 	backoff := int32(2)
+	// A wedged transfer must not wedge the schedule: ConcurrencyPolicy Forbid
+	// skips every later run while a Job is active, so a hung rclone would
+	// silently end all future backups. Four hours is generous for a nightly
+	// incremental copy of a 10Gi PVC.
+	deadline := int64(4 * 60 * 60)
 
 	env := []corev1.EnvVar{
 		{Name: "BACKUP_BUCKET", Value: r.BackupBucket},
@@ -190,7 +198,8 @@ func (r *TenantReconciler) blobBackupCronJob(tenant *v1alpha1.Tenant, ns string,
 			ConcurrencyPolicy: batchv1.ForbidConcurrent,
 			JobTemplate: batchv1.JobTemplateSpec{
 				Spec: batchv1.JobSpec{
-					BackoffLimit: &backoff,
+					BackoffLimit:          &backoff,
+					ActiveDeadlineSeconds: &deadline,
 					Template: corev1.PodTemplateSpec{
 						Spec: corev1.PodSpec{
 							RestartPolicy:                corev1.RestartPolicyOnFailure,
@@ -199,7 +208,6 @@ func (r *TenantReconciler) blobBackupCronJob(tenant *v1alpha1.Tenant, ns string,
 								RunAsNonRoot:   &runAsNonRoot,
 								RunAsUser:      &uid,
 								RunAsGroup:     &uid,
-								FSGroup:        &uid,
 								SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 							},
 							Containers: []corev1.Container{{

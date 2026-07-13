@@ -66,6 +66,10 @@ func TestBlobBackupCronJob(t *testing.T) {
 	if cj.Spec.Schedule != "30 3 * * *" {
 		t.Errorf("schedule = %q", cj.Spec.Schedule)
 	}
+	// Forbid + an unbounded hung Job would silently end all future backups.
+	if d := cj.Spec.JobTemplate.Spec.ActiveDeadlineSeconds; d == nil || *d <= 0 {
+		t.Error("backup job must carry an activeDeadlineSeconds")
+	}
 	pod := cj.Spec.JobTemplate.Spec.Template.Spec
 	if pod.AutomountServiceAccountToken == nil || *pod.AutomountServiceAccountToken {
 		t.Error("backup pod must not mount a ServiceAccount token")
