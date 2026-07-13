@@ -278,6 +278,7 @@ type oidcApp struct {
 		ClientID               string   `json:"clientId"`
 		RedirectURIs           []string `json:"redirectUris"`
 		PostLogoutRedirectURIs []string `json:"postLogoutRedirectUris"`
+		DevMode                bool     `json:"devMode"`
 	} `json:"oidcConfig"`
 }
 
@@ -563,10 +564,13 @@ func (c *Client) EnsureWebApp(ctx context.Context, base, orgID, name string, red
 	}
 	if app, err := c.oidcAppByName(ctx, base, orgID, projectID, name); err == nil {
 		// Reconcile redirect URIs: the same logical app may serve several
-		// public URLs over time (localhost dev, in-cluster ingress).
+		// public URLs over time (localhost dev, in-cluster ingress). Also
+		// heal devMode drift: apps created while #65 hardcoded devMode:true
+		// would otherwise keep Zitadel's relaxed redirect-URI validation
+		// forever, since this PUT only fired on a redirect-set change.
 		redirects, addR := union(app.OIDCConfig.RedirectURIs, redirectURIs)
 		logouts, addL := union(app.OIDCConfig.PostLogoutRedirectURIs, postLogoutURIs)
-		if addR || addL {
+		if addR || addL || app.OIDCConfig.DevMode != c.DevMode {
 			err := c.do(ctx, http.MethodPut,
 				fmt.Sprintf("%s/management/v1/projects/%s/apps/%s/oidc_config", base, projectID, app.ID), orgID,
 				map[string]any{

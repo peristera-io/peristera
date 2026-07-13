@@ -73,6 +73,59 @@ func TestEnsureWebAppCreateDevMode(t *testing.T) {
 	}
 }
 
+// An existing app whose devMode drifted from the client's (e.g. created while
+// #65 hardcoded devMode:true) must be healed by the reconcile PUT even when
+// the redirect-URI set is already complete — otherwise pre-fix production
+// apps would keep Zitadel's relaxed redirect validation forever.
+func TestEnsureWebAppHealsDevModeDrift(t *testing.T) {
+	var putBody map[string]any
+	mux := http.NewServeMux()
+	mux.HandleFunc("/management/v1/projects/_search", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"result": []map[string]any{{"id": "proj1"}}})
+	})
+	mux.HandleFunc("/management/v1/projects/proj1/apps/_search", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"result": []map[string]any{{
+			"id": "app1",
+			"oidcConfig": map[string]any{
+				"clientId":               "client1",
+				"redirectUris":           []string{"https://kamara.demo.example/auth/callback"},
+				"postLogoutRedirectUris": []string{"https://kamara.demo.example/"},
+				"devMode":                true, // drifted: created pre-fix
+			},
+		}}})
+	})
+	mux.HandleFunc("/management/v1/projects/proj1/apps/app1/oidc_config", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			t.Errorf("expected PUT, got %s", r.Method)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&putBody); err != nil {
+			t.Errorf("decoding put body: %v", err)
+		}
+		w.Write([]byte("{}"))
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected call: %s %s", r.Method, r.URL.Path)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := testClient(t, srv, false) // production client: devMode must be off
+	id, err := c.EnsureWebApp(context.Background(), srv.URL, "org1", "kamara",
+		[]string{"https://kamara.demo.example/auth/callback"}, []string{"https://kamara.demo.example/"})
+	if err != nil {
+		t.Fatalf("EnsureWebApp: %v", err)
+	}
+	if id != "client1" {
+		t.Errorf("clientID = %q, want client1", id)
+	}
+	if putBody == nil {
+		t.Fatal("devMode drift must trigger the reconcile PUT even with complete redirect URIs")
+	}
+	if got, ok := putBody["devMode"].(bool); !ok || got {
+		t.Errorf("healed devMode = %v (present=%v), want false", got, ok)
+	}
+}
+
 // NewFromKeyFile derives DevMode from the issuer scheme: https (production)
 // must come up with devMode off.
 func TestDevModeFollowsScheme(t *testing.T) {
