@@ -138,7 +138,33 @@ identity DB and every tenant DB are point-in-time recoverable.
 - `bootstrap.sh` reads the bucket from `tofu output -raw backups_bucket` and
   pins the **CNPG chart to 1.30** (in-tree barman is removed in 1.31).
 
-Restore: `kubectl cnpg` / a `Cluster` with `bootstrap.recovery` pointing at the
-same object store (CNPG docs). **Blob backup** (Kamara file contents) is not
-here — it rides on #21 (blobs → Object Storage), where the store itself is
-durable; until then the blob PVC is unbacked (see the follow-up issue).
+Beyond Postgres, the **interim blob backup + secret escrow** (#59/#77) covers
+what a restore actually needs to give files back:
+
+- **Blobs**: per blob-backed app, the control plane provisions a nightly
+  CronJob (03:30, `<app>-blob-backup`, `deploy/backup/` image) that rclone-
+  copies the content-addressed chunk PVC to
+  `s3://<backups-bucket>/tenants/<slug>/blobs`. Copy without delete: chunks
+  are immutable, so the bucket is a restorable superset of every DB backup.
+- **Tenant DEK escrow**: the same job uploads the Kamara DEK Secret
+  age-encrypted (`.../tenants/<slug>/secrets.tar.gz.age`) — restored blobs
+  are undecryptable without it.
+- **Platform secrets**: `manifests/secret-escrow.yaml` (03:45) escrows
+  `zitadel-masterkey`, `admin-client-tls`, and `cp-openfga-authn-key` to
+  `s3://<backups-bucket>/platform/` the same way.
+- **Key custody**: everything is encrypted to `BACKUP_AGE_RECIPIENT` (an age
+  public key, required by `bootstrap.sh`); the matching **private key must
+  live outside the cluster** — password manager, not the repo, not a Secret.
+  Optional `BACKUP_HEARTBEAT_URL` is pinged after each successful job (one
+  URL for all jobs — a per-job dead-man's switch is a #78 follow-up).
+- **Tamper posture**: the copy runs `--immutable` (a changed content-addressed
+  chunk is corruption/tampering — the job fails loudly rather than overwrite
+  the good copy) and the backups bucket is **versioned** (storage.tf), so an
+  attacker with the in-cluster S3 key can only add bad newest versions, not
+  destroy history. Known trade-off (ADR-0001): chunk object keys are
+  BLAKE3(plaintext) — bucket read access allows confirmation-of-content
+  probes even though chunk contents are encrypted.
+
+Restore: see `docs/dr-runbook.md` — Postgres via a `Cluster` with
+`bootstrap.recovery` pointing at the same object store, then blobs + decrypted
+DEK. The interim blob job retires when #21 moves blobs into S3 natively.

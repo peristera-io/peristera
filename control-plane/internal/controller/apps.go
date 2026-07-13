@@ -326,6 +326,15 @@ func (r *TenantReconciler) ensureApps(ctx context.Context, tenant *v1alpha1.Tena
 			})
 			mounts = append(mounts, corev1.VolumeMount{Name: "dek", MountPath: dekMountPath, ReadOnly: true})
 		}
+		// A blob-backed app also gets the nightly blob-backup CronJob (#59/
+		// #77): the PVC is node-local and CNPG only covers Postgres, so
+		// without this the file bytes (and the DEK that decrypts them) have
+		// no off-node copy. After ensureDEK so the mounted Secret exists.
+		if app.NeedsBlob {
+			if err := r.ensureBlobBackup(ctx, tenant, ns, app); err != nil {
+				return err
+			}
+		}
 
 		// S2S caller identity (ADR-0017): an app that calls another gets its
 		// own confidential OIDC "S2S client" + key (mounted for lib/svcauth),

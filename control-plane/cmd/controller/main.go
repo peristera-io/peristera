@@ -76,11 +76,16 @@ func main() {
 		URLScheme:    env("TENANT_SCHEME", "http"),
 		TLSIssuer:    env("TENANT_TLS_ISSUER", ""),
 		HTTP01Issuer: env("TENANT_TLS_ISSUER_HTTP01", ""),
-		// Backups (R85): empty bucket disables it (dev).
-		BackupBucket:   env("BACKUP_BUCKET", ""),
-		BackupEndpoint: env("BACKUP_ENDPOINT", ""),
-		BackupS3KeyID:  env("BACKUP_S3_KEY_ID", ""),
-		BackupS3Secret: env("BACKUP_S3_SECRET", ""),
+		// Backups (R85): empty bucket disables it (dev). The blob-backup
+		// CronJob (#59/#77) additionally needs the age recipient — without it
+		// only Postgres is backed up.
+		BackupBucket:       env("BACKUP_BUCKET", ""),
+		BackupEndpoint:     env("BACKUP_ENDPOINT", ""),
+		BackupS3KeyID:      env("BACKUP_S3_KEY_ID", ""),
+		BackupS3Secret:     env("BACKUP_S3_SECRET", ""),
+		BackupRegion:       env("BACKUP_REGION", ""),
+		BackupAgeRecipient: env("BACKUP_AGE_RECIPIENT", ""),
+		BackupHeartbeat:    env("BACKUP_HEARTBEAT_URL", ""),
 	}
 	// IAM provisioning switches on when the system-user key is provided
 	// (dev: a file path; in-cluster: the mounted admin-client-tls Secret).
