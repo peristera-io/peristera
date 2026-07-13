@@ -602,7 +602,7 @@ func (c *Client) EnsureWebApp(ctx context.Context, base, orgID, name string, red
 			"appType":                  "OIDC_APP_TYPE_WEB",
 			"authMethodType":           "OIDC_AUTH_METHOD_TYPE_NONE",
 			"accessTokenType":          "OIDC_TOKEN_TYPE_BEARER",
-			"devMode":                  true,
+			"devMode":                  c.DevMode,
 			"idTokenUserinfoAssertion": true,
 		}, &out)
 	return out.ClientID, err
