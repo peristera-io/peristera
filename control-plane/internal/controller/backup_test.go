@@ -1,7 +1,13 @@
 package controller
 
 import (
+	"context"
 	"testing"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/peristera-io/peristera/control-plane/apis/v1alpha1"
 )
@@ -43,6 +49,52 @@ func TestBackupsEnabled(t *testing.T) {
 	}
 	if !(&TenantReconciler{BackupBucket: "b", BackupAgeRecipient: "age1x"}).blobBackupsEnabled() {
 		t.Error("bucket + recipient -> blob backups enabled")
+	}
+}
+
+// ensureBackupCreds must converge an existing backup-s3 Secret to the
+// controller's current credentials (#77): after a Scaleway key rotation the
+// old create-only behavior left every tenant archiving WAL with the stale —
+// possibly expired — key, silently.
+func TestEnsureBackupCredsRotation(t *testing.T) {
+	tn := &v1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}, Spec: v1alpha1.TenantSpec{Slug: "demo"}}
+	stale := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: backupCredsSecret, Namespace: "tenant-demo"},
+		Data: map[string][]byte{
+			"ACCESS_KEY_ID":     []byte("OLDKEY"),
+			"ACCESS_SECRET_KEY": []byte("OLDSECRET"),
+		},
+	}
+	r := &TenantReconciler{
+		Client:       fake.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(tn, stale).Build(),
+		BackupBucket: "b", BackupS3KeyID: "NEWKEY", BackupS3Secret: "NEWSECRET",
+	}
+	ctx := context.Background()
+	if err := r.ensureBackupCreds(ctx, tn, "tenant-demo"); err != nil {
+		t.Fatalf("ensureBackupCreds: %v", err)
+	}
+	got := &corev1.Secret{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: "tenant-demo", Name: backupCredsSecret}, got); err != nil {
+		t.Fatal(err)
+	}
+	if string(got.Data["ACCESS_KEY_ID"]) != "NEWKEY" || string(got.Data["ACCESS_SECRET_KEY"]) != "NEWSECRET" {
+		t.Errorf("secret not converged: %q/%q", got.Data["ACCESS_KEY_ID"], got.Data["ACCESS_SECRET_KEY"])
+	}
+
+	// Absent -> created with owner reference (the create path still works).
+	r2 := &TenantReconciler{
+		Client:       fake.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(tn).Build(),
+		BackupBucket: "b", BackupS3KeyID: "K", BackupS3Secret: "S",
+	}
+	if err := r2.ensureBackupCreds(ctx, tn, "tenant-demo"); err != nil {
+		t.Fatalf("create path: %v", err)
+	}
+	created := &corev1.Secret{}
+	if err := r2.Get(ctx, client.ObjectKey{Namespace: "tenant-demo", Name: backupCredsSecret}, created); err != nil {
+		t.Fatal(err)
+	}
+	if len(created.OwnerReferences) != 1 {
+		t.Errorf("created secret must carry the tenant owner reference, got %v", created.OwnerReferences)
 	}
 }
 

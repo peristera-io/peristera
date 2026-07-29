@@ -20,9 +20,12 @@ rules:
   - apiGroups: [""]
     resources: ["namespaces"]
     verbs: ["get", "list", "watch", "create", "delete"]
+  # update: backup-s3 creds reconcile-to-match so a Scaleway key rotation
+  # propagates to every tenant (#77 — an expired key silently killed WAL
+  # archiving). Still NO list/watch (ADR-0007 #7): by-name access only.
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["get", "create"] # NO list/watch (ADR-0007 #7)
+    verbs: ["get", "create", "update"]
   - apiGroups: ["postgresql.cnpg.io"]
     resources: ["clusters", "databases", "scheduledbackups"]
     verbs: ["get", "list", "watch", "create", "delete"]

@@ -50,26 +50,35 @@ func (r *TenantReconciler) barmanBackup(slug string) map[string]any {
 }
 
 // ensureBackupCreds materialises the S3 credentials Secret in the tenant
-// namespace (create-only) so the CNPG cluster can reach Object Storage. No-op
-// when backups are disabled.
+// namespace so the CNPG cluster (and the blob-backup job) can reach Object
+// Storage. Reconcile-to-match, NOT create-only (#77): when the Scaleway key
+// rotates (or expires — it happened), the control-plane env changes and every
+// tenant copy must follow, or WAL archiving and blob backups silently die
+// with the stale credential. No-op when backups are disabled.
 func (r *TenantReconciler) ensureBackupCreds(ctx context.Context, tenant *v1alpha1.Tenant, ns string) error {
 	if !r.backupsEnabled() {
 		return nil
 	}
+	want := map[string][]byte{
+		"ACCESS_KEY_ID":     []byte(r.BackupS3KeyID),
+		"ACCESS_SECRET_KEY": []byte(r.BackupS3Secret),
+	}
 	sec := &corev1.Secret{}
 	err := r.Get(ctx, client.ObjectKey{Namespace: ns, Name: backupCredsSecret}, sec)
 	if err == nil {
-		return nil
+		if string(sec.Data["ACCESS_KEY_ID"]) == r.BackupS3KeyID &&
+			string(sec.Data["ACCESS_SECRET_KEY"]) == r.BackupS3Secret {
+			return nil
+		}
+		sec.Data = want
+		return r.Update(ctx, sec)
 	}
 	if !apierrors.IsNotFound(err) {
 		return err
 	}
 	sec = &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: backupCredsSecret, Namespace: ns},
-		StringData: map[string]string{
-			"ACCESS_KEY_ID":     r.BackupS3KeyID,
-			"ACCESS_SECRET_KEY": r.BackupS3Secret,
-		},
+		Data:       want,
 	}
 	if err := controllerutil.SetControllerReference(tenant, sec, r.Scheme()); err != nil {
 		return err
