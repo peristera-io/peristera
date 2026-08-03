@@ -205,13 +205,28 @@ name, so it never writes where it read from):
 Rehearse after any change to backup/restore machinery, and at least monthly
 until this is automated. Record each rehearsal in the worklog.
 
+## Rehearsed (2026-08-03, live)
+
+Both the full bring-up and the per-tenant data path were exercised for real
+during the disk-pressure incident rebuild (worklog 2026-08-03): instance
+destroyed and recreated (IP/buckets/Secret Manager kept), `bootstrap.sh`
+green in one pass, three tenants (incl. a custom-domain one) Ready with
+certs issued hands-off, and a scratch-namespace recovery from the bucket
+alone — `blobverify: 1 objects verified, 0 failed`, DEK escrow round-trip
+byte-identical. Lessons folded into the procedure:
+
+- **Purge or move foreign prefixes before clusters archive** — CNPG refuses
+  a WAL history it didn't write; fresh clusters sat at `ContinuousArchiving:
+  False` until the stale prefixes were purged, then recovered instantly.
+- **A reboot cannot fix a full disk.** Under DiskPressure thrash the API and
+  sshd starve (TLS/kex timeouts) — go straight for space (grow the block
+  volume + offline resize, or rescue mode); waiting doesn't converge.
+- **fail2ban persists bans across reboots**, and the operator's egress IP
+  rotates daily within a /24 — the admin firewall CIDR is that /24 now. If
+  SSH resets during kex, stop probing: polling refreshes the ban.
+
 ## Known gaps (tracked)
 
-- Full-platform DR bring-up (steps 1–3 end-to-end) has not been rehearsed —
-  only the per-tenant data path (DB + blobs + DEK + verify). #77 stays open
-  until a full rehearsal on a scratch node happens.
-- CNPG `Database` CR adoption of pre-existing databases in a recovered
-  cluster is per CNPG's declarative semantics — verify on first rehearsal.
 - Blob backup is nightly: RPO for file content is up to 24h (Postgres WAL is
   continuous). Acceptable interim; #21 (blobs in S3 natively) closes it.
 - One SCW key guards backups + DNS + storage (#77): a scoped, bucket-only

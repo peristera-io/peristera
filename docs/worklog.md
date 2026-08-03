@@ -1282,3 +1282,47 @@ object). Known accepted trade-offs, documented: chunk object keys are
 BLAKE3(plaintext) (ADR-0001 trade-off, confirmation-of-content possible with
 bucket read); one shared SCW key guards backups+DNS+storage (#77 follow-up:
 scoped backup key); single shared heartbeat URL (#78).
+
+## 2026-08-03 — Incident: expired SCW key → disk-pressure outage → rebuild from zero (DR rehearsal, verified live)
+
+The first-customer gate turned into a live-fire exercise. Post-mortem chain:
+the Scaleway API key expired (~Jul 20) → CNPG WAL archiving failed with the
+stale key → Postgres retained 23G of pg_wal on zitadel-db (local-path has no
+quota) → the 40G disk hit 91% → DiskPressure taint (Jul 22) → kubelet evicted
+every DB pod and the control plane → platform down, silently. Detection only
+happened when tofu refused the expired key — exactly the #77/#78 failure
+story (credential coupling, zero alerting) the audit predicted.
+
+Recovery attempts: freed journal/images + rotated in-cluster secrets — but
+the node was I/O-starved (API/SSH handshakes timing out), a reboot re-entered
+the spiral (full disk survives reboots), and fail2ban (persistent bans +
+split-egress IP rotation) blocked SSH. Decision with the operator: no data
+worth keeping → **surgical rebuild**: destroy/recreate the instance only,
+keeping the Flexible IP (no EuroDNS change), buckets, Secret Manager, and DNS
+zone. Root volume 40G→60G (tf updated).
+
+The rebuild doubled as the **full-platform DR bring-up rehearsal** the
+runbook listed as unproven — bootstrap.sh from merged main (PRs 108,
+109, 110) came up green in one pass: Cilium → ESO → cert-manager/DNS-01 →
+external-dns → CNPG → Zitadel → control plane → landing. Three tenants
+recreated (demo, test, lu with domain=peristera.lu): all Ready, certs issued,
+`kamara.peristera.lu` on HTTP-01 with zero manual steps under the ADR-0021
+model. Stale bucket prefixes purged (CNPG refuses foreign WAL history — the
+runbook rule, hit in practice); WAL archiving recovered for every cluster the
+moment prefixes were clean.
+
+**Restore rehearsal (the point of it all), verified live:** 3MB random file
+uploaded through kamara's API (PAT-authed machine user) → nightly-job path
+run manually: chunks to `tenants/demo/blobs`, DEK age-escrowed → CNPG base
+backup → recovery Cluster in a scratch namespace bootstrapped FROM THE BUCKET
+→ blobs + escrow pulled back, DEK decrypted with the operator's offline age
+key → `blobverify`: **1 objects verified, 0 failed**, byte size exact. The
+DEK escrow round-trip was also verified bucket→age→cluster-Secret identical.
+Restitution is now a demonstrated property, not a hypothesis (#77).
+
+Hardening that rode along: backup-s3 creds now reconcile-to-match (#77.4 —
+this incident was the proof of need), admin firewall CIDR widened to the
+operator's /24 (daily IP rotation kept locking out admin), `--immutable` +
+bucket versioning live. Follow-ups that remain: scoped write-only backup
+credential (#77), heartbeat URL adoption (#78), blob-superset pruning (#59),
+barman plugin migration before CNPG 1.31 (#59).
