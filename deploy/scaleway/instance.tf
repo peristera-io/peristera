@@ -39,6 +39,10 @@ resource "scaleway_instance_server" "node" {
   }
 
   root_volume {
-    size_in_gb = 40
+    # 60 after the 2026-07 incident: an expired SCW key stopped WAL archiving,
+    # 23G of retained pg_wal filled the 40G disk, and DiskPressure took the
+    # whole single-node platform down. Headroom is cheap; the real fixes
+    # (creds reconcile-to-match, --immutable backups, heartbeat) ship with it.
+    size_in_gb = 60
   }
 }
