@@ -20,9 +20,12 @@ rules:
   - apiGroups: [""]
     resources: ["namespaces"]
     verbs: ["get", "list", "watch", "create", "delete"]
+  # update: backup-s3 creds reconcile-to-match so a Scaleway key rotation
+  # propagates to every tenant (#77 — an expired key silently killed WAL
+  # archiving). Still NO list/watch (ADR-0007 #7): by-name access only.
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["get", "create"] # NO list/watch (ADR-0007 #7)
+    verbs: ["get", "create", "update"]
   - apiGroups: ["postgresql.cnpg.io"]
     resources: ["clusters", "databases", "scheduledbackups"]
     verbs: ["get", "list", "watch", "create", "delete"]
@@ -44,6 +47,11 @@ rules:
     verbs: ["get", "list", "watch", "create", "update", "delete"]
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingresses"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  # cronjobs: the per-tenant blob-backup job (#59/#77), create-only like the
+  # rest of provisioning (delete comes with the owner-ref GC on off-boarding).
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
     verbs: ["get", "list", "watch", "create", "delete"]
   # (No cert-manager RBAC: DNS-01 issuance (ADR-0021) retired the healTenantCerts
   # self-heal; cert-manager's ingress-shim owns the per-host certs, now solved
@@ -136,6 +144,13 @@ spec:
             # are the SCW keys from scaleway-secret.
             - { name: BACKUP_BUCKET, value: "${BACKUPS_BUCKET}" }
             - { name: BACKUP_ENDPOINT, value: "https://s3.${SCW_REGION}.scw.cloud" }
+            - { name: BACKUP_REGION, value: "${SCW_REGION}" }
+            # Blob backup + DEK escrow (#59/#77): the age public key tenant
+            # Secrets are escrowed to; the private key lives OUTSIDE the
+            # cluster (operator's password manager). Optional heartbeat URL is
+            # pinged after each successful backup job (dead-man's switch).
+            - { name: BACKUP_AGE_RECIPIENT, value: "${BACKUP_AGE_RECIPIENT}" }
+            - { name: BACKUP_HEARTBEAT_URL, value: "${BACKUP_HEARTBEAT_URL}" }
             - name: BACKUP_S3_KEY_ID
               valueFrom:
                 secretKeyRef: { name: scaleway-secret, key: SCW_ACCESS_KEY }

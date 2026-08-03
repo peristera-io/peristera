@@ -24,6 +24,7 @@ jobs:
           - { app: kamara, dockerfile: kamara/Dockerfile }
           - { app: ergonomos, dockerfile: ergonomos/Dockerfile }
           - { app: stub, dockerfile: iam/Dockerfile }
+          - { app: backup, dockerfile: deploy/backup/Dockerfile }
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3

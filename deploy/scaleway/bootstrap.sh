@@ -33,7 +33,14 @@ LANDING_DOMAIN="${LANDING_DOMAIN:-peristera.io}"
 # Tofu output if not set explicitly.
 BACKUPS_BUCKET="${BACKUPS_BUCKET:-$(tofu output -raw backups_bucket 2>/dev/null || true)}"
 : "${BACKUPS_BUCKET:?set BACKUPS_BUCKET (e.g. tofu output -raw backups_bucket)}"
-export DOMAIN LE_EMAIL IMAGE_TAG SCW_REGION SCW_DEFAULT_PROJECT_ID LANDING_DOMAIN BACKUPS_BUCKET
+# Blob backup + secret escrow (#59/#77): the age PUBLIC key backup jobs encrypt
+# escrowed Secrets to. Generate once with `age-keygen`; keep the private key
+# OUT of the cluster and the repo (password manager) — it is the only way to
+# decrypt a restored DEK/masterkey. Optional BACKUP_HEARTBEAT_URL is pinged
+# after each successful backup job (e.g. healthchecks.io).
+: "${BACKUP_AGE_RECIPIENT:?set BACKUP_AGE_RECIPIENT (age public key, from age-keygen — private key stays out of the cluster)}"
+BACKUP_HEARTBEAT_URL="${BACKUP_HEARTBEAT_URL:-}"
+export DOMAIN LE_EMAIL IMAGE_TAG SCW_REGION SCW_DEFAULT_PROJECT_ID LANDING_DOMAIN BACKUPS_BUCKET BACKUP_AGE_RECIPIENT BACKUP_HEARTBEAT_URL
 
 CILIUM_VERSION=${CILIUM_VERSION:-1.19.4}
 CERT_MANAGER_VERSION=${CERT_MANAGER_VERSION:-v1.16.2}
@@ -45,7 +52,7 @@ CNPG_CHART_VERSION=${CNPG_CHART_VERSION:-0.29.0}
 
 # envsubst limited to our named placeholders, so nothing else in the manifests
 # is accidentally expanded.
-SUBST='${DOMAIN} ${LE_EMAIL} ${IMAGE_TAG} ${SCW_REGION} ${SCW_DEFAULT_PROJECT_ID} ${LANDING_DOMAIN} ${BACKUPS_BUCKET}'
+SUBST='${DOMAIN} ${LE_EMAIL} ${IMAGE_TAG} ${SCW_REGION} ${SCW_DEFAULT_PROJECT_ID} ${LANDING_DOMAIN} ${BACKUPS_BUCKET} ${BACKUP_AGE_RECIPIENT} ${BACKUP_HEARTBEAT_URL}'
 apply_tmpl() { envsubst "$SUBST" < "$1" | kubectl apply -f - ; }
 
 echo "==> helm repos"
@@ -145,6 +152,9 @@ echo "==> control plane + cp-openfga"
 kubectl apply -f ../../control-plane/deploy/crd/peristera.io_tenants.yaml
 kubectl apply -f manifests/cp-openfga.yaml
 apply_tmpl manifests/control-plane.yaml
+# Nightly age-encrypted escrow of the bootstrap Secrets (zitadel-masterkey,
+# admin-client-tls, cp-openfga-authn-key) a restore cannot regenerate (#77).
+apply_tmpl manifests/secret-escrow.yaml
 kubectl rollout status deploy/cp-openfga -n "$NS" --timeout=180s
 
 echo "==> waiting for the platform certificate (cp.$DOMAIN)"

@@ -72,6 +72,20 @@ type TenantReconciler struct {
 	BackupEndpoint string
 	BackupS3KeyID  string
 	BackupS3Secret string
+	// BackupRegion is the Object Storage region (e.g. fr-par) — rclone in the
+	// blob-backup job needs it for v4 signing, unlike barman which derives it.
+	BackupRegion string
+	// BackupAgeRecipient is the age X25519 public key the blob-backup job
+	// escrows tenant Secrets (the Kamara DEK) to, alongside the blob copy
+	// (#59/#77): a restored blob store is undecryptable without its DEK, and
+	// the DEK must not land in the bucket in the clear. The matching private
+	// key lives outside the cluster (operator's password manager). Empty
+	// disables the per-tenant blob-backup CronJob entirely — backups that
+	// can't be decrypted are worse than an honest gap.
+	BackupAgeRecipient string
+	// BackupHeartbeat is an optional dead-man's-switch URL (healthchecks.io
+	// style) the backup job pings after success; empty = no ping.
+	BackupHeartbeat string
 }
 
 // tenantDomain is the parent of the tenant's *app* hosts (<app>.<domain>): a

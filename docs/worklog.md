@@ -1228,3 +1228,57 @@ certs now on HTTP-01, and demo (platform) unchanged on DNS-01. New custom-domain
 tenants get the selection once the new controller image deploys; peristera.lu's
 existing ingresses were patched live (create-only, so the reconciler leaves
 them).
+
+## 2026-07-13 — First-customer gate, Tier 1: blob backup + secret escrow (#59/#77)
+
+Pre-customer audit of the backup story found the gap that matters: Postgres is
+backed up (M7), but Kamara's file bytes live only on a node-local PVC, and the
+per-tenant DEK exists nowhere outside the cluster — so node loss meant
+unrecoverable customer files even with perfect DB restores. Restoring files
+needs all three in lockstep: DB (had it), blobs (new), keys (new).
+(Correction while implementing: the platform secrets — zitadel-masterkey,
+admin-client-tls, cp-openfga-authn-key — are Terraform-generated and already
+survive node loss in Scaleway Secret Manager (ESO-synced); their escrow is a
+second custody chain against tofu-state/Secret-Manager loss, not the primary.
+The DEKs are the load-bearing escrow.)
+
+Shipped the interim (until #21 moves blobs into S3 natively):
+
+- **backup image** (`deploy/backup/`, alpine + rclone + age; in `images.yml`).
+- **Per-tenant blob backup**: the reconciler provisions a nightly CronJob
+  (03:30) per blob-backed app — mounts the blob PVC read-only + the DEK
+  Secret, rclone-copies chunks to `s3://<backups>/tenants/<slug>/blobs`, and
+  uploads the DEK **age-encrypted** alongside. Mount-don't-read design: no
+  ServiceAccount token, no RBAC for the job; controller RBAC gains
+  `batch/cronjobs`. Copy without delete — chunks are content-addressed and
+  immutable, so the bucket is a superset of what any DB backup references
+  (mid-GC races can only add). `.tmp-*` (pre-rename writes) excluded.
+- **Platform secret escrow** (`manifests/secret-escrow.yaml`, 03:45):
+  zitadel-masterkey + admin-client-tls + cp-openfga-authn-key, same pattern.
+- **Gating**: blob backups require BACKUP_BUCKET **and** BACKUP_AGE_RECIPIENT
+  — blobs without an escrowed DEK are undecryptable, so half a backup stays
+  off rather than pretending. bootstrap.sh now requires the recipient.
+
+**Decisions (flagging):** (1) backups land in the *backups* bucket; the blobs
+bucket stays reserved for #21's real S3 backend. (2) The age **private key
+lives outside the cluster** — operator's password manager; the cluster only
+ever sees the public key, so a cluster compromise cannot decrypt the escrow.
+(3) No pruning of the blob-backup superset yet (deleted chunks accumulate) —
+deliberate safety-first interim; follow-up noted on #59. (4) Optional
+BACKUP_HEARTBEAT_URL dead-man's-switch env wired for later healthchecks.io
+adoption (#78 interim) — single URL, all jobs.
+
+Also: #65 fixed (PR #108) — OIDC app create branch hardcoded devMode:true,
+regressing the #5 gate; now `c.DevMode` + regression test, plus a drift-heal
+in the reconcile path so already-provisioned apps get devMode corrected on
+the next reconcile (zero-context security review's finding — existing cloud
+apps would otherwise keep relaxed redirect-URI validation forever).
+
+Zero-context security review of both PRs led to two more hardenings:
+`rclone copy --immutable` (a changed content-addressed chunk is tampering —
+fail loudly, never overwrite the good bucket copy) and **versioning on the
+backups bucket** (tamper/overwrite backstop for chunks and the nightly escrow
+object). Known accepted trade-offs, documented: chunk object keys are
+BLAKE3(plaintext) (ADR-0001 trade-off, confirmation-of-content possible with
+bucket read); one shared SCW key guards backups+DNS+storage (#77 follow-up:
+scoped backup key); single shared heartbeat URL (#78).
